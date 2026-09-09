@@ -120,9 +120,9 @@ export function TransferDetail({ job, onBack, refresh }: {
   const remaining = Math.max(0, (scan?.totalBytes || 0) - job.uploadedBytes);
 
   const canUpload = ['ready', 'paused'].includes(job.status) && scan && !scan.readErrors && target;
-  const [ignoreMissing, setIgnoreMissing] = useState(false);
+  const [confirmingProblems, setConfirmingProblems] = useState(false);
   const problemCount = (scan?.missingClipCount || 0) + (scan?.unreadableFiles.length || 0);
-  const blockingGaps = problemCount > 0 && !ignoreMissing;
+  const needsConfirming = problemCount > 0;
 
   return (
     <div className="screen">
@@ -361,15 +361,15 @@ export function TransferDetail({ job, onBack, refresh }: {
               called ready when all of them pass, and re-running it sends nothing that is already verified.
             </p>
             <div className="actions">
-              {canUpload && !blockingGaps && (
+              {canUpload && !needsConfirming && (
                 <button className="primary" disabled={busy === 'start'}
                   onClick={() => void run('start', () => window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined)),
                     'Queued. It keeps going with this window closed.')}>
                   {job.completedFiles > 0 ? 'Resume upload' : 'Start upload'}
                 </button>
               )}
-              {canUpload && blockingGaps && (
-                <button className="primary" onClick={() => setIgnoreMissing(true)}>Start upload…</button>
+              {canUpload && needsConfirming && (
+                <button className="primary" onClick={() => setConfirmingProblems(true)}>Start upload…</button>
               )}
               {['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status) && (
                 <button disabled={busy === 'pause'} onClick={() => void run('pause', () => window.api.pause(job.id))}>Pause</button>
@@ -385,7 +385,7 @@ export function TransferDetail({ job, onBack, refresh }: {
         )}
       </section>
 
-      {ignoreMissing && canUpload && problemCount > 0 && !['queued', 'uploading', 'verifying'].includes(job.status) && (
+      {confirmingProblems && canUpload && (
         <div className="modal-shade">
           <section className="work-modal" role="dialog" aria-modal="true" aria-labelledby="gaps-title">
             <header>
@@ -427,6 +427,7 @@ export function TransferDetail({ job, onBack, refresh }: {
                 </ul>
               </>
             )}
+            {error && <p className="error" role="alert">{error}</p>}
             <p className="notice">
               Some cameras skip numbers legitimately — deleted takes, a card formatted mid-shoot — so this
               asks rather than refuses. But note that a readable header is not proof a clip is whole: a
@@ -434,10 +435,12 @@ export function TransferDetail({ job, onBack, refresh }: {
               damage in transit, not damage that was already on the card.
             </p>
             <div className="actions">
-              <button onClick={() => setIgnoreMissing(false)}>Go back and check</button>
+              <button disabled={busy === 'start'} onClick={() => setConfirmingProblems(false)}>Go back and check</button>
               <button className="primary" disabled={busy === 'start'}
-                onClick={() => void run('start', () => window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined)),
-                  'Queued. It keeps going with this window closed.')}>
+                onClick={() => void run('start', async () => {
+                  await window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined));
+                  setConfirmingProblems(false);
+                }, 'Queued. It keeps going with this window closed.')}>
                 Upload anyway
               </button>
             </div>

@@ -14,7 +14,7 @@ import { formatBytes } from './uploadFormat';
  */
 export function useTransferSpeed(uploadedBytes: number, active: boolean): number {
   const samples = useRef<{ at: number; bytes: number }[]>([]);
-  const [, tick] = useState(0);
+  const [rate, setRate] = useState(0);
 
   useEffect(() => {
     if (!active) { samples.current = []; return; }
@@ -25,21 +25,28 @@ export function useTransferSpeed(uploadedBytes: number, active: boolean): number
     while (samples.current.length > 2 && samples.current[0].at < cutoff) samples.current.shift();
   }, [uploadedBytes, active]);
 
-  // Re-read on a timer as well, so a stall shows as a falling rate rather than
-  // a number frozen at its last good value.
+  // The rate is computed in an effect and held in state, never read off the ref
+  // while rendering. It is also recomputed on a timer, so a stall shows as a
+  // falling rate rather than a number frozen at its last good value.
   useEffect(() => {
+    // Functional updates throughout: React bails out when the value is
+    // unchanged, so a rate that has not moved does not re-render the screen
+    // every two seconds behind a running upload.
+    const settle = (next: number): void => setRate(current => (current === next ? current : next));
+    const recompute = (): void => {
+      const history = samples.current;
+      if (!active || history.length < 2) { settle(0); return; }
+      const seconds = (Date.now() - history[0].at) / 1000;
+      const bytes = history[history.length - 1].bytes - history[0].bytes;
+      settle(seconds >= 2 && bytes > 0 ? bytes / seconds : 0);
+    };
+    recompute();
     if (!active) return;
-    const timer = setInterval(() => tick(n => n + 1), 2000);
+    const timer = setInterval(recompute, 2000);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [active, uploadedBytes]);
 
-  if (!active || samples.current.length < 2) return 0;
-  const first = samples.current[0];
-  const last = samples.current[samples.current.length - 1];
-  const seconds = (Date.now() - first.at) / 1000;
-  const bytes = last.bytes - first.bytes;
-  if (seconds < 2 || bytes <= 0) return 0;
-  return bytes / seconds;
+  return rate;
 }
 
 export function formatSpeed(bytesPerSecond: number): string {
