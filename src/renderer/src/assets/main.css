@@ -1,0 +1,241 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Tenor+Sans&family=Vidaloka&display=swap');
+
+
+@font-face {
+  font-family: 'The Seasons';
+  src: url('/fonts/the-seasons/theseasons-lt.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'The Seasons';
+  src: url('/fonts/the-seasons/theseasons-ltit.otf') format('opentype');
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'The Seasons';
+  src: url('/fonts/the-seasons/theseasons-reg.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'The Seasons';
+  src: url('/fonts/the-seasons/theseasons-it.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'The Seasons';
+  src: url('/fonts/the-seasons/theseasons-bd.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'The Seasons';
+  src: url('/fonts/the-seasons/theseasons-bdit.otf') format('opentype');
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+@import "tailwindcss";
+
+
+@font-face {
+  font-family: 'Editors Note';
+  src: url('/fonts/editors-note/EditorsNote-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Editors Note';
+  src: url('/fonts/editors-note/EditorsNote-Italic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Editors Note';
+  src: url('/fonts/editors-note/EditorsNote-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('/fonts/satoshi/Satoshi-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('/fonts/satoshi/Satoshi-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Mada';
+  src: url('/fonts/mada/Mada-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Mada';
+  src: url('/fonts/mada/Mada-Light.ttf') format('truetype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Mada';
+  src: url('/fonts/mada/Mada-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TAN Meringue';
+  src: url('/fonts/TAN-Meringue.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@layer base {
+  :root {
+    --ink: #111417;
+    --muted: #6b6660;
+    --line: #d4c1a3;
+    --line-subtle: #ebdcd9;
+    --paper: #f9f8f6;
+    --panel: #ffffff;
+    --sand: #f2ede4;
+    --burgundy: #7a2e33;
+    --burgundy-dark: #5a2226;
+    --blush: #d4c1a3;
+    --navy: #0b1f3b;
+    
+    --font-title: 'Vidaloka', serif;
+    --font-subtitle: 'Tenor Sans', sans-serif;
+    --font-heading: 'The Seasons', 'Vidaloka', serif;
+    --font-subheading: 'DM Sans', sans-serif;
+    --font-section: 'Roboto Mono', monospace;
+    --font-body: 'Inter', sans-serif;
+    --font-quote: 'Newsreader', serif;
+    --font-caption: 'Roboto Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-body);
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--ink);
+    background-color: var(--paper);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  h1 {
+    font-family: var(--font-title);
+    font-weight: 400;
+    font-size: clamp(3rem, 5vw, 5rem);
+    letter-spacing: 0;
+    line-height: 0.95;
+  }
+
+  h2 {
+    font-family: var(--font-heading);
+    font-weight: 400;
+    font-size: clamp(2rem, 3.5vw, 4rem);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+
+  h3 {
+    font-family: var(--font-subheading);
+    font-weight: 400;
+    font-size: 1.25rem;
+    line-height: 1.4;
+  }
+
+  p {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  
+  blockquote {
+    font-family: var(--font-quote);
+    font-style: italic;
+    font-size: 1.5rem;
+    line-height: 1.4;
+  }
+}
+
+/* Luxury Classes */
+.subtitle {
+  font-family: var(--font-subtitle);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 12px;
+}
+
+.section-header {
+  font-family: var(--font-section);
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  font-size: 10px;
+}
+
+.caption {
+  font-family: var(--font-caption);
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+/* Retained Utility Classes */
+.font-tan-moncheri, .font-tan {
+  font-family: 'TAN Meringue', serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4c1a3;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #7a2e33;
+}

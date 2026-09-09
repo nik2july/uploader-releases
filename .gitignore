@@ -1,0 +1,10 @@
+node_modules
+dist
+out
+.DS_Store
+.eslintcache
+*.log*
+
+# The app stores Google credentials encrypted under the Mac account, never in
+# the project — but nothing should be able to arrive here by accident either.
+.env*

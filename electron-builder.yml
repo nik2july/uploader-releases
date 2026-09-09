@@ -1,0 +1,54 @@
+appId: com.baawaray.studio-uploader
+productName: Baawaray Uploader
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+asarUnpack:
+  - resources/**
+  # ffprobe is spawned as a child process to measure clip durations, and a binary
+  # cannot be executed from inside the asar archive. src/main/scanner.ts rewrites
+  # its path to .asar.unpacked, which only resolves if it is unpacked here — miss
+  # this and every duration reads as unmeasurable in a packaged build.
+  - node_modules/ffprobe-static/**
+win:
+  executableName: baawaray-uploader
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  entitlementsInherit: build/entitlements.mac.plist
+  # A map, not a list. The scaffold's list-of-single-key-entries form nests these
+  # one level down in Info.plist, where macOS never reads them — the prompt then
+  # appears with Apple's generic wording, or the access is simply refused.
+  extendInfo:
+    NSRemovableVolumesUsageDescription: Baawaray Uploader reads the project folder you select, including folders on external drives.
+    NSDesktopFolderUsageDescription: Baawaray Uploader reads the project folder you select.
+    NSDocumentsFolderUsageDescription: Baawaray Uploader reads the project folder you select.
+    NSDownloadsFolderUsageDescription: Baawaray Uploader reads the project folder you select.
+    NSCameraUsageDescription: Baawaray Uploader does not use the camera.
+    NSMicrophoneUsageDescription: Baawaray Uploader does not use the microphone.
+  notarize: false
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - deb
+  maintainer: baawaray.com
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
