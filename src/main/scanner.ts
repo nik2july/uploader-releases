@@ -18,7 +18,8 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
   const root = await fs.realpath(job.rootPath);
   const result: ScanSummary = { totalPhotos: 0, billablePhotos: 0, totalVideos: 0, totalDurationSeconds: 0,
     unknownVideoCount: 0, totalBytes: 0, fileCount: 0, folderCount: 0, pairedPhotos: 0,
-    excludedBillingFiles: 0, warnings: [], readErrors: 0, missingClips: [], missingClipCount: 0 };
+    excludedBillingFiles: 0, warnings: [], readErrors: 0, missingClips: [], missingClipCount: 0,
+    unreadableFiles: [] };
   const photoPairs = new Map<string, Set<string>>();
   const seenPaths: { relativePath: string }[] = [];
   const excluded = new Set(job.options.excludedBillingFolders.map(s => s.trim().toLowerCase()).filter(Boolean));
@@ -62,21 +63,33 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
             photoPairs.set(key, pair);
           }
         }
+        // A file with no bytes in it is a copy that failed, whatever its type.
+        if (stat.size === 0 && result.unreadableFiles.length < 500) {
+          result.unreadableFiles.push({ path: relativePath, reason: 'The file is empty — 0 bytes.' });
+          error = 'This file is empty. It almost certainly failed to copy.';
+        }
+
         if (kind === 'video') {
           result.totalVideos++;
-          if (billingIncluded) {
-            try {
-              const binary = ffprobe.path.replace(/\.asar\//, '.asar.unpacked/');
-              const { stdout } = await exec(binary, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', full], { timeout: 30000, maxBuffer: 1024 * 1024, signal });
-              durationSeconds = Number(JSON.parse(stdout).format?.duration);
-              if (!Number.isFinite(durationSeconds) || durationSeconds! <= 0) throw new Error('Unknown duration');
-              result.totalDurationSeconds += durationSeconds!;
-            } catch {
-              signal.throwIfAborted();
-              durationSeconds = undefined; result.unknownVideoCount++;
-              error = 'Duration could not be measured. Upload is allowed; long-form billing needs review.';
-              warn(`${relativePath}: ${error}`);
+          // Every clip is probed, not only the billable ones. Whether a file is
+          // readable is a question about the data; whether it counts towards an
+          // invoice is a question about money. Tying them together meant a
+          // corrupt clip in an excluded folder was never looked at.
+          try {
+            const binary = ffprobe.path.replace(/\.asar\//, '.asar.unpacked/');
+            const { stdout } = await exec(binary, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', full], { timeout: 30000, maxBuffer: 1024 * 1024, signal });
+            durationSeconds = Number(JSON.parse(stdout).format?.duration);
+            if (!Number.isFinite(durationSeconds) || durationSeconds! <= 0) throw new Error('Unknown duration');
+            if (billingIncluded) result.totalDurationSeconds += durationSeconds!;
+          } catch {
+            signal.throwIfAborted();
+            durationSeconds = undefined;
+            if (billingIncluded) result.unknownVideoCount++;
+            if (stat.size > 0 && result.unreadableFiles.length < 500) {
+              result.unreadableFiles.push({ path: relativePath, reason: 'No duration in the file — the clip may be truncated or corrupt.' });
             }
+            error = 'This clip could not be read. It may be truncated or corrupt.';
+            warn(`${relativePath}: ${error}`);
           }
         }
         store.addFile(jobId, { relativePath, size: stat.size, mtimeMs: stat.mtimeMs, kind, billingIncluded, durationSeconds, error });
@@ -96,6 +109,9 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
   result.missingClipCount = result.missingClips.reduce((total, s) => total + s.missingCount, 0);
   if (result.missingClipCount > 0) {
     warn(`${result.missingClipCount} files appear to be missing from the camera numbering.`);
+  }
+  if (result.unreadableFiles.length > 0) {
+    warn(`${result.unreadableFiles.length} files are present but could not be read.`);
   }
 
   store.patch(jobId, { rootPath: root, scan: result, status: result.readErrors ? 'needs_attention' : 'ready',

@@ -183,7 +183,28 @@ describe('measurements it refuses to guess at', () => {
     assert.equal(summary.totalVideos, 1);
     assert.equal(summary.unknownVideoCount, 1);
     assert.equal(summary.totalDurationSeconds, 0);
-    assert.ok(summary.warnings.some(w => /Duration could not be measured/.test(w)));
+    assert.equal(summary.unreadableFiles.length, 1);
+    assert.match(summary.unreadableFiles[0].reason, /truncated or corrupt/);
+    assert.ok(summary.warnings.some(w => /could not be read/.test(w)));
+  });
+
+  test('an unreadable clip is reported even where it is not billed', async () => {
+    // Readability is a question about the data; billing is a question about
+    // money. Excluding a folder from billing must not stop the studio being
+    // told that something in it is broken.
+    const { summary } = await scan(
+      { 'Proxies/broken.mov': 'not really a video' },
+      { excludedBillingFolders: ['Proxies'] },
+    );
+    assert.equal(summary.unreadableFiles.length, 1, 'a corrupt proxy is still a corrupt file');
+    assert.equal(summary.unknownVideoCount, 0, 'but it does not muddy the billing measurement');
+  });
+
+  test('an empty file is reported whatever its type', async () => {
+    const { summary } = await scan({ 'DSC0001.jpg': '', 'DSC0002.jpg': 'x' });
+    assert.equal(summary.unreadableFiles.length, 1);
+    assert.equal(summary.unreadableFiles[0].path, 'DSC0001.jpg');
+    assert.match(summary.unreadableFiles[0].reason, /empty/);
   });
 
   test('a cancelled scan stops and does not leave a usable manifest', async () => {

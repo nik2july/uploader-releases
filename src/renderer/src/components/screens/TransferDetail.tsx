@@ -121,7 +121,8 @@ export function TransferDetail({ job, onBack, refresh }: {
 
   const canUpload = ['ready', 'paused'].includes(job.status) && scan && !scan.readErrors && target;
   const [ignoreMissing, setIgnoreMissing] = useState(false);
-  const blockingGaps = (scan?.missingClipCount || 0) > 0 && !ignoreMissing;
+  const problemCount = (scan?.missingClipCount || 0) + (scan?.unreadableFiles.length || 0);
+  const blockingGaps = problemCount > 0 && !ignoreMissing;
 
   return (
     <div className="screen">
@@ -167,6 +168,23 @@ export function TransferDetail({ job, onBack, refresh }: {
                   <div className="foot">Still uploaded in full</div></div>
               )}
             </div>
+
+            {scan.unreadableFiles.length > 0 && (
+              <div className="warning" style={{ marginTop: 14 }}>
+                <b style={{ display: 'block', marginBottom: 4 }}>
+                  {formatCount(scan.unreadableFiles.length)} files are here but could not be read.
+                </b>
+                <p style={{ margin: '0 0 8px' }}>
+                  An empty file, or a clip with no duration in its header. Usually a copy that stopped
+                  part way. They will still upload — but they will upload broken.
+                </p>
+                <ul className="file-problems" style={{ maxHeight: 180 }}>
+                  {scan.unreadableFiles.slice(0, 60).map(file => (
+                    <li key={file.path}><span className="mono">{file.path}</span>{file.reason}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {scan.missingClipCount > 0 && (
               <div className="warning" style={{ marginTop: 14 }}>
@@ -367,31 +385,53 @@ export function TransferDetail({ job, onBack, refresh }: {
         )}
       </section>
 
-      {ignoreMissing && canUpload && (scan?.missingClipCount || 0) > 0 && !['queued', 'uploading', 'verifying'].includes(job.status) && (
+      {ignoreMissing && canUpload && problemCount > 0 && !['queued', 'uploading', 'verifying'].includes(job.status) && (
         <div className="modal-shade">
           <section className="work-modal" role="dialog" aria-modal="true" aria-labelledby="gaps-title">
             <header>
               <div>
                 <span className="eyebrow">BEFORE YOU SEND</span>
-                <h2 id="gaps-title">{formatCount(scan!.missingClipCount)} files look missing</h2>
+                <h2 id="gaps-title">
+                  {scan!.missingClipCount > 0 && scan!.unreadableFiles.length > 0
+                    ? `${formatCount(scan!.missingClipCount)} files missing, ${formatCount(scan!.unreadableFiles.length)} unreadable`
+                    : scan!.missingClipCount > 0
+                      ? `${formatCount(scan!.missingClipCount)} files look missing`
+                      : `${formatCount(scan!.unreadableFiles.length)} files could not be read`}
+                </h2>
               </div>
             </header>
             <p className="muted" style={{ marginTop: 0 }}>
-              The cameras number what they record, and these numbers are not in the folder. Usually that
-              means a file did not copy off the card. Fixing it now costs minutes; finding out afterwards
-              costs the upload.
+              Fixing this now costs minutes. Finding out afterwards costs the upload — and, if nobody
+              notices, costs the wedding.
             </p>
-            <ul className="file-problems" style={{ maxHeight: 240 }}>
-              {scan!.missingClips.map(gap => (
-                <li key={`${gap.folder}:${gap.label}`}>
-                  <span className="mono">{gap.folder ? `${gap.folder}/` : ''}{gap.label}</span>
-                  {formatCount(gap.missingCount)} missing: {gap.missing.join(', ')}
-                </li>
-              ))}
-            </ul>
+            {scan!.missingClipCount > 0 && (
+              <>
+                <p style={{ marginBottom: 4, fontWeight: 600, fontSize: 14 }}>Missing from the numbering</p>
+                <ul className="file-problems" style={{ maxHeight: 170 }}>
+                  {scan!.missingClips.map(gap => (
+                    <li key={`${gap.folder}:${gap.label}`}>
+                      <span className="mono">{gap.folder ? `${gap.folder}/` : ''}{gap.label}</span>
+                      {formatCount(gap.missingCount)} missing: {gap.missing.join(', ')}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {scan!.unreadableFiles.length > 0 && (
+              <>
+                <p style={{ margin: '12px 0 4px', fontWeight: 600, fontSize: 14 }}>Here but unreadable</p>
+                <ul className="file-problems" style={{ maxHeight: 170 }}>
+                  {scan!.unreadableFiles.slice(0, 60).map(file => (
+                    <li key={file.path}><span className="mono">{file.path}</span>{file.reason}</li>
+                  ))}
+                </ul>
+              </>
+            )}
             <p className="notice">
-              Some cameras skip numbers legitimately — deleted takes, a card formatted mid-shoot. If you
-              know that is the case here, carry on.
+              Some cameras skip numbers legitimately — deleted takes, a card formatted mid-shoot — so this
+              asks rather than refuses. But note that a readable header is not proof a clip is whole: a
+              file can be truncated part way and still report a duration. Checksum verification catches
+              damage in transit, not damage that was already on the card.
             </p>
             <div className="actions">
               <button onClick={() => setIgnoreMissing(false)}>Go back and check</button>

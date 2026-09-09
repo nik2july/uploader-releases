@@ -10,6 +10,8 @@ export interface ScanSummary {
   pairedPhotos: number; excludedBillingFiles: number; warnings: string[]; readErrors: number;
   /** Gaps in the camera's numbering — files that never made it off the card. */
   missingClips: MissingClips[]; missingClipCount: number;
+  /** Files present but unreadable: an empty file, or a clip with no duration in its header. */
+  unreadableFiles: { path: string; reason: string }[];
 }
 export interface WorkTarget {
   kind: 'freelance' | 'deliverable'; id: string; clientId?: string; title: string; clientName: string;
