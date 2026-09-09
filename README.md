@@ -85,6 +85,69 @@ Clip durations are measured by `ffprobe` against real media, so only the
 path matters on its own: a clip whose duration cannot be read is reported as
 unknown, never counted as zero.
 
+## Installing it on another Mac
+
+```bash
+npm run build:mac
+```
+
+That produces `dist/Baawaray-Uploader-<version>.dmg`. Copy it to the other Mac,
+open it, and drag the app into Applications. The `WEB APP` folder is only needed
+to *build*; the packaged app carries everything it needs.
+
+**It is not code-signed**, so macOS will refuse to open it on first launch. Two
+ways past that, depending on how the file arrived:
+
+- **AirDrop or a USB stick** — usually no quarantine flag, so it just opens.
+- **Downloaded in a browser** — right-click the app in Applications, choose
+  **Open**, then **Open** again. If macOS still refuses, go to
+  **System Settings → Privacy & Security** and click **Open Anyway**. Or strip
+  the flag directly:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Baawaray Uploader.app"
+```
+
+Signing with an Apple Developer ID ($99/year) removes all of this, and is also
+what unsigned builds give up to make silent auto-updates impossible — see below.
+
+Two things are per-Mac and have to be done once on each: the Google OAuth client
+ID and secret in Settings, and connecting Drive. The studio sign-in is the same
+everywhere.
+
+> The packaged app and `npm run dev` keep their settings in *different* folders,
+> because Electron names that folder after the app. Connecting Drive in dev does
+> not connect it in the installed app.
+
+## Updates
+
+`src/main/updater.ts` asks GitHub once at launch and every six hours whether a
+release newer than the running version exists, and `UpdateBanner` shows a bar
+offering the download. Failures are silent by design — a version check that
+could not reach GitHub is not worth interrupting a two-terabyte upload for.
+
+**It notifies; it does not install.** macOS will not let an application replace
+itself unless it is signed with an Apple Developer ID — Apple's updater checks
+the signature before it will touch anything. Without one, no auto-updater on
+macOS works, whatever library it uses. So the banner links to the download and
+the studio drags it into Applications, exactly as they did the first time.
+
+To publish a release:
+
+1. Bump `version` in `package.json`
+2. `npm run build:mac`
+3. Create a release on the `baawaray/uploader-releases` repository, tagged
+   `v<version>` to match, and attach `dist/Baawaray-Uploader-<version>.dmg`
+
+The repository is public so the check needs no token — anything shipped inside
+the app is readable by whoever has the app. It holds releases only; the source
+stays private. The repository name is a constant at the top of
+`src/main/updater.ts`.
+
+Builds are for the architecture of the Mac that built them. An Apple-silicon
+build will not run on an Intel Mac; use `electron-builder --mac --universal` for
+one binary that runs on both, at roughly double the size.
+
 ## How it is put together
 
 - `src/main` — the transfer engine. It owns the queue, so uploads keep going
@@ -131,11 +194,10 @@ unknown, never counted as zero.
 
 ## Not done yet
 
-- **Code signing and notarisation.** `build:mac` produces an unsigned app —
-  add a Developer ID identity, then set `notarize` in `electron-builder.yml`.
-- **Auto-update.** `src/main/updater.ts` exists but is deliberately not wired
-  up, and `electron-builder.yml` publishes nowhere. Point it at a real feed
-  before calling it from `src/main/index.ts`.
+- **Code signing and notarisation.** `build:mac` produces an unsigned app, so
+  every Mac has to be talked past Gatekeeper once, and updates can only ever be
+  offered rather than installed. A Developer ID identity plus `notarize` in
+  `electron-builder.yml` fixes both.
 - **Lint.** `npm run lint` reports pre-existing formatting and
   `explicit-function-return-type` complaints across the ported web-app files.
   It is not part of `npm run build`.

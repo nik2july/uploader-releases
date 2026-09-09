@@ -10,6 +10,7 @@ import { WorkScreen } from './screens/WorkScreen';
 import { CompletedScreen } from './screens/CompletedScreen';
 import { TransferDetail } from './screens/TransferDetail';
 import { UploaderSettings } from './UploaderSettings';
+import { UpdateBanner } from './UpdateBanner';
 
 type View = 'uploads' | 'freelance' | 'deliverables' | 'completed' | 'settings';
 
@@ -70,6 +71,7 @@ export function Dashboard(): React.JSX.Element {
       </nav>
 
       <main className="main-area">
+        <UpdateBanner />
         {open ? (
           <TransferDetail job={open} onBack={() => setOpenId(null)} refresh={refresh} />
         ) : view === 'uploads' ? (

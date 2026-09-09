@@ -34,6 +34,7 @@ export interface ManifestFile {
   driveId?: string; session?: string; offset: number; md5?: string;
   state: 'pending' | 'uploading' | 'verified'; error?: string;
 }
+export interface UpdateInfo { version: string; url: string; notes: string; publishedAt: string }
 export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
 export interface DesktopAPI {
   login(phone: string, password: string): Promise<{ customToken: string }>;
@@ -58,5 +59,7 @@ export interface DesktopAPI {
   savePdf(bytes: Uint8Array, filename: string): Promise<boolean>;
   openExternal(url: string): Promise<void>;
   setKeepAwake(on: boolean): Promise<void>;
+  checkForUpdate(): Promise<UpdateInfo | null>;
+  appVersion(): Promise<string>;
   onChange(callback: () => void): () => void;
 }

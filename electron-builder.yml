@@ -42,7 +42,7 @@ mac:
     NSMicrophoneUsageDescription: Baawaray Uploader does not use the microphone.
   notarize: false
 dmg:
-  artifactName: ${name}-${version}.${ext}
+  artifactName: Baawaray-Uploader-${version}.${ext}
 linux:
   target:
     - AppImage

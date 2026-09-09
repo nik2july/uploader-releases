@@ -9,12 +9,14 @@ import { TransferStore } from './store';
 import { GoogleAuth } from './googleAuth';
 import { DriveClient } from './drive';
 import { TransferEngine } from './transferEngine';
+import { checkForUpdate } from './updater';
 import type { InvoiceSnapshot, ScanOptions, WorkTarget } from '../shared/contracts';
 import firebaseConfig from '../renderer/src/lib/firebase-applet-config.json';
 
 export function allowedExternal(url: string): boolean {
   try { const u = new URL(url); return u.protocol === 'https:' && !u.username && !u.password
-    && ['app.baawaray.com', 'baawaray.com', 'drive.google.com', 'wa.me', 'web.whatsapp.com', 'console.cloud.google.com', 'developers.google.com'].includes(u.hostname); }
+    && ['app.baawaray.com', 'baawaray.com', 'drive.google.com', 'wa.me', 'web.whatsapp.com', 'console.cloud.google.com', 'developers.google.com',
+      'github.com', 'objects.githubusercontent.com'].includes(u.hostname); }
   catch { return false; }
 }
 
@@ -163,6 +165,10 @@ export async function setupIpcHandlers(): Promise<() => void> {
     if (result.canceled || !result.filePath) return false;
     await fs.writeFile(result.filePath, bytes); return true;
   });
+  // Neither needs a signed-in owner: one is this app's own version, the other
+  // is a public release feed. Both are useful before anyone has signed in.
+  handle('app:version', () => app.getVersion(), false);
+  handle('updates:check', () => checkForUpdate(), false);
   handle('power:keepAwake', (on: boolean) => { keepAwake = on === true; evaluatePower(); }, false);
   handle('external:open', async (url: string) => { if (!allowedExternal(url)) throw new Error('This link is not allowed.'); await shell.openExternal(url); });
   return () => {
