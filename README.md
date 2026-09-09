@@ -57,8 +57,33 @@ npm run dev
 npm run build:mac
 ```
 
-`npm run build` runs the typechecks and bundles; `npm run build:mac` also
-packages a `.dmg` into `dist/`.
+```bash
+npm test
+```
+
+`npm run build` runs the typechecks, then the tests, then bundles;
+`npm run build:mac` does all of that and packages a `.dmg` into `dist/`.
+
+## Tests
+
+`test/` covers the transfer engine, because the failures that matter are the
+ones nobody is watching: a dropped connection at 3am, a session Drive forgot, a
+laptop that slept. `DriveClient` takes its `fetch` as a constructor argument, so
+`test/helpers.ts` supplies an in-process Drive and the real protocol code —
+allow-list, error classification, `Content-Range` arithmetic — runs against it
+unchanged. No credentials, no network, no terabytes.
+
+What is covered: resuming from the byte Drive actually acknowledged; a
+forgotten session restarting one file and no others; the 750 GB daily limit
+parking a job with its queue intact; checksum and size mismatches stopping
+rather than being reported as ready; a source file edited or a drive unplugged
+mid-transfer; recovery after the app dies mid-upload; and the photo counting
+and billing exclusions the invoice is built from.
+
+Clip durations are measured by `ffprobe` against real media, so only the
+*unmeasurable* case is tested — there are no video fixtures in the repo. That
+path matters on its own: a clip whose duration cannot be read is reported as
+unknown, never counted as zero.
 
 ## How it is put together
 
@@ -114,3 +139,5 @@ packages a `.dmg` into `dist/`.
 - **Lint.** `npm run lint` reports pre-existing formatting and
   `explicit-function-return-type` complaints across the ported web-app files.
   It is not part of `npm run build`.
+- **The renderer has no tests.** The engine does. The screens are checked by
+  the typechecker and by running the app.
