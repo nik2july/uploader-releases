@@ -20,15 +20,35 @@ export class TransferStore {
     }
   }
   close(): void { this.db.close(); }
+
+  /**
+   * Fill in fields added after a transfer was written.
+   *
+   * The journal holds JSON, so a folder scanned by an older build carries an
+   * older shape — and a screen that reads `scan.unreadableFiles.length` on a
+   * record that predates the field throws, unmounts React, and shows the studio
+   * a white window with no way back to a transfer that is otherwise perfectly
+   * fine. Normalising on the way out means every reader sees a whole record,
+   * rather than each one having to remember which fields are new.
+   */
+  private normalise(job: Transfer): Transfer {
+    if (job.scan) {
+      job.scan.missingClips ??= [];
+      job.scan.missingClipCount ??= 0;
+      job.scan.unreadableFiles ??= [];
+      job.scan.warnings ??= [];
+    }
+    return job;
+  }
   all(owner?: string): Transfer[] {
     const rows = owner ? this.db.prepare('SELECT data FROM jobs WHERE owner=? ORDER BY rowid DESC').all(owner)
       : this.db.prepare('SELECT data FROM jobs ORDER BY rowid DESC').all();
-    return rows.map(r => JSON.parse(String(r.data)));
+    return rows.map(r => this.normalise(JSON.parse(String(r.data))));
   }
   get(id: string): Transfer {
     const row = this.db.prepare('SELECT data FROM jobs WHERE id=?').get(id);
     if (!row) throw new Error('Transfer not found.');
-    return JSON.parse(String(row.data));
+    return this.normalise(JSON.parse(String(row.data)));
   }
   save(job: Transfer): void {
     job.updatedAt = new Date().toISOString();

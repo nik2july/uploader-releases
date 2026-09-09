@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DriveStatus } from '../../../shared/contracts';
 import { useApp } from '../context/AppContext';
-import { saveUploaderSettings, saveUploaderOAuth } from '../lib/studioRepository';
+import { saveUploaderSettings, saveUploaderOAuth, loadUploaderOAuth } from '../lib/studioRepository';
 export function UploaderSettings({ drive, refresh }: { drive: DriveStatus; refresh: () => Promise<void> }) {
   const { studioSettings } = useApp();
   const defaults = studioSettings?.uploader;
@@ -11,6 +11,11 @@ export function UploaderSettings({ drive, refresh }: { drive: DriveStatus; refre
   const [pairs, setPairs] = useState(defaults?.countPhotoPairsOnce ?? true);
   const [awake, setAwake] = useState(defaults?.keepAwake ?? false);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
+  // Whether the studio copy exists at all. Without this the sharing is
+  // invisible: there is no way to tell "every Mac will get this" from "this one
+  // knows it and no other ever will".
+  const [shared, setShared] = useState<boolean | null>(null);
+  useEffect(() => { void loadUploaderOAuth().then(found => setShared(Boolean(found))); }, [message]);
   async function run(fn: () => Promise<unknown>, success: string): Promise<void> {
     setBusy(true); setError(''); setMessage('');
     try { await fn(); await refresh(); setMessage(success); } catch (err) { setError(err instanceof Error ? err.message : 'Settings could not be saved.'); } finally { setBusy(false); }
@@ -18,6 +23,8 @@ export function UploaderSettings({ drive, refresh }: { drive: DriveStatus; refre
   return <div className="settings-grid"><section className="panel"><span className="eyebrow">GOOGLE DRIVE</span><h2>One secure connection</h2>
     <p>{drive.connected ? `Connected as ${drive.email}` : 'Connect the Drive account that should own your uploads.'}</p>
     <p className="muted">Use a Google OAuth client of type Desktop app with the Drive API enabled. Enter it once: it is stored where only the studio owner can read it, so any other Mac signing in picks it up by itself and nobody has to be sent the secret. On each Mac it is then kept encrypted locally. Access is limited to files this app creates.</p>
+    {shared === true && <p className="success" style={{ marginTop: 0 }}>Shared with your other Macs. A new one signing in will configure itself.</p>}
+    {shared === false && <p className="warning" style={{ marginTop: 0 }}>Not shared yet — every Mac will keep asking for these until you save them once here. Saving stores the client for the studio, readable only by you.</p>}
     <label>Desktop OAuth client ID<input value={clientId} onChange={e => setClientId(e.target.value)} placeholder="….apps.googleusercontent.com" autoComplete="off"/></label>
     <label>Client secret, if supplied by Google<input type="password" value={secret} onChange={e => setSecret(e.target.value)} autoComplete="new-password" placeholder="Stored securely; never sent to the web app"/></label>
     <div className="actions"><button disabled={busy || !clientId} onClick={() => void run(async () => { await window.api.configureDrive(clientId, secret); await saveUploaderOAuth(clientId, secret); setSecret(''); }, 'Saved on this Mac and shared with your other Macs. Connect Google Drive next.')}>Save OAuth client</button><button className="primary" disabled={busy || !drive.configured} onClick={() => void run(() => window.api.connectDrive(), 'Google Drive connected.')}>{busy ? 'Working…' : 'Connect Google Drive'}</button></div>

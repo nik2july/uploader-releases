@@ -5,6 +5,7 @@ import path from 'node:path';
 import { TransferStore } from '../src/main/store';
 import { TransferEngine } from '../src/main/transferEngine';
 import { DriveClient, DriveError } from '../src/main/drive';
+import type { Transfer } from '../src/shared/contracts';
 import { FakeDrive, TARGET, driveError, md5, seedJob, settle, tempDir } from './helpers';
 
 /**
@@ -346,6 +347,34 @@ describe('surviving a restart', () => {
     assert.equal(finished.status, 'completed');
     assert.equal(finished.completedFiles, 3);
     assert.equal(finished.uploadedBytes, TOTAL_BYTES);
+  });
+});
+
+describe('records written by an older build', () => {
+  test('a scan from before a field existed comes back whole', async () => {
+    // The journal holds JSON, so a folder scanned by an earlier version has an
+    // earlier shape. A screen reading scan.unreadableFiles.length on one of
+    // those throws and blanks the window, which is what happened.
+    const file = path.join(await tempDir(), 'queue.sqlite');
+    const store = new TransferStore(file);
+    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
+
+    // Write the record back the way an older build would have left it.
+    const older = store.get(job.id);
+    const stripped = { ...older.scan } as Record<string, unknown>;
+    delete stripped.unreadableFiles;
+    delete stripped.missingClips;
+    delete stripped.missingClipCount;
+    store.save({ ...older, scan: stripped as unknown as Transfer['scan'] });
+
+    const reopened = new TransferStore(file);
+    cleanups.push(() => { reopened.close(); store.close(); });
+    const scan = reopened.get(job.id).scan!;
+
+    assert.deepEqual(scan.unreadableFiles, [], 'every reader must get an array, not undefined');
+    assert.deepEqual(scan.missingClips, []);
+    assert.equal(scan.missingClipCount, 0);
+    assert.equal(scan.fileCount, 3, 'and the fields it did have are untouched');
   });
 });
 

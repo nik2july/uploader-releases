@@ -121,7 +121,7 @@ export function TransferDetail({ job, onBack, refresh }: {
 
   const canUpload = ['ready', 'paused'].includes(job.status) && scan && !scan.readErrors && target;
   const [confirmingProblems, setConfirmingProblems] = useState(false);
-  const problemCount = (scan?.missingClipCount || 0) + (scan?.unreadableFiles.length || 0);
+  const problemCount = (scan?.missingClipCount || 0) + (scan?.unreadableFiles?.length || 0);
   const needsConfirming = problemCount > 0;
 
   return (
@@ -169,17 +169,17 @@ export function TransferDetail({ job, onBack, refresh }: {
               )}
             </div>
 
-            {scan.unreadableFiles.length > 0 && (
+            {(scan.unreadableFiles?.length || 0) > 0 && (
               <div className="warning" style={{ marginTop: 14 }}>
                 <b style={{ display: 'block', marginBottom: 4 }}>
-                  {formatCount(scan.unreadableFiles.length)} files are here but could not be read.
+                  {formatCount(scan.unreadableFiles?.length || 0)} files are here but could not be read.
                 </b>
                 <p style={{ margin: '0 0 8px' }}>
                   An empty file, or a clip with no duration in its header. Usually a copy that stopped
                   part way. They will still upload — but they will upload broken.
                 </p>
                 <ul className="file-problems" style={{ maxHeight: 180 }}>
-                  {scan.unreadableFiles.slice(0, 60).map(file => (
+                  {(scan.unreadableFiles || []).slice(0, 60).map(file => (
                     <li key={file.path}><span className="mono">{file.path}</span>{file.reason}</li>
                   ))}
                 </ul>
@@ -196,7 +196,7 @@ export function TransferDetail({ job, onBack, refresh }: {
                   the card. Worth checking now — far cheaper than finding out after the upload.
                 </p>
                 <ul className="file-problems" style={{ maxHeight: 180 }}>
-                  {scan.missingClips.map(gap => (
+                  {(scan.missingClips || []).map(gap => (
                     <li key={`${gap.folder}:${gap.label}`}>
                       <span className="mono">{gap.folder ? `${gap.folder}/` : ''}{gap.label}</span>
                       {formatCount(gap.received)} arrived, {formatCount(gap.missingCount)} missing: {gap.missing.join(', ')}
@@ -392,11 +392,11 @@ export function TransferDetail({ job, onBack, refresh }: {
               <div>
                 <span className="eyebrow">BEFORE YOU SEND</span>
                 <h2 id="gaps-title">
-                  {scan!.missingClipCount > 0 && scan!.unreadableFiles.length > 0
-                    ? `${formatCount(scan!.missingClipCount)} files missing, ${formatCount(scan!.unreadableFiles.length)} unreadable`
+                  {scan!.missingClipCount > 0 && (scan!.unreadableFiles?.length || 0) > 0
+                    ? `${formatCount(scan!.missingClipCount)} files missing, ${formatCount(scan!.unreadableFiles?.length || 0)} unreadable`
                     : scan!.missingClipCount > 0
                       ? `${formatCount(scan!.missingClipCount)} files look missing`
-                      : `${formatCount(scan!.unreadableFiles.length)} files could not be read`}
+                      : `${formatCount(scan!.unreadableFiles?.length || 0)} files could not be read`}
                 </h2>
               </div>
             </header>
@@ -417,11 +417,11 @@ export function TransferDetail({ job, onBack, refresh }: {
                 </ul>
               </>
             )}
-            {scan!.unreadableFiles.length > 0 && (
+            {(scan!.unreadableFiles?.length || 0) > 0 && (
               <>
                 <p style={{ margin: '12px 0 4px', fontWeight: 600, fontSize: 14 }}>Here but unreadable</p>
                 <ul className="file-problems" style={{ maxHeight: 170 }}>
-                  {scan!.unreadableFiles.slice(0, 60).map(file => (
+                  {(scan!.unreadableFiles || []).slice(0, 60).map(file => (
                     <li key={file.path}><span className="mono">{file.path}</span>{file.reason}</li>
                   ))}
                 </ul>
