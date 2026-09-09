@@ -147,7 +147,7 @@ To publish a release:
 
 1. Bump `version` in `package.json`
 2. `npm run build:mac`
-3. Create a release on the `baawaray/uploader-releases` repository, tagged
+3. Create a release on the `nik2july/uploader-releases` repository, tagged
    `v<version>` to match, and attach `dist/Baawaray-Uploader-<version>.dmg`
 
 The repository is public so the check needs no token — anything shipped inside

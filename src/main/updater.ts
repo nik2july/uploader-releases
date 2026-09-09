@@ -7,7 +7,7 @@ import { app } from 'electron';
  * This holds releases only; the source stays private. Change it here if the
  * account or repository name is ever different.
  */
-export const RELEASES_REPO = 'baawaray/uploader-releases';
+export const RELEASES_REPO = 'nik2july/uploader-releases';
 
 export interface UpdateInfo {
   version: string;
