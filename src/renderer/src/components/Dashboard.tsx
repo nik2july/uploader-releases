@@ -3,6 +3,7 @@ import { signOut } from 'firebase/auth';
 import { Cloud, CloudOff, Film, Settings, Upload, Users } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
+import { loadUploaderOAuth } from '../lib/studioRepository';
 import { useTransfers } from '../hooks/useTransfers';
 import { ACTIVE_STATUSES } from '../utils/uploadFormat';
 import { UploadsScreen } from './screens/UploadsScreen';
@@ -23,6 +24,24 @@ export function Dashboard(): React.JSX.Element {
   // enforced by the queue, so it is pushed down whenever it changes.
   const keepAwake = studio.studioSettings?.uploader?.keepAwake;
   useEffect(() => { void window.api.setKeepAwake(Boolean(keepAwake)); }, [keepAwake]);
+
+  /**
+   * A Mac that has never been set up collects the studio's Google client from
+   * Firestore rather than waiting for someone to be sent it. Only the studio
+   * owner can read it, and it is written to this Mac's encrypted store, never
+   * shown. Connecting Drive is still done by the person sitting here.
+   */
+  const configured = drive?.configured;
+  useEffect(() => {
+    if (configured !== false) return;
+    let cancelled = false;
+    void loadUploaderOAuth().then(async saved => {
+      if (cancelled || !saved) return;
+      try { await window.api.configureDrive(saved.clientId, saved.clientSecret); await refresh(); }
+      catch { /* the settings screen still takes it by hand */ }
+    });
+    return () => { cancelled = true; };
+  }, [configured, refresh]);
 
   const open = openId ? transfers.find(job => job.id === openId) : undefined;
   const active = useMemo(() => transfers.filter(job => ACTIVE_STATUSES.includes(job.status)).length, [transfers]);

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { DriveStatus } from '../../../shared/contracts';
 import { useApp } from '../context/AppContext';
-import { saveUploaderSettings } from '../lib/studioRepository';
+import { saveUploaderSettings, saveUploaderOAuth } from '../lib/studioRepository';
 export function UploaderSettings({ drive, refresh }: { drive: DriveStatus; refresh: () => Promise<void> }) {
   const { studioSettings } = useApp();
   const defaults = studioSettings?.uploader;
@@ -17,10 +17,10 @@ export function UploaderSettings({ drive, refresh }: { drive: DriveStatus; refre
   }
   return <div className="settings-grid"><section className="panel"><span className="eyebrow">GOOGLE DRIVE</span><h2>One secure connection</h2>
     <p>{drive.connected ? `Connected as ${drive.email}` : 'Connect the Drive account that should own your uploads.'}</p>
-    <p className="muted">Use a Google OAuth client of type Desktop app with the Drive API enabled. Credentials stay encrypted on this Mac. Access is limited to files created or authorised for this app.</p>
+    <p className="muted">Use a Google OAuth client of type Desktop app with the Drive API enabled. Enter it once: it is stored where only the studio owner can read it, so any other Mac signing in picks it up by itself and nobody has to be sent the secret. On each Mac it is then kept encrypted locally. Access is limited to files this app creates.</p>
     <label>Desktop OAuth client ID<input value={clientId} onChange={e => setClientId(e.target.value)} placeholder="….apps.googleusercontent.com" autoComplete="off"/></label>
     <label>Client secret, if supplied by Google<input type="password" value={secret} onChange={e => setSecret(e.target.value)} autoComplete="new-password" placeholder="Stored securely; never sent to the web app"/></label>
-    <div className="actions"><button disabled={busy || !clientId} onClick={() => void run(async () => { await window.api.configureDrive(clientId, secret); setSecret(''); }, 'OAuth client saved. Connect Google Drive next.')}>Save OAuth client</button><button className="primary" disabled={busy || !drive.configured} onClick={() => void run(() => window.api.connectDrive(), 'Google Drive connected.')}>{busy ? 'Working…' : 'Connect Google Drive'}</button></div>
+    <div className="actions"><button disabled={busy || !clientId} onClick={() => void run(async () => { await window.api.configureDrive(clientId, secret); await saveUploaderOAuth(clientId, secret); setSecret(''); }, 'Saved on this Mac and shared with your other Macs. Connect Google Drive next.')}>Save OAuth client</button><button className="primary" disabled={busy || !drive.configured} onClick={() => void run(() => window.api.connectDrive(), 'Google Drive connected.')}>{busy ? 'Working…' : 'Connect Google Drive'}</button></div>
     <div className="actions"><button className="text-button" onClick={() => void window.api.openExternal('https://console.cloud.google.com/apis/credentials')}>Open Google credentials</button>{drive.connected && <button disabled={busy} onClick={() => void run(() => window.api.disconnectDrive(), 'Disconnected on this Mac. Uploads are paused.')}>Disconnect</button>}</div>
   </section><section className="panel"><span className="eyebrow">SHARED STUDIO DEFAULTS</span><h2>Measurements & billing</h2>
     <div className="field-row"><label>Default keep percentage<input type="number" min="0" max="100" value={keep} onChange={e => setKeep(Number(e.target.value))}/></label><label>Photos per album sheet<input type="number" min="1" max="100" value={sheets} onChange={e => setSheets(Number(e.target.value))}/></label></div>

@@ -39,9 +39,20 @@ through a third party. Once, per Mac:
 3. Click **Connect Google Drive** and complete the sign-in that opens in your
    browser.
 
-Credentials are encrypted with macOS `safeStorage` under your Mac account and
-never reach the web app. The app requests only the `drive.file` scope, so it can
-see the files it created and nothing else in your Drive.
+**You only do this once, for the studio — not once per Mac.** Saving the client
+also writes it to `studio_secrets/uploader_oauth` in Firestore, which the
+security rules make readable by the studio owner alone. Any other Mac that signs
+in fetches it and configures itself, so nobody has to be sent the secret in a
+message.
+
+It is deliberately not compiled into the app: the installer is published on a
+public releases page, and anything inside it is public. On each Mac the client
+is kept encrypted with macOS `safeStorage`, tied to that Mac's login, and it
+never reaches the web app's own servers.
+
+Connecting Drive is still per person — that grants this app access to *your*
+Drive account and is nobody else's to give. The app requests only the
+`drive.file` scope, so it can see the files it created and nothing else.
 
 ## Running it
 
@@ -111,9 +122,9 @@ xattr -dr com.apple.quarantine "/Applications/Baawaray Uploader.app"
 Signing with an Apple Developer ID ($99/year) removes all of this, and is also
 what unsigned builds give up to make silent auto-updates impossible — see below.
 
-Two things are per-Mac and have to be done once on each: the Google OAuth client
-ID and secret in Settings, and connecting Drive. The studio sign-in is the same
-everywhere.
+One thing is per-Mac: connecting Drive, which each person does for their own
+Google account. The OAuth client arrives on its own once you sign in — see
+**Setting up Google Drive** above.
 
 > The packaged app and `npm run dev` keep their settings in *different* folders,
 > because Electron names that folder after the app. Connecting Drive in dev does
