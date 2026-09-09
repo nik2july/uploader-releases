@@ -129,14 +129,21 @@ export async function advanceStage(jobId: string, stage: string, detail: string)
     const ref = doc(db, 'freelance_jobs', jobId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('That job no longer exists.');
+    const billingRef = doc(ref, 'billing', 'main');
+    const billing = await tx.get(billingRef);
     if (snap.data().stage === stage) return;
     tx.update(ref, {
       stage,
       ...(stage === 'sent_to_editor' ? { sentToEditorDate: now.toISOString().slice(0, 10) } : {}),
-      activityLogs: [...(snap.data().activityLogs || []), {
-        id: crypto.randomUUID(), timestamp: now.toISOString(), action: detail, actor: 'Studio Owner',
-      }],
     });
+    // The log belongs in the billing half. Entries elsewhere in the app carry
+    // figures — "Desktop invoice issued: DU-… 45,000" — and the parent document
+    // is readable by the assigned editor and the partner studio. Writing a log
+    // onto it would put those in front of both, today or the first time someone
+    // adds an entry with a number in it.
+    tx.set(billingRef, { activityLogs: [...(billing.data()?.activityLogs || []), {
+      id: crypto.randomUUID(), timestamp: now.toISOString(), action: detail, actor: 'Studio Owner',
+    }] }, { merge: true });
   });
 }
 
@@ -156,6 +163,8 @@ export async function logRevision(jobId: string, feedbackNotes: string, timecode
     const ref = doc(db, 'freelance_jobs', jobId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('That job no longer exists.');
+    const billingRef = doc(ref, 'billing', 'main');
+    const billing = await tx.get(billingRef);
     const existing = (snap.data().revisions || []) as { roundNumber?: number }[];
     const roundNumber = existing.reduce((highest, r) => Math.max(highest, Number(r.roundNumber) || 0), 0) + 1;
     tx.update(ref, clean({
@@ -164,11 +173,11 @@ export async function logRevision(jobId: string, feedbackNotes: string, timecode
         feedbackNotes: feedbackNotes.trim(), timecodes: timecodes?.trim() || '', status: 'pending',
       }],
       stage: 'changes_received',
-      activityLogs: [...(snap.data().activityLogs || []), {
-        id: crypto.randomUUID(), timestamp: now.toISOString(),
-        action: `Changes received — round ${roundNumber}`, details: feedbackNotes.trim().slice(0, 300), actor: 'Studio Owner',
-      }],
     }));
+    tx.set(billingRef, { activityLogs: [...(billing.data()?.activityLogs || []), {
+      id: crypto.randomUUID(), timestamp: now.toISOString(),
+      action: `Changes received — round ${roundNumber}`, details: feedbackNotes.trim().slice(0, 300), actor: 'Studio Owner',
+    }] }, { merge: true });
     return roundNumber;
   });
 }
@@ -180,17 +189,19 @@ export async function markRevisionShared(jobId: string): Promise<void> {
     const ref = doc(db, 'freelance_jobs', jobId);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('That job no longer exists.');
+    const billingRef = doc(ref, 'billing', 'main');
+    const billing = await tx.get(billingRef);
     const revisions = (snap.data().revisions || []) as Record<string, unknown>[];
     const open = [...revisions].reverse().find(r => r.status === 'pending');
     tx.update(ref, clean({
       revisions: revisions.map(r => r === open
         ? { ...r, status: 'in_progress', sharedWithEditorDate: now.toISOString().slice(0, 10) } : r),
       stage: 'changes_sent_to_editor',
-      activityLogs: [...(snap.data().activityLogs || []), {
-        id: crypto.randomUUID(), timestamp: now.toISOString(),
-        action: `Changes shared with the editor${open ? ` — round ${open.roundNumber}` : ''}`, actor: 'Studio Owner',
-      }],
     }));
+    tx.set(billingRef, { activityLogs: [...(billing.data()?.activityLogs || []), {
+      id: crypto.randomUUID(), timestamp: now.toISOString(),
+      action: `Changes shared with the editor${open ? ` — round ${open.roundNumber}` : ''}`, actor: 'Studio Owner',
+    }] }, { merge: true });
   });
 }
 
