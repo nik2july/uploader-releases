@@ -51,8 +51,26 @@ export class GoogleAuth {
       method: 'POST', signal: AbortSignal.timeout(30000),
       body: new URLSearchParams({ client_id: this.credentials.clientId,
         ...(this.credentials.clientSecret ? { client_secret: this.credentials.clientSecret } : {}), ...params }) });
-    const body = await response.json() as { access_token?: string; refresh_token?: string; expires_in?: number };
-    if (!response.ok || !body.access_token) throw new DriveError('Google sign-in expired or the OAuth client is not configured correctly. Reconnect Drive.', 'auth', response.status);
+    const body = await response.json() as {
+      access_token?: string; refresh_token?: string; expires_in?: number;
+      error?: string; error_description?: string;
+    };
+    if (!response.ok || !body.access_token) {
+      // Google says exactly what is wrong and the old message threw it away,
+      // leaving "expired or misconfigured" to cover a missing secret, a reused
+      // code and a mismatched redirect alike.
+      log('token exchange rejected', `${response.status} ${body.error || ''} ${body.error_description || ''}`.trim());
+      const reason = body.error === 'invalid_client'
+        ? 'Google did not recognise this OAuth client. The client secret is missing or does not match the client ID — paste both from your Google Cloud credentials into Settings.'
+        : body.error === 'invalid_grant'
+          ? 'Google rejected the sign-in as already used or expired. Click Connect Google Drive again and complete it in one go.'
+          : body.error === 'redirect_uri_mismatch'
+            ? 'Google refused the callback address. The OAuth client must be of type Desktop app; a Web application client will not work.'
+            : `Google refused the sign-in${body.error ? `: ${body.error}` : ''}.`;
+      throw new DriveError(
+        `${reason}${body.error_description ? ` (${body.error_description})` : ''}`,
+        'auth', response.status);
+    }
     this.credentials.accessToken = body.access_token;
     this.credentials.refreshToken = body.refresh_token ?? this.credentials.refreshToken;
     this.credentials.expiresAt = Date.now() + (body.expires_in || 3600) * 1000;
