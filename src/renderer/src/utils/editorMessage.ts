@@ -19,6 +19,29 @@ function normalisePhone(phone: string, dialCode?: string): string {
  * charges for it, and what they are being paid, are separate conversations that
  * belong in Studio OS, not in a message that is one forward away from anyone.
  */
+/**
+ * The same message, for a job whose raw data arrived as a link rather than as
+ * a folder this Mac uploaded. There is no file count or duration to quote —
+ * only the studio that sent it knows what is in there.
+ */
+export function linkMessage(job: {
+  title: string; link: string; jobCode?: string; serviceType?: string; dueDate?: string;
+  brief?: string; recipientName?: string;
+}, studioName = 'Baawaray Films'): string {
+  const lines: string[] = [];
+  lines.push(`Hi${job.recipientName ? ` ${job.recipientName}` : ''}, here is the raw data for ${job.title}.`);
+  lines.push('');
+  if (job.jobCode) lines.push(`Job: ${job.jobCode}`);
+  if (job.serviceType) lines.push(`Service: ${job.serviceType}`);
+  if (job.dueDate) lines.push(`Deadline: ${job.dueDate}`);
+  lines.push('');
+  lines.push(`Link: ${job.link}`);
+  if (job.brief?.trim()) { lines.push(''); lines.push('Editing brief:'); lines.push(job.brief.trim()); }
+  lines.push('');
+  lines.push(`— ${studioName}`);
+  return lines.join('\n');
+}
+
 export function editorMessage(job: Transfer, studioName = 'Baawaray Films'): string {
   const target = job.target;
   const scan = job.scan;

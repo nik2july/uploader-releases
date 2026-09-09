@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, FolderPlus, MessageCircle, MessageSquarePlus, Plus } from 'lucide-react';
+import { Check, Copy, ExternalLink, FolderPlus, Link as LinkIcon, MessageCircle, MessageSquarePlus, Plus } from 'lucide-react';
 import type { DriveStatus, ScanOptions, Transfer, WorkTarget } from '../../../../shared/contracts';
 import { useApp } from '../../context/AppContext';
 import { NewWorkModal } from '../NewWorkModal';
-import { assignEditor, advanceStage, markRevisionShared } from '../../lib/studioRepository';
+import { assignEditor, advanceStage, markRevisionShared, saveRawDataLink } from '../../lib/studioRepository';
 import { ChangesModal } from '../ChangesModal';
 import { getFreelanceStageMeta } from '../../utils/formatters';
 import type { FreelanceJobStage } from '../../types/freelance';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import { isDeliverablesTeamMember } from '../../utils/freelance';
-import { editorMessage, whatsappUrl } from '../../utils/editorMessage';
+import { editorMessage, linkMessage, whatsappUrl } from '../../utils/editorMessage';
 import { formatBytes, formatCount, progressFraction, statusLabel } from '../../utils/uploadFormat';
 import type { ClientDeliverable, TeamMember } from '../../types';
 
@@ -34,6 +34,8 @@ interface Row {
   editorPhone?: string;
   /** What the editor delivered back. They supply it; the studio does not upload it. */
   deliveryLink?: string;
+  /** Raw data that arrived as a link — a partner studio's Drive, WeTransfer, a NAS. */
+  rawDataLink?: string;
   target: WorkTarget;
 }
 
@@ -56,6 +58,8 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [changesFor, setChangesFor] = useState<Row | null>(null);
+  const [editingLink, setEditingLink] = useState<string | null>(null);
+  const [linkDraft, setLinkDraft] = useState('');
 
   const options: ScanOptions = useMemo(() => ({
     excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy', 'Exports'],
@@ -74,13 +78,14 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
   const rows = useMemo<Row[]>(() => {
     if (kind === 'freelance') {
       return studio.freelanceJobs.map(job => {
-        const record = job as typeof job & { stage?: string; deliveryLink?: string; finalDeliveryLink?: string };
+        const record = job as typeof job & { stage?: string; deliveryLink?: string; finalDeliveryLink?: string; rawDataLink?: string };
         return {
           key: String(job.id), jobId: String(job.id), title: job.title,
           client: job.clientName, service: String(job.serviceType || ''), due: job.dueDate || '—',
           stage: record.stage, editorMemberId: job.editorMemberId,
           editorName: job.editorName, editorPhone: job.editorPhone,
           deliveryLink: record.deliveryLink || record.finalDeliveryLink,
+          rawDataLink: record.rawDataLink,
           target: {
             kind: 'freelance', id: String(job.id), title: job.title, clientName: job.clientName,
             serviceType: String(job.serviceType || ''), purpose: 'raw', jobCode: job.jobCode,
@@ -99,6 +104,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
         due: item.dueDate || '—', stage: item.status,
         editorMemberId: item.assignedMemberId, editorName: member?.name, editorPhone: member?.phone,
         deliveryLink: item.link,
+        rawDataLink: item.rawDataLink,
         target: {
           kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
           clientName: client.name, serviceType: role?.name || item.category || '', purpose: 'raw',
@@ -288,12 +294,66 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                 {/* ----------------------------------------------- raw data */}
                 <div className="job-cell">
                   <div className="cell-label">Raw data</div>
-                  {!transfer ? (
+                  {editingLink === row.key ? (
+                    <>
+                      <input value={linkDraft} autoFocus onChange={e => setLinkDraft(e.target.value)}
+                        placeholder="https://drive.google.com/…"
+                        style={{ width: '100%', font: 'inherit', fontSize: 13, padding: '7px 9px', borderRadius: 8,
+                          background: 'var(--paper)', border: '1px solid color-mix(in srgb, var(--line) 55%, transparent)' }} />
+                      <div className="link-row">
+                        <button className="primary" disabled={busy === `${row.key}:link`}
+                          onClick={() => void run(`${row.key}:link`, async () => {
+                            await saveRawDataLink(row.target, linkDraft);
+                            if (kind === 'freelance' && linkDraft.trim() && row.stage === 'pending_assignment') {
+                              await advanceStage(row.jobId, 'data_received', 'Raw data link recorded');
+                            }
+                            setEditingLink(null);
+                          }, 'Raw data link saved.')}>Save link</button>
+                        <button disabled={busy === `${row.key}:link`} onClick={() => setEditingLink(null)}>Cancel</button>
+                      </div>
+                    </>
+                  ) : !transfer && row.rawDataLink ? (
+                    <>
+                      <div className="cell-value mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>{row.rawDataLink}</div>
+                      <div className="link-row">
+                        <button onClick={() => copy(`${row.key}:raw`, row.rawDataLink!)}>
+                          {copied === `${row.key}:raw`
+                            ? <><Check size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Copied</>
+                            : <><Copy size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Copy link</>}
+                        </button>
+                        {row.editorPhone && (
+                          <button className="primary" disabled={busy === `${row.key}:send`}
+                            onClick={() => void run(`${row.key}:send`, async () => {
+                              await window.api.openExternal(whatsappUrl(linkMessage({
+                                title: row.title, link: row.rawDataLink!, jobCode: row.target.jobCode,
+                                serviceType: row.service, dueDate: row.due === '—' ? undefined : row.due,
+                                brief: row.target.brief, recipientName: row.editorName,
+                              }, studio.studioSettings?.studioName || 'Baawaray Films'), row.editorPhone));
+                              if (kind === 'freelance') await advanceStage(row.jobId, 'sent_to_editor', 'Raw data link prepared for the editor');
+                            }, 'WhatsApp opened. Press send yourself — the app never sends for you.')}>
+                            <MessageCircle size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Send
+                          </button>
+                        )}
+                        <button onClick={() => { setLinkDraft(row.rawDataLink || ''); setEditingLink(row.key); }}>Edit</button>
+                      </div>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        Sent as a link. Upload a folder instead if you would rather hold it in your own Drive.
+                      </span>
+                    </>
+                  ) : !transfer ? (
                     <>
                       <div className="cell-value muted">Not sent yet</div>
-                      <button disabled={busy === row.key} onClick={() => void run(row.key, async () => {
-                        onScanStarted(await window.api.scan(options, row.target));
-                      })}>Choose folder</button>
+                      <div className="link-row">
+                        <button disabled={busy === row.key} onClick={() => void run(row.key, async () => {
+                          onScanStarted(await window.api.scan(options, row.target));
+                        })}>Choose folder</button>
+                        <button onClick={() => { setLinkDraft(''); setEditingLink(row.key); }}>
+                          <LinkIcon size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Paste link
+                        </button>
+                      </div>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        Upload the folder, or paste the link if the partner studio sent one.
+                      </span>
                     </>
                   ) : done ? (
                     <>

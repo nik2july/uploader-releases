@@ -193,3 +193,28 @@ export async function markRevisionShared(jobId: string): Promise<void> {
     }));
   });
 }
+
+/**
+ * Record where the raw data is, when it was not uploaded from this Mac.
+ *
+ * Partner studios often hand over a Drive or WeTransfer link rather than
+ * shipping a drive, and that link is the raw data as far as the job is
+ * concerned. It lives on the public half so the editor assigned to the job can
+ * actually open it.
+ */
+export async function saveRawDataLink(target: WorkTarget, link: string): Promise<void> {
+  const value = link.trim();
+  if (value && !/^https?:\/\/\S+$/i.test(value)) throw new Error('Paste a full link, starting with https://');
+  if (target.kind === 'freelance') {
+    await updateDoc(doc(db, 'freelance_jobs', target.id), { rawDataLink: value || null });
+    return;
+  }
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'clients', target.clientId!);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Client no longer exists.');
+    const items = (snap.data().deliverables || []) as ClientDeliverable[];
+    if (!items.some(d => d.id === target.id)) throw new Error('Deliverable no longer exists.');
+    tx.update(ref, { deliverables: clean(items.map(d => d.id === target.id ? { ...d, rawDataLink: value } : d)) });
+  });
+}
