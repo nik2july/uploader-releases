@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
-import { Check, Copy, ExternalLink, FolderPlus, MessageCircle, Plus } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Copy, ExternalLink, FolderPlus, MessageCircle, MessageSquarePlus, Plus } from 'lucide-react';
 import type { DriveStatus, ScanOptions, Transfer, WorkTarget } from '../../../../shared/contracts';
 import { useApp } from '../../context/AppContext';
 import { NewWorkModal } from '../NewWorkModal';
-import { assignEditor, advanceStage } from '../../lib/studioRepository';
+import { assignEditor, advanceStage, markRevisionShared } from '../../lib/studioRepository';
+import { ChangesModal } from '../ChangesModal';
+import { getFreelanceStageMeta } from '../../utils/formatters';
+import type { FreelanceJobStage } from '../../types/freelance';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import { isDeliverablesTeamMember } from '../../utils/freelance';
 import { editorMessage, whatsappUrl } from '../../utils/editorMessage';
@@ -34,6 +37,12 @@ interface Row {
   target: WorkTarget;
 }
 
+const STAGE_TONE: Record<string, string> = {
+  pending_assignment: 'idle', data_received: 'warn', sent_to_editor: 'busy',
+  draft_received: 'busy', sent_to_client: 'busy', changes_received: 'stop',
+  changes_sent_to_editor: 'warn', final_delivered: 'done', completed: 'done',
+};
+
 export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, onOpen }: {
   kind: 'freelance' | 'deliverables';
   transfers: Transfer[]; drive: DriveStatus | null;
@@ -46,6 +55,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
   const [copied, setCopied] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [changesFor, setChangesFor] = useState<Row | null>(null);
 
   const options: ScanOptions = useMemo(() => ({
     excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy', 'Exports'],
@@ -105,6 +115,28 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
     return rows.filter(row => `${row.title} ${row.client} ${row.service} ${row.editorName || ''}`.toLowerCase().includes(needle));
   }, [rows, query]);
 
+  /**
+   * The one stage move this app can make on its own without being told.
+   *
+   * A verified folder means the raw data is in hand, so a job still sitting at
+   * "pending assignment" is simply out of date. Every other move needs a person
+   * — only they know whether a draft is good enough to send a client.
+   */
+  const reconciled = useRef(new Set<string>());
+  useEffect(() => {
+    if (kind !== 'freelance') return;
+    for (const row of rows) {
+      if (row.stage !== 'pending_assignment' || reconciled.current.has(row.jobId)) continue;
+      const transfer = transfers.find(job => job.target?.kind === 'freelance'
+        && job.target.id === row.jobId && job.status === 'completed');
+      if (!transfer) continue;
+      reconciled.current.add(row.jobId);
+      void advanceStage(row.jobId, 'data_received', 'Raw data uploaded and verified').catch(() => {
+        reconciled.current.delete(row.jobId);
+      });
+    }
+  }, [kind, rows, transfers]);
+
   /** The raw-data transfer for this job, if one has been started. */
   function transferFor(row: Row): Transfer | undefined {
     return transfers.find(job => job.target && row.key ===
@@ -116,6 +148,19 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
     try { await fn(); if (success) setNote(success); }
     catch (err) { setError(err instanceof Error ? err.message : 'That did not complete.'); }
     finally { setBusy(''); }
+  }
+
+  /** The next stage the studio would normally move to, from the shared chain. */
+  function nextOf(row: Row): { stage: string; label: string } | null {
+    if (!row.stage) return null;
+    const meta = getFreelanceStageMeta(row.stage as FreelanceJobStage);
+    return meta.nextStage ? { stage: meta.nextStage, label: meta.nextLabel } : null;
+  }
+
+  /** The newest round of feedback, for the message to the editor. */
+  function latestChanges(row: Row): string {
+    const job = studio.freelanceJobs.find(j => String(j.id) === row.jobId) as { revisions?: { feedbackNotes?: string }[] } | undefined;
+    return job?.revisions?.[job.revisions.length - 1]?.feedbackNotes || '';
   }
 
   function copy(key: string, value: string): void {
@@ -171,11 +216,45 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                   <div className="job-title">{row.title}</div>
                   <div className="sub">
                     {row.client}{row.service ? ` · ${row.service}` : ''} · due {row.due}
-                    {row.stage ? ` · ${row.stage.replace(/_/g, ' ')}` : ''}
                   </div>
                 </div>
-                {label && <span className={`status-pill ${label.tone}`}>{label.text}</span>}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                  {kind === 'freelance' && row.stage && (
+                    <span className={`status-pill ${STAGE_TONE[row.stage] || 'idle'}`}>
+                      {getFreelanceStageMeta(row.stage as FreelanceJobStage).label}
+                    </span>
+                  )}
+                  {label && <span className={`status-pill ${label.tone}`}>{label.text}</span>}
+                </div>
               </div>
+
+              {kind === 'freelance' && row.stage && (
+                <div className="stage-row">
+                  <span className="muted">{getFreelanceStageMeta(row.stage as FreelanceJobStage).description}</span>
+                  <span style={{ flex: 1 }} />
+                  <button disabled={busy === `${row.key}:changes`} onClick={() => setChangesFor(row)}>
+                    <MessageSquarePlus size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Log changes
+                  </button>
+                  {row.stage === 'changes_received' && row.editorPhone && (
+                    <button className="primary" disabled={busy === `${row.key}:sendchanges`}
+                      onClick={() => void run(`${row.key}:sendchanges`, async () => {
+                        await window.api.openExternal(whatsappUrl(
+                          `Changes on ${row.title}:\n\n${latestChanges(row) || 'See the notes on the job.'}`, row.editorPhone));
+                        await markRevisionShared(row.jobId);
+                      }, 'WhatsApp opened, and the job moved to Changes with Editor.')}>
+                      Send changes to editor
+                    </button>
+                  )}
+                  {nextOf(row) && (
+                    <button disabled={busy === `${row.key}:stage`}
+                      onClick={() => void run(`${row.key}:stage`, () =>
+                        advanceStage(row.jobId, nextOf(row)!.stage, nextOf(row)!.label),
+                        `Moved to ${nextOf(row)!.label}.`)}>
+                      {nextOf(row)!.label}
+                    </button>
+                  )}
+                </div>
+              )}
 
               <div className="job-grid">
                 {/* ------------------------------------------------- editor */}
@@ -289,6 +368,11 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
         })}
 
       {creating && <NewWorkModal kind={kind} onClose={() => setCreating(false)} />}
+      {changesFor && (
+        <ChangesModal jobId={changesFor.jobId} jobTitle={changesFor.title} editorName={changesFor.editorName}
+          onClose={() => setChangesFor(null)}
+          onSaved={round => { setChangesFor(null); setNote(`Round ${round} logged. Send it to the editor when ready.`); }} />
+      )}
     </div>
   );
 }

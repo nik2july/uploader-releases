@@ -162,6 +162,12 @@ button.danger { color: var(--burgundy); border-color: color-mix(in srgb, var(--b
 .job-title { font-family: var(--font-subheading); font-weight: 600; font-size: 16.5px; }
 .job-head .sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
 
+.stage-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 12px; font-size: 12.5px;
+}
+.stage-row button { font-size: 12.5px; padding: 5px 11px; }
+
 .job-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 18px; margin-top: 16px; padding-top: 16px;

@@ -139,3 +139,57 @@ export async function advanceStage(jobId: string, stage: string, detail: string)
     });
   });
 }
+
+/**
+ * Record a round of client changes against a job.
+ *
+ * Rounds are numbered from what is already on the job rather than from a
+ * counter held anywhere else, so a job that came back three times reads as
+ * three rounds however the notes were entered. Written in a transaction
+ * because two people logging changes at once would otherwise both write
+ * "round 2" and one would silently replace the other.
+ */
+export async function logRevision(jobId: string, feedbackNotes: string, timecodes?: string): Promise<number> {
+  if (!feedbackNotes.trim()) throw new Error('Write down what needs changing.');
+  const now = new Date();
+  return runTransaction(db, async tx => {
+    const ref = doc(db, 'freelance_jobs', jobId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('That job no longer exists.');
+    const existing = (snap.data().revisions || []) as { roundNumber?: number }[];
+    const roundNumber = existing.reduce((highest, r) => Math.max(highest, Number(r.roundNumber) || 0), 0) + 1;
+    tx.update(ref, clean({
+      revisions: [...existing, {
+        id: crypto.randomUUID(), roundNumber, receivedDate: now.toISOString().slice(0, 10),
+        feedbackNotes: feedbackNotes.trim(), timecodes: timecodes?.trim() || '', status: 'pending',
+      }],
+      stage: 'changes_received',
+      activityLogs: [...(snap.data().activityLogs || []), {
+        id: crypto.randomUUID(), timestamp: now.toISOString(),
+        action: `Changes received — round ${roundNumber}`, details: feedbackNotes.trim().slice(0, 300), actor: 'Studio Owner',
+      }],
+    }));
+    return roundNumber;
+  });
+}
+
+/** Mark the newest outstanding round as passed to the editor. */
+export async function markRevisionShared(jobId: string): Promise<void> {
+  const now = new Date();
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'freelance_jobs', jobId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('That job no longer exists.');
+    const revisions = (snap.data().revisions || []) as Record<string, unknown>[];
+    const open = [...revisions].reverse().find(r => r.status === 'pending');
+    tx.update(ref, clean({
+      revisions: revisions.map(r => r === open
+        ? { ...r, status: 'in_progress', sharedWithEditorDate: now.toISOString().slice(0, 10) } : r),
+      stage: 'changes_sent_to_editor',
+      activityLogs: [...(snap.data().activityLogs || []), {
+        id: crypto.randomUUID(), timestamp: now.toISOString(),
+        action: `Changes shared with the editor${open ? ` — round ${open.roundNumber}` : ''}`, actor: 'Studio Owner',
+      }],
+    }));
+  });
+}
