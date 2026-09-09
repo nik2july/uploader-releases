@@ -10,7 +10,7 @@ const api: DesktopAPI = {
   disconnectDrive: () => ipcRenderer.invoke('drive:disconnect'),
   enqueue: (id, target, invoice) => ipcRenderer.invoke('transfers:enqueue', id, target, invoice),
   pause: id => ipcRenderer.invoke('transfers:pause', id), resume: id => ipcRenderer.invoke('transfers:resume', id),
-  relocate: id => ipcRenderer.invoke('transfers:relocate', id), share: (id, mode, email) => ipcRenderer.invoke('transfers:share', id, mode, email),
+  relocate: id => ipcRenderer.invoke('transfers:relocate', id), rescan: id => ipcRenderer.invoke('transfers:rescan', id), share: (id, mode, email) => ipcRenderer.invoke('transfers:share', id, mode, email),
   markSynced: id => ipcRenderer.invoke('transfers:synced', id),
   markMessagePrepared: id => ipcRenderer.invoke('transfers:prepared', id), saveInvoice: (id, invoice) => ipcRenderer.invoke('invoice:save', id, invoice),
   savePdf: (bytes, filename) => ipcRenderer.invoke('invoice:pdf', bytes, filename),

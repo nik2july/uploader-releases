@@ -56,7 +56,18 @@ export async function setupIpcHandlers(): Promise<() => void> {
   };
   const drive = new DriveClient(force => google.token(force));
   const engine = new TransferEngine(store, drive, () => google.status().connected ? google.status().email : undefined, changed,
-    job => { if (Notification.isSupported()) new Notification({ title: 'Upload verified', body: `${job.target?.title || job.rootName} is ready to share.` }).show(); });
+    job => {
+      // Make it openable the moment it is verified. Editors are freelancers on
+      // whatever account they happen to have, and a link that needs a Google
+      // sign-in they do not possess is a link that does not work. This is a
+      // deliberate default: the folder is readable by anyone holding the link.
+      void (async () => {
+        try {
+          if (job.folderId && !job.shared) { await drive.share(job.folderId, 'anyone', ''); store.patch(job.id, { shared: true, sharing: 'anyone' }); changed(); }
+        } catch { /* the studio can still share by hand from the job */ }
+      })();
+      if (Notification.isSupported()) new Notification({ title: 'Upload verified', body: `${job.target?.title || job.rootName} is ready to send.` }).show();
+    });
   const scans = new Map<string, AbortController>();
   function trusted(event: IpcMainInvokeEvent): void {
     if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted IPC frame.');
@@ -139,6 +150,21 @@ export async function setupIpcHandlers(): Promise<() => void> {
     const job = owned(id); engine.pause(id);
     const result = await dialog.showOpenDialog({ title: `Locate the original ${job.rootName} folder`, properties: ['openDirectory'] });
     if (!result.canceled && result.filePaths[0]) { store.patch(id, { rootPath: result.filePaths[0], error: 'Folder location updated. Resume will check source files before sending.' }); changed(); }
+  });
+  handle('transfers:rescan', async (id: string) => {
+    const job = owned(id);
+    if (scans.size) throw new Error('Finish or cancel the current scan first.');
+    if (['scanning', 'queued', 'uploading', 'verifying'].includes(job.status)) throw new Error('Wait for this transfer to stop before adding files.');
+    const result = await dialog.showOpenDialog({ title: `Add files to ${job.target?.title || job.rootName}`, defaultPath: job.rootPath, properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return false;
+    // Files already verified keep their rows and are not sent again; the fresh
+    // summary counts the folder as it stands now, so reconciliation still holds.
+    store.patch(id, { rootPath: result.filePaths[0], status: 'scanning', error: undefined });
+    const controller = new AbortController(); scans.set(id, controller); changed();
+    void scanDirectory(store, id, controller.signal, changed).catch(error => {
+      store.patch(id, { status: 'needs_attention', error: controller.signal.aborted ? 'Scan cancelled.' : String(error.message || error) });
+    }).finally(() => { scans.delete(id); changed(); });
+    return true;
   });
   handle('transfers:share', async (id: string, mode: 'restricted' | 'anyone', email: string) => {
     const job = owned(id);

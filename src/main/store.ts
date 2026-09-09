@@ -37,8 +37,13 @@ export class TransferStore {
   patch(id: string, values: Partial<Transfer>): Transfer {
     const job = { ...this.get(id), ...values }; this.save(job); return job;
   }
+  /**
+   * OR IGNORE, so re-scanning a folder that has already been sent leaves the
+   * rows for files Drive has confirmed exactly as they were — with their Drive
+   * ids and verified state — and only the newly arrived files are added.
+   */
   addFile(job: string, file: Omit<ManifestFile, 'id' | 'jobId' | 'offset' | 'state'>): void {
-    this.db.prepare('INSERT INTO files(job,path,data) VALUES(?,?,?)').run(job, file.relativePath, JSON.stringify(file));
+    this.db.prepare('INSERT OR IGNORE INTO files(job,path,data) VALUES(?,?,?)').run(job, file.relativePath, JSON.stringify(file));
   }
   private file(row: Record<string, unknown>): ManifestFile {
     return { ...JSON.parse(String(row.data)), id: Number(row.id), jobId: String(row.job), state: row.state, offset: Number(row.offset) };

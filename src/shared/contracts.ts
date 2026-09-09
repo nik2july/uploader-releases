@@ -52,6 +52,8 @@ export interface DesktopAPI {
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
   relocate(id: string): Promise<void>;
+  /** Re-scan a transfer's folder and queue anything that is not already verified. */
+  rescan(id: string): Promise<boolean>;
   share(id: string, mode: 'restricted' | 'anyone', email: string): Promise<string>;
   markSynced(id: string): Promise<void>;
   markMessagePrepared(id: string): Promise<void>;

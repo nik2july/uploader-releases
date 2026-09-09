@@ -1,7 +1,7 @@
-import { collection, doc, runTransaction, writeBatch, updateDoc } from 'firebase/firestore';
+import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { splitFreelanceRecord } from '../../../../../WEB APP/src/lib/freelanceSchema';
-import type { FreelanceJob, ClientDeliverable } from '../types';
+import type { FreelanceJob, ClientDeliverable, TeamMember } from '../types';
 import type { InvoiceSnapshot, Transfer, WorkTarget } from '../../../shared/contracts';
 
 const clean = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -97,4 +97,45 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
 export async function saveUploaderSettings(settings: { keepPercentDefault: number; photosPerSheet: number; excludedBillingFolders: string[]; countPhotoPairsOnce: boolean; keepAwake: boolean }): Promise<void> {
   if (settings.keepPercentDefault < 0 || settings.keepPercentDefault > 100 || !Number.isInteger(settings.photosPerSheet) || settings.photosPerSheet < 1 || settings.photosPerSheet > 100) throw new Error('Invalid uploader defaults.');
   await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.uploader': settings });
+}
+
+/**
+ * Assign, reassign or clear the editor on a freelance job.
+ *
+ * Editor identity lives in the job's `editor` half, which is where the security
+ * rules let an editor read their own assignment and nowhere else — writing it
+ * onto the parent document would put every editor's details in front of every
+ * signed-in person. `editorAuthUid` is copied across so the rules can match a
+ * listen against the job alone; it exists only once that editor has signed in.
+ */
+export async function assignEditor(jobId: string, member: TeamMember | null): Promise<void> {
+  if (!jobId) throw new Error('No job to assign.');
+  await setDoc(doc(db, 'freelance_jobs', jobId, 'editor', 'main'), clean({
+    editorMemberId: member?.id ?? null,
+    editorName: member?.name ?? '',
+    editorPhone: member?.phone ?? '',
+    editorEmail: member?.email ?? '',
+    editorAuthUid: member?.authUid ?? null,
+  }), { merge: true });
+}
+
+/**
+ * Move a job along and leave a trail. The stage is on the public half because
+ * everyone working the job needs to see where it has got to.
+ */
+export async function advanceStage(jobId: string, stage: string, detail: string): Promise<void> {
+  const now = new Date();
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'freelance_jobs', jobId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('That job no longer exists.');
+    if (snap.data().stage === stage) return;
+    tx.update(ref, {
+      stage,
+      ...(stage === 'sent_to_editor' ? { sentToEditorDate: now.toISOString().slice(0, 10) } : {}),
+      activityLogs: [...(snap.data().activityLogs || []), {
+        id: crypto.randomUUID(), timestamp: now.toISOString(), action: detail, actor: 'Studio Owner',
+      }],
+    });
+  });
 }

@@ -69,7 +69,7 @@ export function UploadsScreen({ transfers, loading, error, drive, onOpen, onSett
                     <div className="sub muted" style={{ marginTop: 4, fontSize: 13 }}>
                       {job.target.kind === 'freelance' ? 'Partner studio' : 'Client'} · {job.target.clientName}
                       {job.target.serviceType ? ` · ${job.target.serviceType}` : ''}
-                      {job.target.purpose === 'raw' ? ' · raw footage' : ' · final delivery'}
+                      {job.target.purpose === 'raw' ? ' · raw data' : ' · final delivery'}
                     </div>
                   )}
                 </div>

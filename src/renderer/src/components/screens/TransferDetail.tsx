@@ -123,7 +123,7 @@ export function TransferDetail({ job, onBack, refresh }: {
       <header>
         <div>
           <span className="eyebrow">
-            {target ? `${target.kind === 'freelance' ? 'PARTNER STUDIO' : 'CLIENT'} · ${target.purpose === 'raw' ? 'RAW FOOTAGE' : 'FINAL DELIVERY'}` : 'FOLDER'}
+            {target ? `${target.kind === 'freelance' ? 'PARTNER STUDIO' : 'CLIENT'} · ${target.purpose === 'raw' ? 'RAW DATA' : 'FINAL DELIVERY'}` : 'FOLDER'}
           </span>
           <h2>{target?.title || job.rootName}</h2>
           <p className="mono" style={{ fontSize: 12.5 }}>{job.rootPath}</p>

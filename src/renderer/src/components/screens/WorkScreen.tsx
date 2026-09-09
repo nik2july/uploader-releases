@@ -1,25 +1,51 @@
 import { useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Check, Copy, ExternalLink, FolderPlus, MessageCircle, Plus } from 'lucide-react';
 import type { DriveStatus, ScanOptions, Transfer, WorkTarget } from '../../../../shared/contracts';
 import { useApp } from '../../context/AppContext';
 import { NewWorkModal } from '../NewWorkModal';
+import { assignEditor, advanceStage } from '../../lib/studioRepository';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
-import { statusLabel } from '../../utils/uploadFormat';
+import { isDeliverablesTeamMember } from '../../utils/freelance';
+import { editorMessage, whatsappUrl } from '../../utils/editorMessage';
+import { formatBytes, formatCount, progressFraction, statusLabel } from '../../utils/uploadFormat';
 import type { ClientDeliverable, TeamMember } from '../../types';
 
-interface Row { key: string; title: string; sub: string; when: string; targets: { raw: WorkTarget; delivery: WorkTarget } }
+/**
+ * One row per job, holding everything that job needs.
+ *
+ * Raw data and the finished delivery used to live on separate screens from the
+ * work they belonged to, so tracking a job meant looking in two places and
+ * matching titles by eye. Everything a job has — who is editing it, where its
+ * footage went, the link to send them, the link they sent back — is here.
+ */
+interface Row {
+  key: string;
+  jobId: string;
+  title: string;
+  client: string;
+  service: string;
+  due: string;
+  stage?: string;
+  editorMemberId?: number;
+  editorName?: string;
+  editorPhone?: string;
+  /** What the editor delivered back. They supply it; the studio does not upload it. */
+  deliveryLink?: string;
+  target: WorkTarget;
+}
 
-/** Both work lists behave identically; only where the rows come from differs. */
-export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings }: {
+export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, onOpen }: {
   kind: 'freelance' | 'deliverables';
   transfers: Transfer[]; drive: DriveStatus | null;
-  onScanStarted: (id: string | null) => void; onSettings: () => void;
+  onScanStarted: (id: string | null) => void; onSettings: () => void; onOpen: (id: string) => void;
 }): React.JSX.Element {
   const studio = useApp();
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState('');
+  const [copied, setCopied] = useState('');
   const [error, setError] = useState('');
+  const [note, setNote] = useState('');
 
   const options: ScanOptions = useMemo(() => ({
     excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy', 'Exports'],
@@ -31,22 +57,25 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings }
     return normaliseServices(studio.studioSettings?.crewRoles || studio.studioPriceList?.crewRoles || [], groups);
   }, [studio.studioSettings, studio.studioPriceList]);
 
+  const editors = useMemo(
+    () => studio.team.filter((m: TeamMember) => m.active !== false && isDeliverablesTeamMember(m)),
+    [studio.team]);
+
   const rows = useMemo<Row[]>(() => {
     if (kind === 'freelance') {
       return studio.freelanceJobs.map(job => {
-        const partner = studio.freelanceClients.find(c => String(c.id) === String(job.freelanceClientId));
-        const shared = { kind: 'freelance' as const, id: String(job.id), title: job.title, clientName: job.clientName,
-          serviceType: String(job.serviceType || ''), jobCode: job.jobCode, dueDate: job.dueDate, brief: job.description };
+        const record = job as typeof job & { stage?: string; deliveryLink?: string; finalDeliveryLink?: string };
         return {
-          key: String(job.id),
-          title: job.title,
-          sub: `${job.clientName}${job.serviceType ? ` · ${job.serviceType}` : ''}${job.editorName ? ` · editor ${job.editorName}` : ' · editor unassigned'}`,
-          when: job.dueDate || '—',
-          targets: {
-            // Raw footage goes to whoever is editing it; the finished film goes
-            // back to the partner studio that commissioned it.
-            raw: { ...shared, purpose: 'raw', recipientName: job.editorName, recipientPhone: job.editorPhone, recipientEmail: job.editorEmail },
-            delivery: { ...shared, purpose: 'delivery', recipientName: partner?.contactPerson || job.clientName, recipientPhone: job.clientPhone || partner?.phone, recipientEmail: job.clientEmail || partner?.email },
+          key: String(job.id), jobId: String(job.id), title: job.title,
+          client: job.clientName, service: String(job.serviceType || ''), due: job.dueDate || '—',
+          stage: record.stage, editorMemberId: job.editorMemberId,
+          editorName: job.editorName, editorPhone: job.editorPhone,
+          deliveryLink: record.deliveryLink || record.finalDeliveryLink,
+          target: {
+            kind: 'freelance', id: String(job.id), title: job.title, clientName: job.clientName,
+            serviceType: String(job.serviceType || ''), purpose: 'raw', jobCode: job.jobCode,
+            dueDate: job.dueDate, brief: job.description,
+            recipientName: job.editorName, recipientPhone: job.editorPhone, recipientEmail: job.editorEmail,
           },
         };
       });
@@ -54,37 +83,44 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings }
     return studio.clients.flatMap(client => (client.deliverables || []).map((item: ClientDeliverable) => {
       const role = roles.find(r => r.id === item.linkedRoleId);
       const member = studio.team.find((m: TeamMember) => m.id === item.assignedMemberId);
-      const shared = { kind: 'deliverable' as const, id: item.id, clientId: String(client.id), title: item.title,
-        clientName: client.name, serviceType: role?.name || item.category || '', dueDate: item.dueDate, brief: item.notes };
       return {
-        key: `${client.id}:${item.id}`,
-        title: item.title,
-        sub: `${client.name} · ${role?.name || item.category || 'Deliverable'}${item.isExtra ? ' · extra' : ''} · ${item.status}`,
-        when: item.dueDate || '—',
-        targets: {
-          raw: { ...shared, purpose: 'raw' as const, recipientName: member?.name, recipientPhone: member?.phone, recipientEmail: member?.email },
-          delivery: { ...shared, purpose: 'delivery' as const, recipientName: client.name, recipientPhone: client.phone, recipientEmail: client.email },
+        key: `${client.id}:${item.id}`, jobId: item.id, title: item.title,
+        client: client.name, service: role?.name || item.category || 'Deliverable',
+        due: item.dueDate || '—', stage: item.status,
+        editorMemberId: item.assignedMemberId, editorName: member?.name, editorPhone: member?.phone,
+        deliveryLink: item.link,
+        target: {
+          kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
+          clientName: client.name, serviceType: role?.name || item.category || '', purpose: 'raw',
+          dueDate: item.dueDate, brief: item.notes,
+          recipientName: member?.name, recipientPhone: member?.phone, recipientEmail: member?.email,
         },
       };
     }));
-  }, [kind, studio.freelanceJobs, studio.freelanceClients, studio.clients, studio.team, roles]);
+  }, [kind, studio.freelanceJobs, studio.clients, studio.team, roles]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return rows;
-    return rows.filter(row => `${row.title} ${row.sub}`.toLowerCase().includes(needle));
+    return rows.filter(row => `${row.title} ${row.client} ${row.service} ${row.editorName || ''}`.toLowerCase().includes(needle));
   }, [rows, query]);
 
-  async function startScan(row: Row, purpose: 'raw' | 'delivery'): Promise<void> {
-    setBusy(row.key + purpose); setError('');
-    try { onScanStarted(await window.api.scan(options, row.targets[purpose])); }
-    catch (err) { setError(err instanceof Error ? err.message : 'The folder could not be opened.'); }
+  /** The raw-data transfer for this job, if one has been started. */
+  function transferFor(row: Row): Transfer | undefined {
+    return transfers.find(job => job.target && row.key ===
+      (job.target.kind === 'freelance' ? job.target.id : `${job.target.clientId}:${job.target.id}`));
+  }
+
+  async function run(key: string, fn: () => Promise<unknown>, success = ''): Promise<void> {
+    setBusy(key); setError(''); setNote('');
+    try { await fn(); if (success) setNote(success); }
+    catch (err) { setError(err instanceof Error ? err.message : 'That did not complete.'); }
     finally { setBusy(''); }
   }
 
-  /** Anything already uploading or verified for this job, so it is not sent twice. */
-  function existing(row: Row): Transfer[] {
-    return transfers.filter(job => job.target && `${job.target.kind === 'freelance' ? job.target.id : `${job.target.clientId}:${job.target.id}`}` === row.key);
+  function copy(key: string, value: string): void {
+    void navigator.clipboard.writeText(value);
+    setCopied(key); setTimeout(() => setCopied(''), 2200);
   }
 
   return (
@@ -94,12 +130,13 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings }
           <span className="eyebrow">{kind === 'freelance' ? 'PARTNER STUDIOS' : 'OUR CLIENTS'}</span>
           <h2>{kind === 'freelance' ? 'Partner studio work' : 'Client deliverables'}</h2>
           <p>{kind === 'freelance'
-            ? 'Freelance jobs read live from Studio OS. Choose a job, then the folder on this Mac or an external drive.'
-            : 'Deliverables from your booked clients. Raw footage for an editor and the finished delivery are kept as separate links.'}</p>
+            ? 'Live from Studio OS. Assign an editor, send them the raw data, and keep the link they send back — all on the job itself.'
+            : 'Deliverables from your booked clients, with the raw data you sent and the finished link kept together.'}</p>
         </div>
         <div className="actions" style={{ margin: 0 }}>
-          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search…"
-            style={{ font: 'inherit', fontSize: 14, padding: '9px 11px', borderRadius: 10, background: 'var(--panel)', border: '1px solid color-mix(in srgb, var(--line) 50%, transparent)' }} />
+          <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search jobs, studios, editors…"
+            style={{ font: 'inherit', fontSize: 14, padding: '9px 11px', borderRadius: 10, minWidth: 230,
+              background: 'var(--panel)', border: '1px solid color-mix(in srgb, var(--line) 50%, transparent)' }} />
           <button className="primary" onClick={() => setCreating(true)}>
             <Plus size={15} style={{ verticalAlign: -3, marginRight: 6 }} />
             {kind === 'freelance' ? 'New freelance work' : 'Add a deliverable'}
@@ -108,57 +145,148 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings }
       </header>
 
       {!drive?.connected && (
-        <p className="warning">Scanning works without Drive, but nothing sends until Drive is connected. {' '}
+        <p className="warning">Scanning works without Drive, but nothing sends until Drive is connected.{' '}
           <button className="text-button" onClick={onSettings}>Open settings</button></p>
       )}
       {studio.error && <p className="error" role="alert">{studio.error}</p>}
       {error && <p className="error" role="alert">{error}</p>}
+      {note && <p className="success" role="status">{note}</p>}
 
-      <div className="panel" style={{ padding: '18px 8px 8px' }}>
-        {studio.loading && rows.length === 0 ? <p className="muted" style={{ padding: '20px 14px' }}>Loading from Studio OS…</p>
-          : filtered.length === 0 ? (
-            <div className="empty">
-              <h3>Nothing here yet</h3>
-              <p>{query ? 'No work matches that search.' : 'Create the work first, then come back to upload its folder.'}</p>
-            </div>
-          ) : (
-            <table className="work-table">
-              <thead><tr>
-                <th>{kind === 'freelance' ? 'Job' : 'Deliverable'}</th>
-                <th>Due</th>
-                <th>Uploads</th>
-                <th className="right">Choose folder</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map(row => {
-                  const linked = existing(row);
-                  return (
-                    <tr key={row.key}>
-                      <td>
-                        <div className="title">{row.title}</div>
-                        <div className="sub">{row.sub}</div>
-                      </td>
-                      <td className="mono muted" style={{ fontSize: 13 }}>{row.when}</td>
-                      <td>
-                        {linked.length === 0 ? <span className="muted" style={{ fontSize: 13 }}>None</span>
-                          : linked.map(job => {
-                            const label = statusLabel(job.status);
-                            return <span key={job.id} className={`status-pill ${label.tone}`} style={{ marginRight: 6 }}>
-                              {job.target?.purpose === 'raw' ? 'Raw' : 'Delivery'} · {label.text}
-                            </span>;
-                          })}
-                      </td>
-                      <td className="right">
-                        <button disabled={busy === row.key + 'raw'} onClick={() => void startScan(row, 'raw')}>Raw footage</button>{' '}
-                        <button disabled={busy === row.key + 'delivery'} onClick={() => void startScan(row, 'delivery')}>Final delivery</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-      </div>
+      {studio.loading && rows.length === 0 ? <p className="muted">Loading from Studio OS…</p>
+        : filtered.length === 0 ? (
+          <div className="panel empty">
+            <h3>Nothing here yet</h3>
+            <p>{query ? 'No work matches that search.' : 'Create the work first, then come back to send its raw data.'}</p>
+          </div>
+        ) : filtered.map(row => {
+          const transfer = transferFor(row);
+          const label = transfer ? statusLabel(transfer.status) : null;
+          const done = transfer?.status === 'completed';
+          const message = transfer && done ? editorMessage(transfer, studio.studioSettings?.studioName || 'Baawaray Films') : '';
+
+          return (
+            <article key={row.key} className="panel job-card">
+              <div className="job-head">
+                <div>
+                  <div className="job-title">{row.title}</div>
+                  <div className="sub">
+                    {row.client}{row.service ? ` · ${row.service}` : ''} · due {row.due}
+                    {row.stage ? ` · ${row.stage.replace(/_/g, ' ')}` : ''}
+                  </div>
+                </div>
+                {label && <span className={`status-pill ${label.tone}`}>{label.text}</span>}
+              </div>
+
+              <div className="job-grid">
+                {/* ------------------------------------------------- editor */}
+                <div className="job-cell">
+                  <div className="cell-label">Editor</div>
+                  {kind === 'freelance' ? (
+                    <select
+                      value={row.editorMemberId ?? ''}
+                      disabled={busy === `${row.key}:editor`}
+                      onChange={e => {
+                        const member = editors.find(m => String(m.id) === e.target.value) || null;
+                        void run(`${row.key}:editor`, () => assignEditor(row.jobId, member),
+                          member ? `${member.name} assigned.` : 'Editor cleared.');
+                      }}>
+                      <option value="">Assign later</option>
+                      {editors.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  ) : (
+                    <div className="cell-value">{row.editorName || 'Not assigned'}</div>
+                  )}
+                  {row.editorPhone && (
+                    <button className="text-button" style={{ paddingLeft: 0 }}
+                      onClick={() => void window.api.openExternal(whatsappUrl(
+                        message || `Hi ${row.editorName || ''}, about ${row.title}.`, row.editorPhone))}>
+                      <MessageCircle size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
+                      WhatsApp {row.editorName?.split(' ')[0]}
+                    </button>
+                  )}
+                </div>
+
+                {/* ----------------------------------------------- raw data */}
+                <div className="job-cell">
+                  <div className="cell-label">Raw data</div>
+                  {!transfer ? (
+                    <>
+                      <div className="cell-value muted">Not sent yet</div>
+                      <button disabled={busy === row.key} onClick={() => void run(row.key, async () => {
+                        onScanStarted(await window.api.scan(options, row.target));
+                      })}>Choose folder</button>
+                    </>
+                  ) : done ? (
+                    <>
+                      <div className="cell-value">
+                        {formatCount(transfer.scan?.fileCount || 0)} files · {formatBytes(transfer.scan?.totalBytes || 0)}
+                        {transfer.sharing === 'anyone' && <span className="muted"> · anyone with the link</span>}
+                      </div>
+                      <div className="link-row">
+                        <button onClick={() => copy(`${row.key}:raw`, transfer.link || '')}>
+                          {copied === `${row.key}:raw`
+                            ? <><Check size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Copied</>
+                            : <><Copy size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Copy link</>}
+                        </button>
+                        <button onClick={() => void window.api.openExternal(transfer.link!)}>
+                          <ExternalLink size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Drive
+                        </button>
+                        {row.editorPhone && (
+                          <button className="primary" disabled={busy === `${row.key}:send`}
+                            onClick={() => void run(`${row.key}:send`, async () => {
+                              await window.api.openExternal(whatsappUrl(message, row.editorPhone));
+                              await window.api.markMessagePrepared(transfer.id);
+                              if (kind === 'freelance') await advanceStage(row.jobId, 'sent_to_editor', 'Raw data link prepared for the editor');
+                            }, 'WhatsApp opened. Press send yourself — the app never sends for you.')}>
+                            <MessageCircle size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Send
+                          </button>
+                        )}
+                        <button disabled={busy === `${row.key}:more`}
+                          onClick={() => void run(`${row.key}:more`, async () => {
+                            if (await window.api.rescan(transfer.id)) onOpen(transfer.id);
+                          })}>
+                          <FolderPlus size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Add more files
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="bar"><span style={{ width: `${(progressFraction(transfer) * 100).toFixed(1)}%` }} /></div>
+                      <div className="cell-value muted" style={{ marginTop: 6 }}>
+                        {formatBytes(transfer.uploadedBytes)} of {formatBytes(transfer.scan?.totalBytes || 0)}
+                      </div>
+                      <button onClick={() => onOpen(transfer.id)}>Open transfer</button>
+                    </>
+                  )}
+                  {transfer?.error && <p className="warning" style={{ fontSize: 12.5 }}>{transfer.error}</p>}
+                </div>
+
+                {/* ----------------------------------------- final delivery */}
+                <div className="job-cell">
+                  <div className="cell-label">Final delivery</div>
+                  {row.deliveryLink ? (
+                    <>
+                      <div className="cell-value mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>{row.deliveryLink}</div>
+                      <div className="link-row">
+                        <button onClick={() => copy(`${row.key}:final`, row.deliveryLink!)}>
+                          {copied === `${row.key}:final`
+                            ? <><Check size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Copied</>
+                            : <><Copy size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Copy link</>}
+                        </button>
+                        <button onClick={() => void window.api.openExternal(row.deliveryLink!)}>Open</button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="cell-value muted">
+                      Waiting for the editor. They add the finished link from their own portal — it can be
+                      Drive, Google Photos, or wherever they worked.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </article>
+          );
+        })}
 
       {creating && <NewWorkModal kind={kind} onClose={() => setCreating(false)} />}
     </div>
