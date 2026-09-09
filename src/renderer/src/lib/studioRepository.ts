@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, runTransaction, setDoc, writeBatch, updateDoc } from 'firebase/firestore';
+import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 import { splitFreelanceRecord } from '../../../../../WEB APP/src/lib/freelanceSchema';
 import type { FreelanceJob, ClientDeliverable, TeamMember } from '../types';
@@ -233,38 +233,21 @@ export async function saveRawDataLink(target: WorkTarget, link: string): Promise
 /**
  * The studio's Google OAuth client, shared between the Macs that run this app.
  *
- * Every installation used to need the client id and secret typed in by hand,
- * which meant passing a credential around by message for each new admin — the
- * least safe way to move a secret and the easiest to leave lying in a chat.
- *
- * It is not baked into the app either: the installer is published on a public
- * releases page, so anything inside it is public. It lives in Firestore under
- * `studio_secrets`, which only the studio owner can read, and each Mac fetches
- * it once after signing in and then keeps it encrypted locally.
- *
- * Connecting Drive is still done per person. This shares the app's identity
- * with Google, never anyone's access to a Drive account.
+ * Owner-only provisioning. The backend reads the secret to exchange tokens;
+ * normal desktop sign-in never fetches this document or copies the secret.
+ * Google grants remain separate for each person's studio account and Mac.
  */
-export interface UploaderOAuth { clientId: string; clientSecret: string }
-
-export async function loadUploaderOAuth(): Promise<UploaderOAuth | null> {
-  try {
-    const snap = await getDoc(doc(db, 'studio_secrets', 'uploader_oauth'));
-    if (!snap.exists()) return null;
-    const data = snap.data() as Partial<UploaderOAuth>;
-    return data.clientId ? { clientId: data.clientId, clientSecret: data.clientSecret || '' } : null;
-  } catch {
-    // Offline, or an account that may not read it. The settings screen still
-    // lets the owner enter it by hand.
-    return null;
-  }
-}
-
 export async function saveUploaderOAuth(clientId: string, clientSecret: string): Promise<void> {
   if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(clientId.trim())) {
     throw new Error('Enter a Google OAuth Desktop app client ID.');
   }
-  await setDoc(doc(db, 'studio_secrets', 'uploader_oauth'),
-    { clientId: clientId.trim(), clientSecret: clientSecret.trim(), updatedAt: new Date().toISOString() },
-    { merge: true });
+  const ref = doc(db, 'studio_secrets', 'uploader_oauth');
+  await runTransaction(db, async tx => {
+    const previous = (await tx.get(ref)).data();
+    if (!clientSecret.trim() && (previous?.clientId !== clientId.trim() || !previous?.clientSecret)) {
+      throw new Error('Enter the matching client secret for a new OAuth client.');
+    }
+    tx.set(ref, { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+      updatedAt: new Date().toISOString() }, { merge: true });
+  });
 }

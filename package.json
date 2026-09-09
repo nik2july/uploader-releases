@@ -1,6 +1,6 @@
 {
   "name": "baawaray-admin-app",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -14,7 +14,8 @@
     "test": "tsx --test test/*.test.ts",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && npm run test && electron-vite build",
+    "icons": "node scripts/build-icons.mjs",
+    "build": "npm run icons && npm run typecheck && npm run test && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
@@ -54,6 +55,7 @@
     "prettier": "^3.7.4",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
+    "sharp": "^0.35.4",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "vite": "^7.2.6"

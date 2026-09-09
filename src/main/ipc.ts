@@ -90,7 +90,8 @@ export async function setupIpcHandlers(): Promise<() => void> {
       || ![invoice.quantity, invoice.rate, invoice.subtotal, invoice.tax, invoice.total, invoice.taxPercent].every(n => Number.isFinite(n) && n >= 0)
       || invoice.taxPercent > 100) throw new Error('Invalid invoice.');
   }
-  const signOut = (): void => { engine.pauseAll(); engine.setOwner(''); owner = ''; google.clear(); for (const controller of scans.values()) controller.abort(); changed(); };
+  let authorizationGeneration = 0;
+  const signOut = (invalidate = true): void => { if (invalidate) authorizationGeneration++; engine.pauseAll(); engine.setOwner(''); owner = ''; google.clear(); for (const controller of scans.values()) controller.abort(); changed(); };
   handle('studio:login', async (phone: string, password: string) => {
     if (typeof phone !== 'string' || typeof password !== 'string' || phone.length > 40 || password.length > 256) throw new Error('Invalid login fields.');
     const response = await fetch('https://app.baawaray.com/api/login', { method: 'POST', signal: AbortSignal.timeout(30000),
@@ -101,6 +102,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
     return { customToken: body.customToken };
   }, false);
   handle('studio:authorize', async (idToken: string) => {
+    const attempt = ++authorizationGeneration;
     if (typeof idToken !== 'string' || idToken.length > 20000) throw new Error('Invalid studio session.');
     const database = firebaseConfig.firestoreDatabaseId || '(default)';
     const response = await fetch(`https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${database}/documents/studio_config/main`,
@@ -110,10 +112,15 @@ export async function setupIpcHandlers(): Promise<() => void> {
     // Firestore verified the token above; compare its subject with the protected owner record.
     const subject = JSON.parse(Buffer.from(idToken.split('.')[1], 'base64url').toString()).sub;
     if (!subject || subject !== config.fields.ownerUid?.stringValue) throw new Error('Only the studio owner can use this uploader.');
-    if (subject !== owner) { signOut(); await google.load(subject); owner = subject; engine.setOwner(owner); }
+    if (attempt !== authorizationGeneration) throw new Error('Studio session changed during sign-in.');
+    if (subject !== owner) {
+      signOut(false); await google.load(subject, idToken);
+      if (attempt !== authorizationGeneration) throw new Error('Studio session changed during sign-in.');
+      owner = subject; engine.setOwner(owner);
+    }
     return owner;
   }, false);
-  handle('studio:signOut', signOut, false);
+  handle('studio:signOut', () => signOut(), false);
   handle('transfers:list', () => store.all(owner));
   handle('transfers:inspect', (id: string) => { owned(id); return { files: store.problems(id) }; });
   handle('scanner:start', async (options: ScanOptions, target?: WorkTarget) => {
@@ -133,14 +140,10 @@ export async function setupIpcHandlers(): Promise<() => void> {
   });
   handle('scanner:cancel', (id: string) => { owned(id); scans.get(id)?.abort(); });
   handle('drive:status', () => google.status());
-  handle('drive:configure', async (clientId: string, secret: string) => {
+  handle('drive:configuration', () => google.refreshConfiguration());
+  handle('drive:connect', async (idToken: string) => {
     engine.pauseAll();
-    log('drive:configure', `secret ${secret ? 'provided' : 'BLANK'}`);
-    return google.configure(clientId, secret);
-  });
-  handle('drive:connect', async () => {
-    engine.pauseAll();
-    try { const status = await google.connect(); changed(); return status; }
+    try { const status = await google.connect(idToken); changed(); return status; }
     catch (error) { log('drive:connect failed', error); throw error; }
   });
   handle('drive:disconnect', async () => { engine.pauseAll(); return google.disconnect(); });

@@ -28,33 +28,36 @@ job priced here and the same job priced in the browser cannot disagree.
 
 ## Setting up Google Drive
 
-The app talks to Drive as **your own** Google Cloud project, so nothing passes
-through a third party. Once, per Mac:
+Google application setup is once per studio. Each person then connects their own
+Google account using the system browser; ordinary users never enter app credentials.
 
-1. In [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials),
-   enable the **Google Drive API** and create an OAuth client of type
-   **Desktop app**.
-2. Paste the client ID (and the secret, if Google issued one) into
-   **Settings → Google Drive** and save.
-3. Click **Connect Google Drive** and complete the sign-in that opens in your
-   browser.
+1. Deploy the web app including `api/desktop-drive.ts` and
+   `api/_lib/desktopDriveProtocol.ts` before distributing this desktop update.
+2. Enable Google Drive API and create a **Desktop app** OAuth client in your
+   Google Cloud project. Existing credentials in
+   `studio_secrets/uploader_oauth` are reused automatically.
+3. If needed, the owner can save that configuration in **Settings →
+   Administrator setup**. Other Macs receive only the public client ID.
+4. Click **Connect Google Drive**. Personal refresh credentials are encrypted
+   with macOS safeStorage and isolated by studio login.
 
-**You only do this once, for the studio — not once per Mac.** Saving the client
-also writes it to `studio_secrets/uploader_oauth` in Firestore, which the
-security rules make readable by the studio owner alone. Any other Mac that signs
-in fetches it and configures itself, so nobody has to be sent the secret in a
-message.
+The server exchanges and refreshes Google tokens; the OAuth app secret is not
+included in the installer or downloaded to other Macs. Upload bytes still go
+directly from the Mac to Drive. Existing upload queues and pause/resume remain.
 
-It is deliberately not compiled into the app: the installer is published on a
-public releases page, and anything inside it is public. On each Mac the client
-is kept encrypted with macOS `safeStorage`, tied to that Mac's login, and it
-never reaches the web app's own servers.
+Optional server environment overrides are `GOOGLE_DRIVE_DESKTOP_CLIENT_ID` and
+`GOOGLE_DRIVE_DESKTOP_CLIENT_SECRET` (set both). Refresh capabilities use
+`GOOGLE_DRIVE_BROKER_SIGNING_KEY`, or a domain-separated key derived from the
+existing Firebase server private key. Never use the Google client secret as the
+broker signing key. Google can revoke or expire grants, requiring reconnection.
 
-Connecting Drive is still per person — that grants this app access to *your*
-Drive account and is nobody else's to give. The app requests only the
-`drive.file` scope, so it can see the files it created and nothing else.
+The broker authorizes active owners, team members, and partner studios for future
+clients. This desktop release remains owner-only; partner/editor screens and
+resumable folder downloads are not enabled by this change. It requests only
+`drive.file`, not unrestricted access to a person's entire Drive.
 
-## Running it
+The sidebar uses the original long SVG, and native icons are generated from the
+original short SVG by `npm run icons`.
 
 ```bash
 npm install

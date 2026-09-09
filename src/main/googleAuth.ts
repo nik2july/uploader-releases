@@ -5,87 +5,110 @@ import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DriveStatus } from '../shared/contracts';
 import { DriveError } from './drive';
+import { DriveBroker } from './driveBroker';
+import type { BrokerConfig, BrokerGrant } from './driveBroker';
 import { log } from './log';
 
-interface Credentials { clientId: string; clientSecret?: string; refreshToken?: string; accessToken?: string; expiresAt?: number; email?: string }
+interface Credentials { clientId: string; refreshToken?: string; refreshTicket?: string; accessToken?: string; expiresAt?: number; email?: string }
+interface NativeAuthServices { storage: Pick<typeof safeStorage, 'encryptString' | 'decryptString' | 'isEncryptionAvailable'>; openExternal: (url: string) => Promise<void> }
 export class GoogleAuth {
   private credentials: Credentials = { clientId: '' };
+  private configuration?: BrokerConfig;
+  private configurationError = '';
   private filename = '';
+  private owner = '';
   private connecting = false;
-  constructor(private directory: string) {}
-  async load(owner: string): Promise<void> {
-    this.credentials = { clientId: '' };
-    this.filename = join(this.directory, `drive-${createHash('sha256').update(owner).digest('hex')}.bin`);
+  private generation = 0;
+  private cancelConnect?: () => void;
+  private refreshing?: Promise<string>;
+  constructor(private directory: string, private broker = new DriveBroker(), private native: NativeAuthServices = { storage: safeStorage, openExternal: url => shell.openExternal(url) }) {}
+  async load(owner: string, idToken: string): Promise<void> {
+    this.clear(); this.owner = owner;
+    const generation = this.generation;
+    this.filename = join(this.directory, 'drive-' + createHash('sha256').update(owner).digest('hex') + '.bin');
     try {
-      const data = await fs.readFile(this.filename);
-      this.credentials = JSON.parse(safeStorage.decryptString(data));
+      const bytes = await fs.readFile(this.filename);
+      if (generation !== this.generation) return;
+      const data = JSON.parse(this.native.storage.decryptString(bytes));
+      // Never copy the app secret retained by old versions into the new store.
+      this.credentials = { clientId: data.clientId || '', refreshToken: data.refreshToken, refreshTicket: data.refreshTicket,
+        accessToken: data.accessToken, expiresAt: data.expiresAt, email: data.email };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Cannot unlock saved Drive credentials with this Mac account.');
     }
-  }
-  clear(): void { this.credentials = { clientId: '' }; this.filename = ''; }
-  status(): DriveStatus { return { configured: !!this.credentials.clientId, connected: !!this.credentials.refreshToken,
-    clientId: this.credentials.clientId, email: this.credentials.email }; }
-  private async save(): Promise<void> {
-    if (!this.filename) throw new Error('Sign in to the studio account before connecting Drive.');
-    if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error('macOS would not open the keychain for this app, so the Google connection cannot be stored. Unlock your Mac, quit the app fully and start it again.');
+    await this.refreshConfiguration();
+    if (generation !== this.generation) return;
+    if (this.configuration?.configured && this.credentials.refreshToken && !this.credentials.refreshTicket
+      && this.credentials.clientId === this.configuration.clientId) {
+      try { await this.acceptGrant(await this.broker.grant({ op: 'migrate', refreshToken: this.credentials.refreshToken }, owner, idToken), generation); }
+      catch (error) { if (generation === this.generation) this.configurationError = error instanceof Error ? error.message : 'Reconnect Google Drive to complete the update.'; }
     }
-    await fs.writeFile(this.filename + '.tmp', safeStorage.encryptString(JSON.stringify(this.credentials)), { mode: 0o600 });
-    await fs.rename(this.filename + '.tmp', this.filename);
   }
-  async configure(clientId: string, clientSecret: string): Promise<DriveStatus> {
-    if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(clientId.trim())) throw new Error('Enter a Google OAuth Desktop app client ID.');
-    if (this.connecting) throw new Error('Finish the current Google sign-in first.');
-    this.credentials = { clientId: clientId.trim(), clientSecret: clientSecret.trim() };
-    await this.save(); return this.status();
+  clear(): void {
+    this.generation++; this.cancelConnect?.(); this.cancelConnect = undefined;
+    this.credentials = { clientId: '' }; this.configuration = undefined; this.configurationError = '';
+    this.filename = ''; this.owner = ''; this.refreshing = undefined;
+  }
+  status(): DriveStatus {
+    return { configured: Boolean(this.configuration?.configured), connected: Boolean(this.credentials.refreshToken && this.credentials.email),
+      clientId: this.configuration?.clientId || this.credentials.clientId, email: this.credentials.email, error: this.configurationError || undefined };
+  }
+  async refreshConfiguration(): Promise<DriveStatus> {
+    const generation = this.generation;
+    try {
+      const config = await this.broker.configuration();
+      if (generation !== this.generation) return this.status();
+      this.configuration = config; this.configurationError = '';
+      if (this.credentials.refreshToken && this.credentials.clientId !== config.clientId && config.configured)
+        this.configurationError = 'The studio Google client changed. Reconnect your Drive account; saved uploads are preserved.';
+    } catch (error) { if (generation === this.generation) this.configurationError = error instanceof Error ? error.message : 'Cannot load studio Google configuration.'; }
+    return this.status();
+  }
+  private async save(): Promise<void> {
+    if (!this.filename) throw new Error('Sign in to the studio before connecting Drive.');
+    if (!this.native.storage.isEncryptionAvailable()) throw new Error('macOS could not open the keychain. Unlock your Mac and restart the app.');
+    const filename = this.filename;
+    await fs.writeFile(filename + '.tmp', this.native.storage.encryptString(JSON.stringify(this.credentials)), { mode: 0o600 });
+    await fs.rename(filename + '.tmp', filename);
   }
   async disconnect(): Promise<DriveStatus> {
-    if (this.connecting) throw new Error('Finish the current Google sign-in first.');
-    // Local disconnect only; do not revoke other devices using this OAuth client.
-    this.credentials = { clientId: this.credentials.clientId, clientSecret: this.credentials.clientSecret };
+    this.generation++; this.cancelConnect?.(); this.cancelConnect = undefined;
+    this.credentials = { clientId: this.configuration?.clientId || '' };
     await this.save(); return this.status();
   }
-  private async exchange(params: Record<string, string>): Promise<void> {
-    const response = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST', signal: AbortSignal.timeout(30000),
-      body: new URLSearchParams({ client_id: this.credentials.clientId,
-        ...(this.credentials.clientSecret ? { client_secret: this.credentials.clientSecret } : {}), ...params }) });
-    const body = await response.json() as {
-      access_token?: string; refresh_token?: string; expires_in?: number;
-      error?: string; error_description?: string;
-    };
-    if (!response.ok || !body.access_token) {
-      // Google says exactly what is wrong and the old message threw it away,
-      // leaving "expired or misconfigured" to cover a missing secret, a reused
-      // code and a mismatched redirect alike.
-      log('token exchange rejected', `${response.status} ${body.error || ''} ${body.error_description || ''}`.trim());
-      const reason = body.error === 'invalid_client'
-        ? 'Google did not recognise this OAuth client. The client secret is missing or does not match the client ID — paste both from your Google Cloud credentials into Settings.'
-        : body.error === 'invalid_grant'
-          ? 'Google rejected the sign-in as already used or expired. Click Connect Google Drive again and complete it in one go.'
-          : body.error === 'redirect_uri_mismatch'
-            ? 'Google refused the callback address. The OAuth client must be of type Desktop app; a Web application client will not work.'
-            : `Google refused the sign-in${body.error ? `: ${body.error}` : ''}.`;
-      throw new DriveError(
-        `${reason}${body.error_description ? ` (${body.error_description})` : ''}`,
-        'auth', response.status);
-    }
-    this.credentials.accessToken = body.access_token;
-    this.credentials.refreshToken = body.refresh_token ?? this.credentials.refreshToken;
-    this.credentials.expiresAt = Date.now() + (body.expires_in || 3600) * 1000;
-    await this.save();
+  private async acceptGrant(grant: BrokerGrant, generation: number): Promise<void> {
+    if (generation !== this.generation || grant.uid !== this.owner) throw new Error('Studio account changed during Google sign-in.');
+    const previous = this.credentials;
+    this.credentials = { clientId: grant.clientId, accessToken: grant.accessToken, refreshToken: grant.refreshToken,
+      refreshTicket: grant.refreshTicket, expiresAt: grant.expiresAt, email: grant.email || this.credentials.email };
+    try { await this.save(); }
+    catch (error) { if (generation === this.generation) this.credentials = previous; throw error; }
+    if (generation !== this.generation) throw new Error('Studio account changed during Google sign-in.');
+    this.configurationError = '';
   }
   async token(force = false): Promise<string> {
     if (!force && this.credentials.accessToken && (this.credentials.expiresAt || 0) > Date.now() + 60000) return this.credentials.accessToken;
-    if (!this.credentials.refreshToken) throw new DriveError('Connect Google Drive in Settings.', 'auth', 401);
-    await this.exchange({ grant_type: 'refresh_token', refresh_token: this.credentials.refreshToken });
-    return this.credentials.accessToken!;
+    if (!this.credentials.refreshToken || !this.credentials.refreshTicket) throw new DriveError('Connect Google Drive to finish the one-time sign-in update.', 'auth', 401);
+    if (this.refreshing) return this.refreshing;
+    const generation = this.generation;
+    const owner = this.owner;
+    const refreshing = (async () => {
+      const grant = await this.broker.grant({ op: 'refresh', refreshToken: this.credentials.refreshToken, refreshTicket: this.credentials.refreshTicket }, owner);
+      await this.acceptGrant(grant, generation); return grant.accessToken;
+    })();
+    this.refreshing = refreshing;
+    try { return await refreshing; } finally { if (this.refreshing === refreshing) this.refreshing = undefined; }
   }
-  async connect(): Promise<DriveStatus> {
-    if (!this.credentials.clientId) throw new Error('Configure a Google OAuth Desktop app client first.');
+  async connect(idToken: string): Promise<DriveStatus> {
     if (this.connecting) throw new Error('Google sign-in is already open.');
+    if (!this.owner || typeof idToken !== 'string' || !idToken) throw new Error('Sign in to the studio first.');
+    await this.refreshConfiguration();
+    if (this.connecting) throw new Error('Google sign-in is already open.');
+    if (!this.configuration?.configured) throw new Error(this.configurationError || 'The studio administrator needs to complete Google Drive setup once.');
     this.connecting = true;
+    const generation = this.generation;
+    const owner = this.owner;
+    const clientId = this.configuration.clientId;
     const verifier = randomBytes(48).toString('base64url');
     const state = randomBytes(32).toString('base64url');
     const server = createServer();
@@ -94,8 +117,9 @@ export class GoogleAuth {
       await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
       const address = server.address();
       if (!address || typeof address === 'string') throw new Error('Cannot start Google sign-in callback.');
-      const redirect = `http://127.0.0.1:${address.port}`;
+      const redirect = 'http://127.0.0.1:' + address.port;
       const codePromise = new Promise<string>((resolve, reject) => {
+        this.cancelConnect = () => reject(new Error('Google sign-in cancelled because the studio session changed.'));
         timeout = setTimeout(() => reject(new Error('Google sign-in timed out. Try connecting again.')), 5 * 60000);
         server.on('request', (req, res) => {
           const url = new URL(req.url || '/', redirect);
@@ -106,54 +130,20 @@ export class GoogleAuth {
           if (code) resolve(code); else reject(new Error('Google access was not granted.'));
         });
       });
+      void codePromise.catch(() => {});
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-      url.search = new URLSearchParams({ client_id: this.credentials.clientId, redirect_uri: redirect,
-        response_type: 'code', scope: 'https://www.googleapis.com/auth/drive.file', access_type: 'offline', prompt: 'consent',
-        state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
-      log('connect: opening browser', `secret ${this.credentials.clientSecret ? 'present' : 'ABSENT'}`);
-      await shell.openExternal(url.toString()).catch(() => { throw new Error('Could not open the Google sign-in browser.'); });
-
+      url.search = new URLSearchParams({ client_id: clientId, redirect_uri: redirect, response_type: 'code',
+        scope: 'https://www.googleapis.com/auth/drive.file', access_type: 'offline', prompt: 'consent', state,
+        code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
+      log('connect: opening Google sign-in');
+      await this.native.openExternal(url.toString());
       const code = await codePromise;
-      log('connect: callback received');
-
-      try {
-        await this.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: redirect });
-      } catch (error) {
-        log('connect: token exchange FAILED', error);
-        // The commonest cause by far, and the one Google's own message hides:
-        // a Desktop client needs its secret, and a Mac that was set up with
-        // only the client id pasted in gets this far and no further.
-        if (!this.credentials.clientSecret) {
-          throw new Error('Google refused the sign-in. This Mac has the OAuth client ID but no client secret — paste the secret in Settings and connect again.');
-        }
-        throw error;
-      }
-      log('connect: token exchange ok', `refresh token ${this.credentials.refreshToken ? 'granted' : 'NOT granted'}`);
-
-      const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)', {
-        headers: { Authorization: `Bearer ${await this.token()}` }, signal: AbortSignal.timeout(30000) });
-      if (!response.ok) {
-        log('connect: Drive API rejected', `HTTP ${response.status}`);
-        throw new Error(`Drive API is unavailable (HTTP ${response.status}). Check the Google Drive API is enabled for this OAuth project.`);
-      }
-      const about = await response.json() as { user: { emailAddress: string } };
-      this.credentials.email = about.user.emailAddress;
-      if (!this.credentials.refreshToken || !this.credentials.email) {
-        log('connect: no offline access');
-        throw new Error('Google did not grant offline Drive access. Remove this app at myaccount.google.com/permissions and connect again.');
-      }
-
-      try {
-        await this.save();
-      } catch (error) {
-        log('connect: SAVE FAILED', error);
-        throw error;
-      }
-      log('connect: connected', this.credentials.email);
-      return this.status();
+      const grant = await this.broker.grant({ op: 'exchange', code, codeVerifier: verifier, redirectUri: redirect }, owner, idToken);
+      await this.acceptGrant(grant, generation);
+      log('connect: personal Drive connected'); return this.status();
     } finally {
       if (timeout) clearTimeout(timeout);
-      server.close(); this.connecting = false;
+      server.closeAllConnections(); server.close(); this.cancelConnect = undefined; this.connecting = false;
     }
   }
 }

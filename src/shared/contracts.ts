@@ -49,8 +49,8 @@ export interface DesktopAPI {
   cancelScan(id: string): Promise<void>;
   list(): Promise<Transfer[]>;
   inspect(id: string): Promise<{ files: { path: string; error: string }[] }>;
-  configureDrive(clientId: string, clientSecret: string): Promise<DriveStatus>;
-  connectDrive(): Promise<DriveStatus>;
+  refreshDriveConfiguration(): Promise<DriveStatus>;
+  connectDrive(idToken: string): Promise<DriveStatus>;
   driveStatus(): Promise<DriveStatus>;
   disconnectDrive(): Promise<DriveStatus>;
   enqueue(id: string, target: WorkTarget, invoice?: InvoiceSnapshot): Promise<void>;
