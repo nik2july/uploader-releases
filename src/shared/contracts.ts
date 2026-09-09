@@ -3,10 +3,13 @@ export type { MediaBillingInput, MediaBillingResult, MediaMeasurement } from '..
 
 export type TransferStatus = 'scanning' | 'ready' | 'queued' | 'uploading' | 'verifying' | 'paused' | 'waiting_network' | 'waiting_quota' | 'needs_attention' | 'completed';
 export interface ScanOptions { excludedBillingFolders: string[]; countPhotoPairsOnce: boolean }
+export interface MissingClips { label: string; folder: string; missing: string[]; missingCount: number; received: number }
 export interface ScanSummary {
   totalPhotos: number; billablePhotos: number; totalVideos: number; totalDurationSeconds: number;
   unknownVideoCount: number; totalBytes: number; fileCount: number; folderCount: number;
   pairedPhotos: number; excludedBillingFiles: number; warnings: string[]; readErrors: number;
+  /** Gaps in the camera's numbering — files that never made it off the card. */
+  missingClips: MissingClips[]; missingClipCount: number;
 }
 export interface WorkTarget {
   kind: 'freelance' | 'deliverable'; id: string; clientId?: string; title: string; clientName: string;

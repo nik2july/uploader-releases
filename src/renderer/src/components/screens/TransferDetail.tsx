@@ -8,6 +8,7 @@ import type { MediaBillingResult } from '../../utils/mediaPricing';
 import { describeBilling, isMinimumApplied, serviceDefinition, unitNoun } from '../../utils/freelancePricing';
 import { downloadInvoice } from '../../utils/uploadInvoice';
 import { formatBytes, formatCount, formatDuration, progressFraction, remainingSummary, statusLabel } from '../../utils/uploadFormat';
+import { formatEta, formatSpeed, useTransferSpeed } from '../../utils/uploadSpeed';
 import { ShareActions } from './ShareActions';
 import type { ClientDeliverable } from '../../types';
 
@@ -34,6 +35,9 @@ export function TransferDetail({ job, onBack, refresh }: {
   }, [studio.clients, target]);
 
   const service = serviceDefinition(target?.serviceType as never);
+  // Short Form and Long Form are billed on video, so photo counts and the
+  // billing exclusions that go with them are noise on those jobs.
+  const countsPhotos = !service || service.basis === 'per_photo' || service.basis === 'per_sheet';
   /**
    * A booked package was agreed on a quotation and an already-invoiced extra has
    * been paid; measuring a folder afterwards must not silently change either
@@ -111,7 +115,13 @@ export function TransferDetail({ job, onBack, refresh }: {
     finally { setBusy(''); }
   }
 
+  const moving = ['uploading', 'verifying'].includes(job.status);
+  const bytesPerSecond = useTransferSpeed(job.uploadedBytes, moving);
+  const remaining = Math.max(0, (scan?.totalBytes || 0) - job.uploadedBytes);
+
   const canUpload = ['ready', 'paused'].includes(job.status) && scan && !scan.readErrors && target;
+  const [ignoreMissing, setIgnoreMissing] = useState(false);
+  const blockingGaps = (scan?.missingClipCount || 0) > 0 && !ignoreMissing;
 
   return (
     <div className="screen">
@@ -144,13 +154,39 @@ export function TransferDetail({ job, onBack, refresh }: {
             <div className="stat-grid">
               <div className="stat"><div className="label">Total size</div><div className="value">{formatBytes(scan.totalBytes)}</div>
                 <div className="foot">{formatCount(scan.fileCount)} files in {formatCount(scan.folderCount)} folders</div></div>
-              <div className="stat"><div className="label">Raw video</div><div className="value">{formatDuration(scan.totalDurationSeconds)}</div>
-                <div className="foot">{formatCount(scan.totalVideos)} clips, all cameras added together</div></div>
-              <div className="stat"><div className="label">Photos</div><div className="value">{formatCount(scan.totalPhotos)}</div>
-                <div className="foot">{formatCount(scan.billablePhotos)} counted for billing{scan.pairedPhotos ? ` · ${formatCount(scan.pairedPhotos)} RAW+JPEG pairs` : ''}</div></div>
-              <div className="stat"><div className="label">Excluded from billing</div><div className="value">{formatCount(scan.excludedBillingFiles)}</div>
-                <div className="foot">Still uploaded in full</div></div>
+              {(!service || service.basis === 'per_raw_hour' || scan.totalVideos > 0) && (
+                <div className="stat"><div className="label">Raw video</div><div className="value">{formatDuration(scan.totalDurationSeconds)}</div>
+                  <div className="foot">{formatCount(scan.totalVideos)} clips, all cameras added together</div></div>
+              )}
+              {countsPhotos && (
+                <div className="stat"><div className="label">Photos</div><div className="value">{formatCount(scan.totalPhotos)}</div>
+                  <div className="foot">{formatCount(scan.billablePhotos)} counted for billing{scan.pairedPhotos ? ` · ${formatCount(scan.pairedPhotos)} RAW+JPEG pairs` : ''}</div></div>
+              )}
+              {countsPhotos && scan.excludedBillingFiles > 0 && (
+                <div className="stat"><div className="label">Excluded from billing</div><div className="value">{formatCount(scan.excludedBillingFiles)}</div>
+                  <div className="foot">Still uploaded in full</div></div>
+              )}
             </div>
+
+            {scan.missingClipCount > 0 && (
+              <div className="warning" style={{ marginTop: 14 }}>
+                <b style={{ display: 'block', marginBottom: 4 }}>
+                  {formatCount(scan.missingClipCount)} files are missing from the camera numbering.
+                </b>
+                <p style={{ margin: '0 0 8px' }}>
+                  The cameras number what they record, so a gap usually means a file did not copy off
+                  the card. Worth checking now — far cheaper than finding out after the upload.
+                </p>
+                <ul className="file-problems" style={{ maxHeight: 180 }}>
+                  {scan.missingClips.map(gap => (
+                    <li key={`${gap.folder}:${gap.label}`}>
+                      <span className="mono">{gap.folder ? `${gap.folder}/` : ''}{gap.label}</span>
+                      {formatCount(gap.received)} arrived, {formatCount(gap.missingCount)} missing: {gap.missing.join(', ')}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {scan.unknownVideoCount > 0 && (
               <p className="warning">{formatCount(scan.unknownVideoCount)} clips could not be measured, so the raw duration above is
@@ -291,6 +327,11 @@ export function TransferDetail({ job, onBack, refresh }: {
               {formatBytes(job.uploadedBytes)} of {formatBytes(scan?.totalBytes || 0)} · {remainingSummary(job)}
               {job.driveAccount ? ` · ${job.driveAccount}` : ''}
             </p>
+            {moving && bytesPerSecond > 0 && (
+              <p className="mono" style={{ fontSize: 12.5, color: 'var(--burgundy)', margin: '4px 0 0' }}>
+                {formatSpeed(bytesPerSecond)} · {formatEta(remaining, bytesPerSecond)}
+              </p>
+            )}
           </>
         )}
         {job.currentFile && <p className="mono muted" style={{ fontSize: 12.5 }}>{job.currentFile}</p>}
@@ -302,12 +343,15 @@ export function TransferDetail({ job, onBack, refresh }: {
               called ready when all of them pass, and re-running it sends nothing that is already verified.
             </p>
             <div className="actions">
-              {canUpload && (
+              {canUpload && !blockingGaps && (
                 <button className="primary" disabled={busy === 'start'}
                   onClick={() => void run('start', () => window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined)),
                     'Queued. It keeps going with this window closed.')}>
                   {job.completedFiles > 0 ? 'Resume upload' : 'Start upload'}
                 </button>
+              )}
+              {canUpload && blockingGaps && (
+                <button className="primary" onClick={() => setIgnoreMissing(true)}>Start upload…</button>
               )}
               {['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status) && (
                 <button disabled={busy === 'pause'} onClick={() => void run('pause', () => window.api.pause(job.id))}>Pause</button>
@@ -322,6 +366,44 @@ export function TransferDetail({ job, onBack, refresh }: {
           </>
         )}
       </section>
+
+      {ignoreMissing && canUpload && (scan?.missingClipCount || 0) > 0 && !['queued', 'uploading', 'verifying'].includes(job.status) && (
+        <div className="modal-shade">
+          <section className="work-modal" role="dialog" aria-modal="true" aria-labelledby="gaps-title">
+            <header>
+              <div>
+                <span className="eyebrow">BEFORE YOU SEND</span>
+                <h2 id="gaps-title">{formatCount(scan!.missingClipCount)} files look missing</h2>
+              </div>
+            </header>
+            <p className="muted" style={{ marginTop: 0 }}>
+              The cameras number what they record, and these numbers are not in the folder. Usually that
+              means a file did not copy off the card. Fixing it now costs minutes; finding out afterwards
+              costs the upload.
+            </p>
+            <ul className="file-problems" style={{ maxHeight: 240 }}>
+              {scan!.missingClips.map(gap => (
+                <li key={`${gap.folder}:${gap.label}`}>
+                  <span className="mono">{gap.folder ? `${gap.folder}/` : ''}{gap.label}</span>
+                  {formatCount(gap.missingCount)} missing: {gap.missing.join(', ')}
+                </li>
+              ))}
+            </ul>
+            <p className="notice">
+              Some cameras skip numbers legitimately — deleted takes, a card formatted mid-shoot. If you
+              know that is the case here, carry on.
+            </p>
+            <div className="actions">
+              <button onClick={() => setIgnoreMissing(false)}>Go back and check</button>
+              <button className="primary" disabled={busy === 'start'}
+                onClick={() => void run('start', () => window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined)),
+                  'Queued. It keeps going with this window closed.')}>
+                Upload anyway
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

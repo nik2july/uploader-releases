@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import ffprobe from 'ffprobe-static';
 import type { ScanSummary } from '../shared/contracts';
+import { findSequences } from './sequences';
 import type { TransferStore } from './store';
 
 const exec = promisify(execFile);
@@ -17,8 +18,9 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
   const root = await fs.realpath(job.rootPath);
   const result: ScanSummary = { totalPhotos: 0, billablePhotos: 0, totalVideos: 0, totalDurationSeconds: 0,
     unknownVideoCount: 0, totalBytes: 0, fileCount: 0, folderCount: 0, pairedPhotos: 0,
-    excludedBillingFiles: 0, warnings: [], readErrors: 0 };
+    excludedBillingFiles: 0, warnings: [], readErrors: 0, missingClips: [], missingClipCount: 0 };
   const photoPairs = new Map<string, Set<string>>();
+  const seenPaths: { relativePath: string }[] = [];
   const excluded = new Set(job.options.excludedBillingFolders.map(s => s.trim().toLowerCase()).filter(Boolean));
   const warn = (message: string): void => { if (result.warnings.length < 200) result.warnings.push(message); };
   const publish = (): void => { store.patch(jobId, { scan: { ...result } }); changed(); };
@@ -78,6 +80,7 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
           }
         }
         store.addFile(jobId, { relativePath, size: stat.size, mtimeMs: stat.mtimeMs, kind, billingIncluded, durationSeconds, error });
+        if (kind !== 'other') seenPaths.push({ relativePath });
         if (result.fileCount % 20 === 0) publish();
       } catch (err) {
         signal.throwIfAborted(); result.readErrors++;
@@ -86,6 +89,15 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
     }
   }
   await walk(root, true);
+
+  // Cameras number what they record, so a gap is a file that did not arrive.
+  // Worth knowing before a terabyte goes up rather than a week later.
+  result.missingClips = findSequences(seenPaths, new Set([...PHOTO, ...VIDEO]));
+  result.missingClipCount = result.missingClips.reduce((total, s) => total + s.missingCount, 0);
+  if (result.missingClipCount > 0) {
+    warn(`${result.missingClipCount} files appear to be missing from the camera numbering.`);
+  }
+
   store.patch(jobId, { rootPath: root, scan: result, status: result.readErrors ? 'needs_attention' : 'ready',
     error: result.readErrors ? 'Some folders or files could not be inventoried. Resolve permissions and scan again before uploading.' : undefined });
   changed();

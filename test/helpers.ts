@@ -175,6 +175,7 @@ export async function seedJob(store: TransferStore, root: string,
       totalBytes: Object.values(files).reduce((sum, body) => sum + Buffer.byteLength(body), 0),
       fileCount: Object.keys(files).length, folderCount: folders.length,
       pairedPhotos: 0, excludedBillingFiles: 0, warnings: [], readErrors: 0,
+      missingClips: [], missingClipCount: 0,
     },
   };
   store.save(job);
