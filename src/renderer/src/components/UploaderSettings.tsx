@@ -40,5 +40,11 @@ export function UploaderSettings({ drive, refresh }: { drive: DriveStatus; refre
     <hr/><p>Studio: {studioSettings?.studioName || 'Baawaray'}<br/>Currency: {studioSettings?.currency || 'INR'}<br/>Configured tax: {studioSettings?.taxGstPercent || 0}%</p>
     <p className="muted">Partner rates, deliverable prices and editor details are read from your existing web settings. Time billing keeps the one-minute / one-hour minimum.</p>
     <button onClick={() => void window.api.openExternal('https://app.baawaray.com')}>Open studio web app</button>
+    <hr/>
+    <p className="muted">If something will not connect, copy this and send it. It records what the app
+      did and where it stopped, and contains no passwords or tokens.</p>
+    <button onClick={() => void window.api.diagnostics().then(text => {
+      void navigator.clipboard.writeText(text); setMessage('Diagnostics copied. Paste them into a message.');
+    })}>Copy diagnostics</button>
   </section>{message && <p className="success" role="status">{message}</p>}{error && <p className="error" role="alert">{error}</p>}</div>;
 }

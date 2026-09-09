@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DriveStatus } from '../shared/contracts';
 import { DriveError } from './drive';
+import { log } from './log';
 
 interface Credentials { clientId: string; clientSecret?: string; refreshToken?: string; accessToken?: string; expiresAt?: number; email?: string }
 export class GoogleAuth {
@@ -26,7 +27,10 @@ export class GoogleAuth {
   status(): DriveStatus { return { configured: !!this.credentials.clientId, connected: !!this.credentials.refreshToken,
     clientId: this.credentials.clientId, email: this.credentials.email }; }
   private async save(): Promise<void> {
-    if (!this.filename || !safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable.');
+    if (!this.filename) throw new Error('Sign in to the studio account before connecting Drive.');
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('macOS would not open the keychain for this app, so the Google connection cannot be stored. Unlock your Mac, quit the app fully and start it again.');
+    }
     await fs.writeFile(this.filename + '.tmp', safeStorage.encryptString(JSON.stringify(this.credentials)), { mode: 0o600 });
     await fs.rename(this.filename + '.tmp', this.filename);
   }
@@ -88,16 +92,47 @@ export class GoogleAuth {
       url.search = new URLSearchParams({ client_id: this.credentials.clientId, redirect_uri: redirect,
         response_type: 'code', scope: 'https://www.googleapis.com/auth/drive.file', access_type: 'offline', prompt: 'consent',
         state, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256' }).toString();
+      log('connect: opening browser', `secret ${this.credentials.clientSecret ? 'present' : 'ABSENT'}`);
       await shell.openExternal(url.toString()).catch(() => { throw new Error('Could not open the Google sign-in browser.'); });
+
       const code = await codePromise;
-      await this.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: redirect });
+      log('connect: callback received');
+
+      try {
+        await this.exchange({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: redirect });
+      } catch (error) {
+        log('connect: token exchange FAILED', error);
+        // The commonest cause by far, and the one Google's own message hides:
+        // a Desktop client needs its secret, and a Mac that was set up with
+        // only the client id pasted in gets this far and no further.
+        if (!this.credentials.clientSecret) {
+          throw new Error('Google refused the sign-in. This Mac has the OAuth client ID but no client secret — paste the secret in Settings and connect again.');
+        }
+        throw error;
+      }
+      log('connect: token exchange ok', `refresh token ${this.credentials.refreshToken ? 'granted' : 'NOT granted'}`);
+
       const response = await fetch('https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)', {
         headers: { Authorization: `Bearer ${await this.token()}` }, signal: AbortSignal.timeout(30000) });
-      if (!response.ok) throw new Error('Drive API is unavailable. Check that it is enabled for this OAuth project.');
+      if (!response.ok) {
+        log('connect: Drive API rejected', `HTTP ${response.status}`);
+        throw new Error(`Drive API is unavailable (HTTP ${response.status}). Check the Google Drive API is enabled for this OAuth project.`);
+      }
       const about = await response.json() as { user: { emailAddress: string } };
       this.credentials.email = about.user.emailAddress;
-      if (!this.credentials.refreshToken || !this.credentials.email) throw new Error('Google did not grant offline Drive access.');
-      await this.save(); return this.status();
+      if (!this.credentials.refreshToken || !this.credentials.email) {
+        log('connect: no offline access');
+        throw new Error('Google did not grant offline Drive access. Remove this app at myaccount.google.com/permissions and connect again.');
+      }
+
+      try {
+        await this.save();
+      } catch (error) {
+        log('connect: SAVE FAILED', error);
+        throw error;
+      }
+      log('connect: connected', this.credentials.email);
+      return this.status();
     } finally {
       if (timeout) clearTimeout(timeout);
       server.close(); this.connecting = false;

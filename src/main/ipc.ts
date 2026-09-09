@@ -10,6 +10,7 @@ import { GoogleAuth } from './googleAuth';
 import { DriveClient } from './drive';
 import { TransferEngine } from './transferEngine';
 import { checkForUpdate } from './updater';
+import { log, recentLog } from './log';
 import type { InvoiceSnapshot, ScanOptions, WorkTarget } from '../shared/contracts';
 import firebaseConfig from '../renderer/src/lib/firebase-applet-config.json';
 
@@ -132,8 +133,16 @@ export async function setupIpcHandlers(): Promise<() => void> {
   });
   handle('scanner:cancel', (id: string) => { owned(id); scans.get(id)?.abort(); });
   handle('drive:status', () => google.status());
-  handle('drive:configure', async (clientId: string, secret: string) => { engine.pauseAll(); return google.configure(clientId, secret); });
-  handle('drive:connect', async () => { engine.pauseAll(); const status = await google.connect(); changed(); return status; });
+  handle('drive:configure', async (clientId: string, secret: string) => {
+    engine.pauseAll();
+    log('drive:configure', `secret ${secret ? 'provided' : 'BLANK'}`);
+    return google.configure(clientId, secret);
+  });
+  handle('drive:connect', async () => {
+    engine.pauseAll();
+    try { const status = await google.connect(); changed(); return status; }
+    catch (error) { log('drive:connect failed', error); throw error; }
+  });
   handle('drive:disconnect', async () => { engine.pauseAll(); return google.disconnect(); });
   handle('transfers:enqueue', (id: string, target: WorkTarget, invoice?: InvoiceSnapshot) => {
     const job = owned(id);
@@ -194,6 +203,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
   // Neither needs a signed-in owner: one is this app's own version, the other
   // is a public release feed. Both are useful before anyone has signed in.
   handle('app:version', () => app.getVersion(), false);
+  handle('app:diagnostics', () => recentLog(), false);
   handle('updates:check', () => checkForUpdate(), false);
   handle('power:keepAwake', (on: boolean) => { keepAwake = on === true; evaluatePower(); }, false);
   handle('external:open', async (url: string) => { if (!allowedExternal(url)) throw new Error('This link is not allowed.'); await shell.openExternal(url); });

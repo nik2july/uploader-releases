@@ -16,7 +16,7 @@ const api: DesktopAPI = {
   savePdf: (bytes, filename) => ipcRenderer.invoke('invoice:pdf', bytes, filename),
   openExternal: url => ipcRenderer.invoke('external:open', url),
   setKeepAwake: on => ipcRenderer.invoke('power:keepAwake', on),
-  checkForUpdate: () => ipcRenderer.invoke('updates:check'), appVersion: () => ipcRenderer.invoke('app:version'),
+  checkForUpdate: () => ipcRenderer.invoke('updates:check'), appVersion: () => ipcRenderer.invoke('app:version'), diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
   onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; }
 };
 contextBridge.exposeInMainWorld('api', api);

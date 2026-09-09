@@ -68,5 +68,6 @@ export interface DesktopAPI {
   setKeepAwake(on: boolean): Promise<void>;
   checkForUpdate(): Promise<UpdateInfo | null>;
   appVersion(): Promise<string>;
+  diagnostics(): Promise<string>;
   onChange(callback: () => void): () => void;
 }
