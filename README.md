@@ -106,8 +106,16 @@ That produces `dist/Baawaray-Uploader-<version>.dmg`. Copy it to the other Mac,
 open it, and drag the app into Applications. The `WEB APP` folder is only needed
 to *build*; the packaged app carries everything it needs.
 
-**It is not code-signed**, so macOS will refuse to open it on first launch. Two
-ways past that, depending on how the file arrived:
+The build is **ad-hoc signed** — see `build/afterPack.cjs`. That is not a
+Developer ID and does not make the app trusted, but it does seal the bundle, so
+macOS reports it honestly as an app from an unidentified developer rather than
+claiming it is *damaged and can't be opened*. Without it, electron-builder ships
+a bundle whose only signature is the linker's stub on the Electron binary,
+covering neither the Info.plist nor any resource, and Apple Silicon treats that
+as corrupt.
+
+**It is still not trusted**, so macOS will refuse to open it on first launch.
+Two ways past that, depending on how the file arrived:
 
 - **AirDrop or a USB stick** — usually no quarantine flag, so it just opens.
 - **Downloaded in a browser** — right-click the app in Applications, choose

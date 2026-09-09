@@ -2,6 +2,8 @@ appId: com.baawaray.studio-uploader
 productName: Baawaray Uploader
 directories:
   buildResources: build
+# Ad-hoc signs the bundle so macOS does not report an unsigned build as damaged.
+afterPack: build/afterPack.cjs
 files:
   - '!**/.vscode/*'
   - '!src/*'
