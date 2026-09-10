@@ -135,7 +135,7 @@ export async function shareQuotationOnWhatsapp(
       }
     }
     // Fallback on mobile if share sheet is not supported or failed
-    window.location.href = chatUrl;
+    window.open(chatUrl, '_blank', 'noopener,noreferrer');
     return 'download-and-chat';
   }
 
