@@ -1,29 +1,86 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Cloud, CloudOff, Film, Settings, Upload, Users } from 'lucide-react';
+import { Archive, Film, Settings, Upload, Users } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
 import { useTransfers } from '../hooks/useTransfers';
 import { ACTIVE_STATUSES } from '../utils/uploadFormat';
+import { saveRawDataLink } from '../lib/studioRepository';
 import { UploadsScreen } from './screens/UploadsScreen';
 import { WorkScreen } from './screens/WorkScreen';
 import { TransferDetail } from './screens/TransferDetail';
 import { UploaderSettings } from './UploaderSettings';
 import { UpdateBanner } from './UpdateBanner';
+import { EditorDashboard } from './EditorDashboard';
+import { CloudArchivalModal } from './CloudArchivalModal';
+import { PostProductionPaymentsScreen } from './screens/PostProductionPaymentsScreen';
+import { PostProductionTeamScreen } from './screens/PostProductionTeamScreen';
+import { PartnerStudiosScreen } from './screens/PartnerStudiosScreen';
 
-type View = 'uploads' | 'freelance' | 'deliverables' | 'settings';
+type View = 'uploads' | 'freelance' | 'deliverables' | 'partners' | 'team' | 'payments' | 'settings';
+type Workspace = 'post-production' | 'baawaray-films';
+const WORKSPACE_STORAGE_KEY = 'baawaray-owner-workspace';
 
-export function Dashboard(): React.JSX.Element {
+export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
   const { transfers, drive, error, loading, refresh } = useTransfers();
   const [view, setView] = useState<View>('uploads');
+  const [workspace, setWorkspace] = useState<Workspace>(() =>
+    localStorage.getItem(WORKSPACE_STORAGE_KEY) === 'baawaray-films' ? 'baawaray-films' : 'post-production'
+  );
   const [openId, setOpenId] = useState<string | null>(null);
+  const [showArchivalModal, setShowArchivalModal] = useState(false);
+  const rawLinkSyncAttempts = useRef(new Set<string>());
 
   // The keep-awake preference is stored with the studio's shared settings but
   // enforced by the queue, so it is pushed down whenever it changes.
   const keepAwake = studio.studioSettings?.uploader?.keepAwake;
   useEffect(() => { void window.api.setKeepAwake(Boolean(keepAwake)); }, [keepAwake]);
+
+  // Automatically sync any completed transfer's Backblaze B2 link to Firestore rawDataLink
+  // so assigned editors can immediately access and download the raw footage
+  useEffect(() => {
+    if (!studio.currentUser || studio.currentUser.accountType !== 'owner') return;
+    for (const t of transfers) {
+      if (t.status === 'completed' && t.link && t.target) {
+        if (t.target.kind === 'freelance') {
+          const job = studio.freelanceJobs.find(j =>
+            String(j.id) === t.target?.id ||
+            (j as any)._documentId === t.target?.id ||
+            (t.target?.jobCode && j.jobCode === t.target.jobCode) ||
+            (t.target?.title && j.title?.trim().toLowerCase() === t.target.title.trim().toLowerCase())
+          );
+          const attemptKey = `freelance:${(job as any)?._documentId || job?.id || t.target.id}:${t.link}`;
+          if (job && (!job.rawDataLink || job.rawDataLink !== t.link) && !rawLinkSyncAttempts.current.has(attemptKey)) {
+            rawLinkSyncAttempts.current.add(attemptKey);
+            console.log(`[Auto-Sync] Syncing B2 rawDataLink to freelance_jobs/${job.id}:`, t.link);
+            const syncTarget = {
+              ...t.target,
+              id: (job as any)._documentId || String(job.id),
+              _documentId: (job as any)._documentId || String(job.id)
+            };
+            void saveRawDataLink(syncTarget, t.link).catch(err =>
+              console.warn('[Auto-Sync] Failed to sync rawDataLink:', err)
+            );
+          }
+        } else if (t.target.kind === 'deliverable') {
+          const clientId = t.target.clientId;
+          if (clientId) {
+            const client = studio.clients.find(c => String(c.id) === String(clientId));
+            const del = client?.deliverables?.find(d => d.id === t.target?.id);
+            const attemptKey = `deliverable:${clientId}:${t.target.id}:${t.link}`;
+            if (del && (!del.rawDataLink || del.rawDataLink !== t.link) && !rawLinkSyncAttempts.current.has(attemptKey)) {
+              rawLinkSyncAttempts.current.add(attemptKey);
+              void saveRawDataLink(t.target, t.link).catch(err =>
+                console.warn('[Auto-Sync] Failed to sync deliverable rawDataLink:', err)
+              );
+            }
+          }
+        }
+      }
+    }
+  }, [transfers, studio.freelanceJobs, studio.clients, studio.currentUser]);
 
   const open = openId ? transfers.find(job => job.id === openId) : undefined;
   const active = useMemo(() => transfers.filter(job => ACTIVE_STATUSES.includes(job.status)).length, [transfers]);
@@ -37,32 +94,57 @@ export function Dashboard(): React.JSX.Element {
   }
 
   function go(next: View): void { setOpenId(null); setView(next); }
+  function switchWorkspace(next: Workspace): void {
+    setWorkspace(next);
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, next);
+    setOpenId(null);
+    setView(next === 'baawaray-films' ? 'deliverables' : 'uploads');
+  }
 
   return (
     <div className="app-shell">
       <nav className="sidebar">
         <div className="wordmark"><img src={longLogo} alt="Baawaray" /></div>
-        <div className="who">{studio.currentUser.name}</div>
-        <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
-          <Upload size={16} /> Uploads
-          {active + attention > 0 && <span className="count">{active + attention}</span>}
-        </button>
-        <button className="nav-item" aria-current={view === 'freelance'} onClick={() => go('freelance')}>
-          <Users size={16} /> Partner studio work
-        </button>
-        <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
-          <Film size={16} /> Client deliverables
-        </button>
+        <label style={{ padding: '0 10px 12px', margin: 0 }}>
+          <span className="cell-label">Workspace</span>
+          <select value={workspace} onChange={event => switchWorkspace(event.target.value as Workspace)}>
+            <option value="post-production">Post Production</option>
+            <option value="baawaray-films">BAAWARAY FILMS</option>
+          </select>
+        </label>
+        {workspace === 'post-production' ? <>
+          <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
+            <Upload size={16} /> Uploads
+            {active + attention > 0 && <span className="count">{active + attention}</span>}
+          </button>
+          <button className="nav-item" aria-current={view === 'freelance'} onClick={() => go('freelance')}>
+            <Users size={16} /> Partner studio work
+          </button>
+          <button className="nav-item" aria-current={view === 'partners'} onClick={() => go('partners')}>
+            <Users size={16} /> Partner studios
+          </button>
+          <button className="nav-item" aria-current={view === 'team'} onClick={() => go('team')}>
+            <Users size={16} /> Post Production team
+          </button>
+          <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
+            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments
+          </button>
+          <button className="nav-item" onClick={() => setShowArchivalModal(true)}>
+            <Archive size={16} /> Cloud Archival
+          </button>
+        </> : <>
+          <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
+            <Film size={16} /> Deliverables
+          </button>
+          <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
+            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments to Post Production
+          </button>
+        </>}
         <div className="spacer" />
         <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
           <Settings size={16} /> Settings
         </button>
         <button className="nav-item" onClick={() => { void signOut(auth); }}>Sign out</button>
-        <div className="who" style={{ padding: '14px 10px 0' }}>
-          {drive?.connected
-            ? <><Cloud size={12} /> {drive.email}</>
-            : <><CloudOff size={12} /> Drive not connected</>}
-        </div>
       </nav>
 
       <main className="main-area">
@@ -73,15 +155,39 @@ export function Dashboard(): React.JSX.Element {
           <UploadsScreen transfers={transfers} loading={loading} error={error} drive={drive}
             onOpen={setOpenId} onSettings={() => go('settings')} />
         ) : view === 'freelance' || view === 'deliverables' ? (
-          <WorkScreen kind={view} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+          <WorkScreen kind={view} workspace={workspace} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+        ) : view === 'team' ? (
+          <PostProductionTeamScreen />
+        ) : view === 'partners' ? (
+          <PartnerStudiosScreen />
+        ) : view === 'payments' ? (
+          <PostProductionPaymentsScreen
+            clientName={workspace === 'baawaray-films' ? 'BAAWARAY FILMS' : undefined}
+            title={workspace === 'baawaray-films' ? 'BAAWARAY FILMS payments to Post Production' : undefined}
+          />
         ) : (
           <div className="screen">
             <header><div><span className="eyebrow">SETTINGS</span><h2>Uploader settings</h2>
-              <p>The Drive account and the measurement defaults this Mac uploads with.</p></div></header>
-            {drive && <UploaderSettings drive={drive} refresh={refresh} />}
+              <p>The Backblaze B2, Dropbox, and measurement defaults this Mac uploads with.</p></div></header>
+            <UploaderSettings drive={drive ?? undefined} refresh={refresh} />
           </div>
         )}
       </main>
+
+      {showArchivalModal && (
+        <CloudArchivalModal
+          jobs={studio.freelanceJobs}
+          onClose={() => setShowArchivalModal(false)}
+        />
+      )}
     </div>
   );
+}
+
+export function Dashboard(): React.JSX.Element {
+  const studio = useApp();
+  if (studio.currentUser.accountType === 'team') {
+    return <EditorDashboard />;
+  }
+  return <OwnerDashboard />;
 }

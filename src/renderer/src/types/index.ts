@@ -66,6 +66,13 @@ export interface ClientDeliverable {
    * pasted in when whoever holds the footage sent a link instead.
    */
   rawDataLink?: string;
+  rawDataSource?: 'upload' | 'hard_drive' | 'link';
+  rawDurationHours?: number;
+  rawDurationMinutes?: number;
+  rawPhotoCount?: number;
+  hardDriveNotes?: string;
+  /** Linked Post Production project ids created from this BAAWARAY FILMS deliverable. */
+  postProductionJobIds?: string[];
   linkExpiry?: string;
 
   /**
@@ -892,6 +899,19 @@ export interface StudioSettingsConfig {
   watermarkText: string;
   leadSources: string[];
   clientStatuses?: string[];
+  dropbox?: {
+    appKey?: string;
+    appSecret?: string;
+    refreshToken?: string;
+  };
+  b2?: {
+    keyId?: string;
+    applicationKey?: string;
+    bucketName?: string;
+    bucketId?: string;
+    endpoint?: string;
+    region?: string;
+  };
   tierCategories?: TierCategoryConfig[];
   /** Role groups behind the Events / Deliverables tabs of the quotation builder. */
   roleGroups?: StudioRoleGroup[];
@@ -965,4 +985,3 @@ export type TeamView =
 
 export type PartnerView = 'partner_dashboard';
 export type ActiveView = OwnerView | TeamView | PartnerView;
-

@@ -10,7 +10,7 @@ export async function createFreelanceJob(job: Partial<FreelanceJob>): Promise<st
   const ref = doc(collection(db, 'freelance_jobs'));
   const now = new Date();
   const data = { ...job, id: ref.id, jobCode: `FL-${now.getFullYear()}-D${ref.id.slice(0, 8).toUpperCase()}`,
-    createdAt: now.toISOString().slice(0, 10), stage: 'pending_assignment',
+    createdAt: now.toISOString().slice(0, 10), dataReceivedDate: now.toISOString().slice(0, 10), stage: 'data_received',
     clientCharge: job.clientCharge || 0, clientPaidAmount: 0, clientPaymentStatus: 'unpaid', clientPayments: [],
     editorPay: 0, editorPaidAmount: 0, editorPaymentStatus: 'unpaid', editorPayouts: [], revisions: [],
     activityLogs: [{ id: crypto.randomUUID(), timestamp: now.toISOString(), action: 'Created in desktop uploader', actor: 'Studio Owner' }] };
@@ -18,6 +18,64 @@ export async function createFreelanceJob(job: Partial<FreelanceJob>): Promise<st
   const batch = writeBatch(db);
   batch.set(ref, halves.publicHalf); batch.set(doc(ref, 'billing', 'main'), halves.billingHalf); batch.set(doc(ref, 'editor', 'main'), halves.editorHalf);
   await batch.commit(); return ref.id;
+}
+
+export async function createPartnerStudio(input: { name: string; contactPerson?: string; phone: string; email?: string; city?: string; rateCard: Record<string, number> }): Promise<string> {
+  if (!input.name.trim()) throw new Error('Enter the partner studio name.');
+  const ref = doc(collection(db, 'freelance_clients'));
+  await setDoc(ref, clean({ id: ref.id, name: input.name.trim(), contactPerson: input.contactPerson?.trim() || '', phone: input.phone.trim(), email: input.email?.trim() || '', city: input.city?.trim() || '', rateCard: input.rateCard, active: true, createdAt: new Date().toISOString().slice(0, 10) }));
+  return ref.id;
+}
+
+export async function updatePartnerStudio(id: string, input: { name: string; contactPerson?: string; phone: string; email?: string; city?: string; rateCard: Record<string, number> }): Promise<void> {
+  if (!id || !input.name.trim()) throw new Error('Enter the partner studio name.');
+  await setDoc(doc(db, 'freelance_clients', id), clean({
+    id,
+    name: input.name.trim(),
+    contactPerson: input.contactPerson?.trim() || '',
+    phone: input.phone.trim(),
+    email: input.email?.trim() || '',
+    city: input.city?.trim() || '',
+    rateCard: input.rateCard,
+    active: true,
+  }), { merge: true });
+}
+
+/** Creates linked Post Production projects from a BAAWARAY FILMS deliverable. */
+export async function sendBaawarayDeliverableToPostProduction(
+  clientId: string,
+  deliverable: ClientDeliverable,
+  services: string[]
+): Promise<string[]> {
+  if (!clientId || !deliverable?.id || (!deliverable.rawDataLink && deliverable.rawDataSource !== 'hard_drive' && deliverable.rawDataSource !== 'upload')) {
+    throw new Error('Upload raw footage to Backblaze B2 or log hard drive handover before sending this deliverable to Post Production.');
+  }
+  if (services.length === 0) throw new Error('Choose at least one Post Production service.');
+  const partnerId = 'internal_baawaray_films';
+  await setDoc(doc(db, 'freelance_clients', partnerId), clean({
+    id: partnerId, name: 'BAAWARAY FILMS', phone: '', active: true,
+    createdAt: new Date().toISOString().slice(0, 10),
+    notes: 'Internal partner studio. Created for linked BAAWARAY FILMS post-production work.',
+  }), { merge: true });
+  const ids: string[] = [];
+  for (const serviceType of services) {
+    ids.push(await createFreelanceJob({
+      title: deliverable.title, serviceType, freelanceClientId: partnerId,
+      clientName: 'BAAWARAY FILMS', clientPhone: '', rawDataLink: deliverable.rawDataLink,
+      rawDataSource: deliverable.rawDataSource, rawDurationHours: deliverable.rawDurationHours,
+      rawDurationMinutes: deliverable.rawDurationMinutes, rawPhotoCount: deliverable.rawPhotoCount,
+      sourceCompany: 'baawaray-films', sourceClientId: String(clientId), sourceDeliverableId: deliverable.id,
+      editorName: '', editorPhone: '', dueDate: deliverable.dueDate || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+    }));
+  }
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'clients', clientId);
+    const snap = await tx.get(ref); if (!snap.exists()) throw new Error('The source client no longer exists.');
+    const items = snap.data().deliverables || [];
+    tx.update(ref, { deliverables: items.map((item: ClientDeliverable) => item.id === deliverable.id
+      ? { ...item, postProductionJobIds: Array.from(new Set([...(item.postProductionJobIds || []), ...ids])) } : item) });
+  });
+  return ids;
 }
 
 export async function createExtra(clientId: string, extra: Pick<ClientDeliverable, 'title' | 'linkedRoleId' | 'sellingPrice'>): Promise<string> {
@@ -99,6 +157,25 @@ export async function saveUploaderSettings(settings: { keepPercentDefault: numbe
   await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.uploader': settings });
 }
 
+export async function saveDropboxSettings(config: { appKey?: string; appSecret?: string; refreshToken?: string }): Promise<void> {
+  await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.dropbox': config });
+}
+
+export interface B2Config {
+  keyId: string;
+  applicationKey: string;
+  bucketName: string;
+  bucketId?: string;
+  endpoint?: string;
+  region?: string;
+  downloadUrl?: string;
+  enabled?: boolean;
+}
+
+export async function saveB2Settings(config: Partial<B2Config>): Promise<void> {
+  await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.b2': clean(config) });
+}
+
 /**
  * Assign, reassign or clear the editor on a freelance job.
  *
@@ -110,13 +187,63 @@ export async function saveUploaderSettings(settings: { keepPercentDefault: numbe
  */
 export async function assignEditor(jobId: string, member: TeamMember | null): Promise<void> {
   if (!jobId) throw new Error('No job to assign.');
-  await setDoc(doc(db, 'freelance_jobs', jobId, 'editor', 'main'), clean({
+  const data = clean({
     editorMemberId: member?.id ?? null,
     editorName: member?.name ?? '',
     editorPhone: member?.phone ?? '',
     editorEmail: member?.email ?? '',
     editorAuthUid: member?.authUid ?? null,
-  }), { merge: true });
+  });
+  await setDoc(doc(db, 'freelance_jobs', jobId, 'editor', 'main'), data, { merge: true });
+  await updateDoc(doc(db, 'freelance_jobs', jobId), {
+    editorAuthUid: member?.authUid ?? null,
+    editorMemberId: member?.id ?? null,
+    editorName: member?.name ?? '',
+    editorPhone: member?.phone ?? '',
+  });
+  if (member) {
+    await runTransaction(db, async tx => {
+      const ref = doc(db, 'freelance_jobs', jobId);
+      const snap = await tx.get(ref);
+      if (snap.exists() && ['pending_assignment', 'data_received'].includes(snap.data().stage)) {
+        tx.update(ref, { stage: 'editor_assigned' });
+      }
+    });
+  }
+}
+
+export async function syncEditorAuthUid(jobId: string, member: TeamMember): Promise<void> {
+  if (!jobId || !member?.authUid) return;
+  await updateDoc(doc(db, 'freelance_jobs', jobId), {
+    editorAuthUid: member.authUid,
+    editorMemberId: member.id,
+    editorName: member.name || '',
+    editorPhone: member.phone || '',
+  });
+}
+
+export async function submitEditorDelivery(jobId: string, link: string, advance: boolean): Promise<void> {
+  const value = link.trim();
+  if (!value) throw new Error('Paste the link to your finished work.');
+  if (!/^https?:\/\/\S+$/i.test(value)) throw new Error('That does not look like a link. It should start with https://');
+  if (value.length > 1900) throw new Error('That link is too long to save.');
+
+  try {
+    await updateDoc(doc(db, 'freelance_jobs', jobId),
+      advance ? { deliveryLink: value, stage: 'draft_received' } : { deliveryLink: value });
+  } catch (error) {
+    const code = (error as { code?: string })?.code || '';
+    if (code === 'permission-denied') {
+      throw new Error('The studio\'s permissions refused this. It usually means the job is no longer assigned to you, or has been settled. (permission-denied)');
+    }
+    if (code === 'not-found') {
+      throw new Error('That job no longer exists. Refresh the page. (not-found)');
+    }
+    if (code === 'unavailable') {
+      throw new Error('Could not reach the studio. Check your connection and try again. (unavailable)');
+    }
+    throw new Error(`${(error as Error)?.message || 'That could not be saved.'}${code ? ` (${code})` : ''}`);
+  }
 }
 
 /**
@@ -132,10 +259,18 @@ export async function advanceStage(jobId: string, stage: string, detail: string)
     const billingRef = doc(ref, 'billing', 'main');
     const billing = await tx.get(billingRef);
     if (snap.data().stage === stage) return;
-    tx.update(ref, {
-      stage,
-      ...(stage === 'sent_to_editor' ? { sentToEditorDate: now.toISOString().slice(0, 10) } : {}),
-    });
+    const date = now.toISOString().slice(0, 10);
+    const stageDates: Record<string, Record<string, string>> = {
+      data_received: { dataReceivedDate: date },
+      sent_to_editor: { sentToEditorDate: date },
+      draft_received: { draftReceivedDate: date },
+      sent_to_client: { sentToClientDate: date },
+      changes_received: { changesReceivedDate: date },
+      changes_sent_to_editor: { changesSentToEditorDate: date },
+      final_delivered: { finalDeliveredDate: date },
+      completed: { completedDate: date },
+    };
+    tx.update(ref, { stage, ...(stageDates[stage] || {}) });
     // The log belongs in the billing half. Entries elsewhere in the app carry
     // figures — "Desktop invoice issued: DU-… 45,000" — and the parent document
     // is readable by the assigned editor and the partner studio. Writing a log
@@ -144,6 +279,52 @@ export async function advanceStage(jobId: string, stage: string, detail: string)
     tx.set(billingRef, { activityLogs: [...(billing.data()?.activityLogs || []), {
       id: crypto.randomUUID(), timestamp: now.toISOString(), action: detail, actor: 'Studio Owner',
     }] }, { merge: true });
+  });
+}
+
+/**
+ * A final master is only considered archived after the desktop app has finished
+ * writing the Dropbox download to the studio's chosen local archive location.
+ * Keep the path on the private billing half: assigned editors and partner
+ * studios can read the parent job document.
+ */
+export async function archiveFinalDelivery(jobId: string, archivePath: string): Promise<void> {
+  if (!jobId || !archivePath.trim()) throw new Error('Choose an archive location for the final delivery.');
+  const now = new Date().toISOString();
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'freelance_jobs', jobId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('That job no longer exists.');
+    const billingRef = doc(ref, 'billing', 'main');
+    const billing = await tx.get(billingRef);
+    tx.set(billingRef, {
+      finalDeliveryArchivedAt: now,
+      finalDeliveryArchivePath: archivePath,
+      activityLogs: [...(billing.data()?.activityLogs || []), {
+        id: crypto.randomUUID(), timestamp: now, action: 'Final delivery downloaded and archived', actor: 'Studio Owner',
+      }],
+    }, { merge: true });
+  });
+}
+
+/** Record the client handoff before the studio saves its own archival copy. */
+export async function confirmClientFinalDownload(jobId: string): Promise<void> {
+  if (!jobId) throw new Error('No project was selected.');
+  const now = new Date().toISOString();
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'freelance_jobs', jobId);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('That job no longer exists.');
+    if (snap.data().stage !== 'completed') throw new Error('Complete the project before confirming the client download.');
+    const billingRef = doc(ref, 'billing', 'main');
+    const billing = await tx.get(billingRef);
+    if (billing.data()?.clientPaymentStatus !== 'paid') throw new Error('Record the client payment before confirming their final download.');
+    tx.set(billingRef, {
+      clientFinalDownloadConfirmedAt: now,
+      activityLogs: [...(billing.data()?.activityLogs || []), {
+        id: crypto.randomUUID(), timestamp: now, action: 'Client final download confirmed', actor: 'Studio Owner',
+      }],
+    }, { merge: true });
   });
 }
 
@@ -215,9 +396,10 @@ export async function markRevisionShared(jobId: string): Promise<void> {
  */
 export async function saveRawDataLink(target: WorkTarget, link: string): Promise<void> {
   const value = link.trim();
-  if (value && !/^https?:\/\/\S+$/i.test(value)) throw new Error('Paste a full link, starting with https://');
+  if (value && !/^(https?|b2):\/\/\S+$/i.test(value)) throw new Error('Paste a full link, starting with https:// or b2://');
   if (target.kind === 'freelance') {
-    await updateDoc(doc(db, 'freelance_jobs', target.id), { rawDataLink: value || null });
+    const docId = (target as any)._documentId || target.id;
+    await setDoc(doc(db, 'freelance_jobs', docId), { rawDataLink: value || null }, { merge: true });
     return;
   }
   await runTransaction(db, async tx => {
@@ -228,6 +410,24 @@ export async function saveRawDataLink(target: WorkTarget, link: string): Promise
     if (!items.some(d => d.id === target.id)) throw new Error('Deliverable no longer exists.');
     tx.update(ref, { deliverables: clean(items.map(d => d.id === target.id ? { ...d, rawDataLink: value } : d)) });
   });
+}
+
+export async function saveManualRawData(target: WorkTarget, input: {
+  source: 'hard_drive' | 'link'; link?: string; notes?: string; hours: number; minutes: number; photoCount: number;
+}): Promise<void> {
+  if (input.minutes < 0 || input.minutes > 59 || input.hours < 0 || input.photoCount < 0) throw new Error('Enter valid raw-data measurements.');
+  if (input.source === 'link' && !input.link?.trim()) throw new Error('Paste the shared raw-data link.');
+  const data = clean({ rawDataSource: input.source, rawDataLink: input.link?.trim() || '', hardDriveNotes: input.notes?.trim() || undefined, rawDurationHours: input.hours,
+    rawDurationMinutes: input.minutes, rawPhotoCount: input.photoCount });
+  if (target.kind === 'freelance') {
+    await updateDoc(doc(db, 'freelance_jobs', target.id), data);
+  } else {
+    const ref = doc(db, 'clients', target.clientId!);
+    await runTransaction(db, async tx => {
+      const snap = await tx.get(ref); if (!snap.exists()) throw new Error('The client no longer exists.');
+      tx.update(ref, { deliverables: (snap.data().deliverables || []).map((item: ClientDeliverable) => item.id === target.id ? { ...item, ...data } : item) });
+    });
+  }
 }
 
 /**
@@ -249,5 +449,57 @@ export async function saveUploaderOAuth(clientId: string, clientSecret: string):
     }
     tx.set(ref, { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
       updatedAt: new Date().toISOString() }, { merge: true });
+  });
+}
+
+/**
+ * Mark a freelance job's raw footage as downloaded by the editor.
+ * This triggers the dynamic scheduling clock and moves the job from 'download_pending' to 'in_process'.
+ */
+export async function markJobDownloaded(jobId: string, timestamp?: string): Promise<void> {
+  if (!jobId) throw new Error('Job ID is required.');
+  const downloadedAt = timestamp || new Date().toISOString();
+  try {
+    await updateDoc(doc(db, 'freelance_jobs', jobId), { downloadedAt });
+  } catch (error) {
+    const code = (error as { code?: string })?.code || '';
+    if (code === 'permission-denied') {
+      throw new Error('Permissions refused marking download complete. (permission-denied)');
+    }
+    throw new Error(`${(error as Error)?.message || 'Could not mark download complete.'}${code ? ` (${code})` : ''}`);
+  }
+}
+
+export async function resetJobDownloaded(jobId: string): Promise<void> {
+  if (!jobId) throw new Error('Job ID is required.');
+  try {
+    await updateDoc(doc(db, 'freelance_jobs', jobId), { downloadedAt: null });
+  } catch (error) {
+    const code = (error as { code?: string })?.code || '';
+    throw new Error(`${(error as Error)?.message || 'Could not reset download status.'}${code ? ` (${code})` : ''}`);
+  }
+}
+
+/**
+ * Update the required editing days allocated to a job (studio owner/admin).
+ */
+export async function updateJobRequiredDays(jobId: string, requiredDays: number): Promise<void> {
+  if (!jobId) throw new Error('Job ID is required.');
+  if (typeof requiredDays !== 'number' || requiredDays <= 0) {
+    throw new Error('Required days must be a positive number.');
+  }
+  await updateDoc(doc(db, 'freelance_jobs', jobId), { requiredDays });
+}
+
+/**
+ * Save / update an editor's unavailable periods (leaves and off-days).
+ */
+export async function updateEditorUnavailablePeriods(
+  memberId: number | string,
+  unavailablePeriods: { id: string; from: string; to: string; reason?: string }[]
+): Promise<void> {
+  if (!memberId) throw new Error('Member ID is required.');
+  await updateDoc(doc(db, 'team', String(memberId)), {
+    unavailablePeriods: clean(unavailablePeriods)
   });
 }

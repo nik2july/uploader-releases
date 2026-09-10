@@ -33,6 +33,9 @@ function createWindow(): void {
 
   mainWindow.webContents.on('will-navigate', event => event.preventDefault())
   mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  mainWindow.webContents.on('console-message', (_, level, message) => {
+    console.log(`[Renderer:${level}] ${message}`)
+  })
 
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.

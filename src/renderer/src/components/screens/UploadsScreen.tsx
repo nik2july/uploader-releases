@@ -70,7 +70,7 @@ function TransferCard({ job, busy, drive, onOpen, onRun }: {
           </button>
         )}
         {['paused', 'needs_attention'].includes(job.status) && job.target && (
-          <button disabled={busy === job.id || !drive?.connected}
+          <button disabled={busy === job.id}
             onClick={() => void onRun(job.id, () => window.api.resume(job.id))}>
             <Play size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Resume
           </button>
@@ -118,12 +118,6 @@ export function UploadsScreen({ transfers, loading, error, drive, onOpen, onSett
         </div>
       </header>
 
-      {!drive?.connected && (
-        <p className="warning">
-          Google Drive is not connected on this Mac, so nothing will send. {' '}
-          <button className="text-button" onClick={onSettings}>Open settings</button>
-        </p>
-      )}
       {error && <p className="error" role="alert">{error}</p>}
       {actionError && <p className="error" role="alert">{actionError}</p>}
 

@@ -4,6 +4,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ManifestFile, Transfer } from '../shared/contracts';
 import { DriveClient, DriveError } from './drive';
+import type { B2Client } from './b2Client';
+import { b2ObjectName } from './b2Paths';
 import { TransferStore } from './store';
 
 const CHUNK_SIZE = 8 * 1024 * 1024; // Drive requires multiples of 256 KiB.
@@ -13,11 +15,18 @@ export class TransferEngine {
   private active?: { id: string; controller: AbortController };
   private failures = new Map<string, number>();
   private timer: ReturnType<typeof setInterval>;
-  constructor(readonly store: TransferStore, readonly drive: DriveClient,
-    private account: () => string | undefined, private changed: () => void,
-    private completed: (job: Transfer) => void = () => {}) {
+  constructor(
+    readonly store: TransferStore,
+    readonly drive: DriveClient,
+    private account: () => string | undefined,
+    private changed: () => void,
+    private completed: (job: Transfer) => void = () => {},
+    private b2?: B2Client
+  ) {
     this.timer = setInterval(() => { void this.pump(); }, 5000); this.timer.unref();
   }
+  setB2Client(b2: B2Client): void { this.b2 = b2; }
+  private isB2(): boolean { return Boolean(this.b2 && this.b2.isConnected()); }
   setOwner(owner: string): void { this.owner = owner; }
   pause(id: string): void {
     const job = this.store.get(id);
@@ -33,23 +42,28 @@ export class TransferEngine {
   resume(id: string): void {
     const job = this.store.get(id);
     if (!job.target || !job.scan || job.scan.readErrors) throw new Error('Finish reviewing a complete scan before uploading.');
-    if (!this.account()) throw new Error('Connect Google Drive first.');
-    if (job.driveAccount && job.driveAccount !== this.account()) throw new Error('Reconnect the original Drive account for this transfer.');
+    if (!this.isB2() && !this.account()) throw new Error('Connect Google Drive or Backblaze B2 first.');
+    if (!this.isB2() && job.driveAccount && job.driveAccount !== this.account()) throw new Error('Reconnect the original Drive account for this transfer.');
     if (job.status === 'completed') return;
     this.failures.delete(id);
     this.store.patch(id, { status: 'queued', error: undefined, retryAt: undefined }); this.changed(); void this.pump();
   }
   async pump(): Promise<void> {
-    if (this.busy || !this.owner || !this.account()) return;
+    if (this.busy || !this.owner || (!this.isB2() && !this.account())) return;
     const job = this.store.all(this.owner).reverse().find(j => j.status === 'queued'
       || (['waiting_network', 'waiting_quota'].includes(j.status) && (j.retryAt || 0) <= Date.now()));
     if (!job) return;
     this.busy = true;
     const controller = new AbortController(); this.active = { id: job.id, controller };
     try {
-      if (job.driveAccount && job.driveAccount !== this.account()) throw new Error('This transfer belongs to a different Google Drive account.');
-      this.store.patch(job.id, { status: 'uploading', driveAccount: this.account(), error: undefined, retryAt: undefined }); this.changed();
-      await this.upload(job.id, controller.signal);
+      if (!this.isB2() && job.driveAccount && job.driveAccount !== this.account()) throw new Error('This transfer belongs to a different Google Drive account.');
+      const activeAccount = this.isB2() ? `B2: ${this.b2?.credentials?.bucketName || 'active'}` : this.account();
+      this.store.patch(job.id, { status: 'uploading', driveAccount: activeAccount, error: undefined, retryAt: undefined }); this.changed();
+      if (this.isB2()) {
+        await this.uploadB2(job.id, controller.signal);
+      } else {
+        await this.upload(job.id, controller.signal);
+      }
       controller.signal.throwIfAborted();
       const done = this.store.patch(job.id, { status: 'completed', error: undefined, currentFile: undefined, ...this.store.stats(job.id) });
       this.completed(done);
@@ -62,6 +76,58 @@ export class TransferEngine {
         this.store.patch(job.id, { status, error: error instanceof Error ? error.message : 'Upload stopped.', retryAt: Date.now() + delay, ...this.store.stats(job.id) });
       }
     } finally { this.active = undefined; this.busy = false; this.changed(); }
+  }
+  private async uploadB2(id: string, signal: AbortSignal): Promise<void> {
+    if (!this.b2 || !this.b2.isConnected()) throw new Error('Backblaze B2 is not connected.');
+    const job = this.store.get(id);
+    const root = await fs.realpath(job.rootPath).catch(() => {
+      throw new Error('Source drive is unavailable. Reconnect it or choose Locate folder.');
+    });
+
+    const bucketName = this.b2.credentials?.bucketName || '';
+    const folderSlug = (job.target?.jobCode || job.target?.title || job.rootName || 'package')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_');
+    const prefix = `raw/${folderSlug}`;
+
+    this.store.patch(id, {
+      folderId: prefix,
+      link: `b2://${bucketName}/${prefix}`
+    });
+
+    let file: ManifestFile | undefined;
+    while ((file = this.store.next(id))) {
+      signal.throwIfAborted();
+      this.store.patch(id, { currentFile: file.relativePath, status: 'uploading', ...this.store.stats(id) });
+      this.changed();
+
+      const full = await this.localFile(root, file);
+      const b2FileName = b2ObjectName(prefix, file.relativePath);
+
+      try {
+        await this.b2.uploadFile(full, b2FileName, signal, chunkDownloaded => {
+          file!.offset = chunkDownloaded;
+          this.store.saveFile(file!);
+          this.store.patch(id, this.store.stats(id));
+          this.changed();
+        });
+
+        file.offset = file.size;
+        file.state = 'verified';
+        file.error = undefined;
+        this.store.saveFile(file);
+      } catch (err) {
+        if (!signal.aborted) {
+          file.error = err instanceof Error ? err.message : 'Upload error';
+          this.store.saveFile(file);
+        }
+        throw err;
+      }
+    }
+
+    const stats = this.store.stats(id);
+    if (stats.completedFiles !== job.scan?.fileCount || stats.uploadedBytes !== job.scan?.totalBytes) {
+      throw new Error('Manifest reconciliation failed. The folder is not marked complete.');
+    }
   }
   private async upload(id: string, signal: AbortSignal): Promise<void> {
     const job = this.store.get(id);

@@ -707,6 +707,19 @@ export function addDaysToDate(dateStr?: string, days: number = 7): string {
  */
 export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStage) {
   switch (stage) {
+    case 'pending_assignment':
+      return {
+        label: 'Awaiting Assignment',
+        step: 0,
+        color: 'stone',
+        badgeBg: 'bg-stone-50 border-stone-200 text-stone-900',
+        badgeClass: 'bg-stone-100 text-stone-800 border border-stone-300',
+        badgeText: 'text-stone-800',
+        dotColor: 'bg-stone-500',
+        nextStage: 'data_received' as const,
+        nextLabel: 'Mark Data Received',
+        description: 'Work logged. Awaiting editor assignment or verified raw data.',
+      };
     case 'data_received':
       return {
         label: 'Data Received',
@@ -716,14 +729,27 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
         badgeClass: 'bg-amber-100 text-amber-800 border border-amber-300',
         badgeText: 'text-amber-800',
         dotColor: 'bg-amber-500',
-        nextStage: 'sent_to_editor' as const,
-        nextLabel: 'Send to Editor',
-        description: 'Raw footage/files received. Awaiting editor dispatch.',
+        nextStage: null,
+        nextLabel: 'Assign Editor',
+        description: 'Raw footage/files received. Assign an editor as the next step.',
+      };
+    case 'editor_assigned':
+      return {
+        label: 'Editor Assigned',
+        step: 2,
+        color: 'sky',
+        badgeBg: 'bg-sky-50 border-sky-200 text-sky-900',
+        badgeClass: 'bg-sky-100 text-sky-800 border border-sky-300',
+        badgeText: 'text-sky-800',
+        dotColor: 'bg-sky-500',
+        nextStage: null,
+        nextLabel: 'Notify Editor',
+        description: 'Editor assigned. Notify them so work can begin.',
       };
     case 'sent_to_editor':
       return {
-        label: 'Sent to Editor',
-        step: 2,
+        label: 'With Editor',
+        step: 3,
         color: 'sky',
         badgeBg: 'bg-sky-50 border-sky-200 text-sky-900',
         badgeClass: 'bg-sky-100 text-sky-800 border border-sky-300',
@@ -731,38 +757,38 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
         dotColor: 'bg-sky-500',
         nextStage: 'draft_received' as const,
         nextLabel: 'Draft In Review',
-        description: 'With editor/freelancer. In-production crafting draft.',
+        description: 'Editor has been notified and is working on the project.',
       };
     case 'draft_received':
       return {
-        label: 'Draft in Review',
-        step: 3,
+        label: 'Final Output Received',
+        step: 4,
         color: 'indigo',
         badgeBg: 'bg-indigo-50 border-indigo-200 text-indigo-900',
         badgeClass: 'bg-indigo-100 text-indigo-800 border border-indigo-300',
         badgeText: 'text-indigo-800',
         dotColor: 'bg-indigo-500',
         nextStage: 'sent_to_client' as const,
-        nextLabel: 'Send to Client',
-        description: 'Draft received from editor. Internal QC check in progress.',
+        nextLabel: 'Share with Client',
+        description: 'Editor shared the final output link. Review it, then share it with the client.',
       };
     case 'sent_to_client':
       return {
-        label: 'Sent to Client for Review',
-        step: 4,
+        label: 'Client Review',
+        step: 5,
         color: 'purple',
         badgeBg: 'bg-purple-50 border-purple-200 text-purple-900',
         badgeClass: 'bg-purple-100 text-purple-800 border border-purple-300',
         badgeText: 'text-purple-800',
         dotColor: 'bg-purple-500',
-        nextStage: 'final_delivered' as const,
-        nextLabel: 'Mark Final Delivered',
+        nextStage: null,
+        nextLabel: 'Await Client Decision',
         description: 'Preview link shared with client. Awaiting feedback or approval.',
       };
     case 'changes_received':
       return {
         label: 'Changes Received',
-        step: 5,
+        step: 6,
         color: 'rose',
         badgeBg: 'bg-rose-50 border-rose-200 text-rose-900',
         badgeClass: 'bg-rose-100 text-rose-800 border border-rose-300',
@@ -775,7 +801,7 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
     case 'changes_sent_to_editor':
       return {
         label: 'Changes with Editor',
-        step: 6,
+        step: 7,
         color: 'orange',
         badgeBg: 'bg-orange-50 border-orange-200 text-orange-900',
         badgeClass: 'bg-orange-100 text-orange-800 border border-orange-300',
@@ -787,21 +813,21 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
       };
     case 'final_delivered':
       return {
-        label: 'Final Delivered',
-        step: 7,
+        label: 'Client Approved',
+        step: 8,
         color: 'emerald',
         badgeBg: 'bg-emerald-50 border-emerald-200 text-emerald-900',
         badgeClass: 'bg-emerald-100 text-emerald-800 border border-emerald-300',
         badgeText: 'text-emerald-800',
         dotColor: 'bg-emerald-500',
         nextStage: 'completed' as const,
-        nextLabel: 'Mark Completed & Settled',
-        description: 'High-res master delivered to client. Awaiting final settlement.',
+        nextLabel: 'Mark Completed',
+        description: 'Client approved the final. Complete the project; payment status remains tracked separately.',
       };
     case 'completed':
       return {
-        label: 'Completed & Settled',
-        step: 8,
+        label: 'Completed',
+        step: 9,
         color: 'teal',
         badgeBg: 'bg-teal-50 border-teal-200 text-teal-900',
         badgeClass: 'bg-teal-100 text-teal-800 border border-teal-300',
@@ -809,7 +835,7 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
         dotColor: 'bg-teal-600',
         nextStage: null,
         nextLabel: 'Completed',
-        description: 'Project delivered, client balance collected, editor paid.',
+        description: 'Project work is complete. It appears under Payment Received once the client balance is paid.',
       };
     default:
       return {

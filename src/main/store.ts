@@ -13,7 +13,9 @@ export class TransferStore {
         UNIQUE(job,path));
       CREATE INDEX IF NOT EXISTS files_queue ON files(job,state,id);
       CREATE TABLE IF NOT EXISTS folders (job TEXT NOT NULL REFERENCES jobs(id), path TEXT NOT NULL, drive_id TEXT,
-        PRIMARY KEY(job,path));`);
+        PRIMARY KEY(job,path));
+      CREATE TABLE IF NOT EXISTS downloads (owner TEXT NOT NULL, job TEXT NOT NULL, path TEXT NOT NULL,
+        completed_at TEXT NOT NULL, PRIMARY KEY(owner,job));`);
     for (const job of this.all()) {
       if (job.status === 'scanning') this.save({ ...job, status: 'needs_attention', error: 'Scanning was interrupted. Select the folder again to scan a fresh manifest.' });
       else if (['uploading', 'verifying', 'queued'].includes(job.status)) this.save({ ...job, status: 'paused', error: 'Recovered after restart. Resume to reconcile progress with Drive.' });
@@ -95,5 +97,17 @@ export class TransferStore {
   }
   saveFolder(job: string, path: string, driveId: string): void {
     this.db.prepare('UPDATE folders SET drive_id=? WHERE job=? AND path=?').run(driveId, job, path);
+  }
+  rememberDownload(owner: string, job: string, folderPath: string): void {
+    this.db.prepare(`INSERT INTO downloads(owner,job,path,completed_at) VALUES(?,?,?,?)
+      ON CONFLICT(owner,job) DO UPDATE SET path=excluded.path,completed_at=excluded.completed_at`)
+      .run(owner, job, folderPath, new Date().toISOString());
+  }
+  downloadPath(owner: string, job: string): string | undefined {
+    const row = this.db.prepare('SELECT path FROM downloads WHERE owner=? AND job=?').get(owner, job);
+    return row?.path ? String(row.path) : undefined;
+  }
+  forgetDownload(owner: string, job: string): void {
+    this.db.prepare('DELETE FROM downloads WHERE owner=? AND job=?').run(owner, job);
   }
 }

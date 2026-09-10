@@ -20,9 +20,16 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
     unknownVideoCount: 0, totalBytes: 0, fileCount: 0, folderCount: 0, pairedPhotos: 0,
     excludedBillingFiles: 0, warnings: [], readErrors: 0, missingClips: [], missingClipCount: 0,
     unreadableFiles: [] };
+  const serviceType = job.target?.serviceType;
+  const isShortForm = serviceType === 'Short Form';
+  const isPhotoOnlyService = serviceType === 'Edited Photos' || serviceType === 'Album';
+  const isLongForm = serviceType === 'Long Form';
+  const probeVideoDuration = !isShortForm && !isPhotoOnlyService;
+
   const photoPairs = new Map<string, Set<string>>();
   const seenPaths: { relativePath: string }[] = [];
   const excluded = new Set(job.options.excludedBillingFolders.map(s => s.trim().toLowerCase()).filter(Boolean));
+  const selected = job.sourceFiles ? new Set(job.sourceFiles) : undefined;
   const warn = (message: string): void => { if (result.warnings.length < 200) result.warnings.push(message); };
   const publish = (): void => { store.patch(jobId, { scan: { ...result } }); changed(); };
   async function walk(folder: string, billingIncluded: boolean): Promise<void> {
@@ -36,6 +43,9 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
       signal.throwIfAborted();
       const full = path.join(folder, entry.name);
       const relativePath = path.relative(root, full).split(path.sep).join('/');
+      // File-picker scans share one parent folder. Only inventory the files the
+      // owner explicitly selected; a folder scan continues to recurse normally.
+      if (selected && !selected.has(relativePath)) continue;
       if (entry.isSymbolicLink()) { warn(`Symbolic link excluded from upload: ${relativePath}`); continue; }
       if (entry.name === '.DS_Store' || entry.name.startsWith('._')) continue;
       if (entry.isDirectory()) { await walk(full, billingIncluded && !excluded.has(entry.name.toLowerCase())); continue; }
@@ -50,7 +60,7 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
         if (!billingIncluded) result.excludedBillingFiles++;
         if (kind === 'photo') {
           result.totalPhotos++;
-          if (billingIncluded) {
+          if (billingIncluded && !isShortForm && !isLongForm) {
             result.billablePhotos++;
             const key = relativePath.slice(0, -ext.length);
             const pair = photoPairs.get(key) ?? new Set<string>();
@@ -71,25 +81,25 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
 
         if (kind === 'video') {
           result.totalVideos++;
-          // Every clip is probed, not only the billable ones. Whether a file is
-          // readable is a question about the data; whether it counts towards an
-          // invoice is a question about money. Tying them together meant a
-          // corrupt clip in an excluded folder was never looked at.
-          try {
-            const binary = ffprobe.path.replace(/\.asar\//, '.asar.unpacked/');
-            const { stdout } = await exec(binary, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', full], { timeout: 30000, maxBuffer: 1024 * 1024, signal });
-            durationSeconds = Number(JSON.parse(stdout).format?.duration);
-            if (!Number.isFinite(durationSeconds) || durationSeconds! <= 0) throw new Error('Unknown duration');
-            if (billingIncluded) result.totalDurationSeconds += durationSeconds!;
-          } catch {
-            signal.throwIfAborted();
-            durationSeconds = undefined;
-            if (billingIncluded) result.unknownVideoCount++;
-            if (stat.size > 0 && result.unreadableFiles.length < 500) {
-              result.unreadableFiles.push({ path: relativePath, reason: 'No duration in the file — the clip may be truncated or corrupt.' });
+          // For Short Form and Photo/Album services, video duration measurement is skipped.
+          // For Long Form (or untyped work), every clip is probed for duration.
+          if (probeVideoDuration) {
+            try {
+              const binary = ffprobe.path.replace(/\.asar\//, '.asar.unpacked/');
+              const { stdout } = await exec(binary, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', full], { timeout: 30000, maxBuffer: 1024 * 1024, signal });
+              durationSeconds = Number(JSON.parse(stdout).format?.duration);
+              if (!Number.isFinite(durationSeconds) || durationSeconds! <= 0) throw new Error('Unknown duration');
+              if (billingIncluded) result.totalDurationSeconds += durationSeconds!;
+            } catch {
+              signal.throwIfAborted();
+              durationSeconds = undefined;
+              if (billingIncluded) result.unknownVideoCount++;
+              if (stat.size > 0 && result.unreadableFiles.length < 500) {
+                result.unreadableFiles.push({ path: relativePath, reason: 'No duration in the file — the clip may be truncated or corrupt.' });
+              }
+              error = 'This clip could not be read. It may be truncated or corrupt.';
+              warn(`${relativePath}: ${error}`);
             }
-            error = 'This clip could not be read. It may be truncated or corrupt.';
-            warn(`${relativePath}: ${error}`);
           }
         }
         store.addFile(jobId, { relativePath, size: stat.size, mtimeMs: stat.mtimeMs, kind, billingIncluded, durationSeconds, error });

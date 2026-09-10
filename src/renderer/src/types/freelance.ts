@@ -1,6 +1,7 @@
 export type FreelanceJobStage =
   | 'pending_assignment'
   | 'data_received'
+  | 'editor_assigned'
   | 'sent_to_editor'
   | 'draft_received'
   | 'sent_to_client'
@@ -152,6 +153,10 @@ export interface FreelanceJob {
    * registry existed — those still carry only the typed clientName/clientPhone,
    * which stay populated on every job so a deleted client never blanks its history. */
   freelanceClientId?: string;
+  /** Source record when BAAWARAY FILMS sends one of its deliverables to Post Production. */
+  sourceCompany?: 'baawaray-films';
+  sourceClientId?: string;
+  sourceDeliverableId?: string;
 
   // Worker / Editor Assignment
   assignedType?: 'in_house' | 'freelancer';
@@ -228,6 +233,11 @@ export interface FreelanceJob {
 
   // Links
   rawDataLink?: string; // Raw footage / files link (GDrive, Dropbox, WeTransfer, NAS)
+  rawDataSource?: 'upload' | 'hard_drive' | 'link';
+  rawDurationHours?: number;
+  rawDurationMinutes?: number;
+  rawPhotoCount?: number;
+  hardDriveNotes?: string;
   /**
    * Where the editor's work is watched — the one link the job delivers through.
    *
@@ -259,10 +269,20 @@ export interface FreelanceJob {
   changesSentToEditorDate?: string; // YYYY-MM-DD
   finalDeliveredDate?: string; // YYYY-MM-DD
   completedDate?: string; // YYYY-MM-DD
+  /** The studio's verified local archive copy of the final delivery. */
+  finalDeliveryArchivedAt?: string; // ISO timestamp
+  finalDeliveryArchivePath?: string; // Local archive path, only visible to the studio
+  /** Studio confirmation that the client has downloaded their final delivery. */
+  clientFinalDownloadConfirmedAt?: string; // ISO timestamp
 
   // Due Dates (Automated rules: 1 week from data received, 2 days from changes received)
   dueDate: string; // YYYY-MM-DD (Default: 7 days after dataReceivedDate)
   changesDueDate?: string; // YYYY-MM-DD (Default: 2 days after changesReceivedDate)
+
+  // Dynamic Scheduling & Download Tracking
+  downloadedAt?: string; // ISO or YYYY-MM-DD timestamp when raw data was marked downloaded by editor
+  requiredDays?: number; // Studio-assigned working days to edit (default 2)
+  dynamicDueDate?: string; // YYYY-MM-DD calculated sequentially taking off-days into account
 
   // Revisions & Activity History
   revisions: FreelanceRevision[];

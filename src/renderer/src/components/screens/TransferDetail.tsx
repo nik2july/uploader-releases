@@ -119,6 +119,12 @@ export function TransferDetail({ job, onBack, refresh }: {
   const bytesPerSecond = useTransferSpeed(job.uploadedBytes, moving);
   const remaining = Math.max(0, (scan?.totalBytes || 0) - job.uploadedBytes);
 
+  const isPhotoService = service ? (service.name === 'Edited Photos' || service.name === 'Album') : false;
+  const isLongForm = service ? (service.name === 'Long Form') : false;
+  const isShortForm = service ? (service.name === 'Short Form') : false;
+  const showVideoDuration = isLongForm || (!service && Boolean(scan?.totalVideos));
+  const showPhotos = isPhotoService || (!service && Boolean(scan?.totalPhotos));
+
   const canUpload = ['ready', 'paused'].includes(job.status) && scan && !scan.readErrors && target;
   const [confirmingProblems, setConfirmingProblems] = useState(false);
   const problemCount = (scan?.missingClipCount || 0) + (scan?.unreadableFiles?.length || 0);
@@ -155,15 +161,19 @@ export function TransferDetail({ job, onBack, refresh }: {
             <div className="stat-grid">
               <div className="stat"><div className="label">Total size</div><div className="value">{formatBytes(scan.totalBytes)}</div>
                 <div className="foot">{formatCount(scan.fileCount)} files in {formatCount(scan.folderCount)} folders</div></div>
-              {(!service || service.basis === 'per_raw_hour' || scan.totalVideos > 0) && (
+              {showVideoDuration && (
                 <div className="stat"><div className="label">Raw video</div><div className="value">{formatDuration(scan.totalDurationSeconds)}</div>
                   <div className="foot">{formatCount(scan.totalVideos)} clips, all cameras added together</div></div>
               )}
-              {countsPhotos && (
+              {isShortForm && (
+                <div className="stat"><div className="label">Short form verification</div><div className="value">{scan.missingClipCount === 0 ? 'All clips intact' : `${scan.missingClipCount} missing`}</div>
+                  <div className="foot">{formatCount(scan.fileCount)} files indexed · sequence gaps scanned</div></div>
+              )}
+              {showPhotos && (
                 <div className="stat"><div className="label">Photos</div><div className="value">{formatCount(scan.totalPhotos)}</div>
                   <div className="foot">{formatCount(scan.billablePhotos)} counted for billing{scan.pairedPhotos ? ` · ${formatCount(scan.pairedPhotos)} RAW+JPEG pairs` : ''}</div></div>
               )}
-              {countsPhotos && scan.excludedBillingFiles > 0 && (
+              {showPhotos && scan.excludedBillingFiles > 0 && (
                 <div className="stat"><div className="label">Excluded from billing</div><div className="value">{formatCount(scan.excludedBillingFiles)}</div>
                   <div className="foot">Still uploaded in full</div></div>
               )}
@@ -335,7 +345,7 @@ export function TransferDetail({ job, onBack, refresh }: {
       <section className="panel">
         <span className="eyebrow">TRANSFER</span>
         <h2 style={{ fontSize: 20 }}>
-          {job.status === 'completed' ? 'Verified and ready to share' : 'Send to Google Drive'}
+          {job.status === 'completed' ? 'Verified and ready to share' : 'Upload to Cloud Storage'}
         </h2>
 
         {job.status !== 'scanning' && (
@@ -357,7 +367,7 @@ export function TransferDetail({ job, onBack, refresh }: {
         {job.status === 'completed' ? <ShareActions job={job} refresh={refresh} /> : (
           <>
             <p className="muted" style={{ fontSize: 13 }}>
-              Every file is checked against Drive by size and checksum after it lands. The folder is only
+              Every file is verified in Backblaze B2 by size and checksum after it lands. The folder is only
               called ready when all of them pass, and re-running it sends nothing that is already verified.
             </p>
             <div className="actions">

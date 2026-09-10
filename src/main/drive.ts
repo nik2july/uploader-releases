@@ -86,4 +86,7 @@ export class DriveClient {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: 'reader', type: mode === 'anyone' ? 'anyone' : 'user', ...(mode === 'restricted' ? { emailAddress: email } : {}) }) });
   }
+  async delete(id: string, signal?: AbortSignal): Promise<void> {
+    await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, { method: 'DELETE', signal }, [204, 404]);
+  }
 }

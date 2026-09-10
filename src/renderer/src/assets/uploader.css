@@ -220,6 +220,101 @@ button.danger { color: var(--burgundy); border-color: color-mix(in srgb, var(--b
 .work-modal > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .work-modal h2 { font-family: var(--font-heading); font-size: 24px; margin: 3px 0 0; }
 
+/* -------------------------------------------------------------- drawers --- */
+
+.drawer-shade {
+  position: fixed; inset: 0; background: color-mix(in srgb, var(--ink) 42%, transparent);
+  backdrop-filter: blur(2px);
+  display: flex; justify-content: flex-end; z-index: 1000;
+  animation: drawerFadeIn 0.18s ease-out;
+}
+
+.work-drawer {
+  background: var(--panel); width: 620px; max-width: 95vw; height: 100vh;
+  display: flex; flex-direction: column; box-shadow: -10px 0 35px rgba(0, 0, 0, 0.18);
+  animation: drawerSlideIn 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.work-drawer > header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; padding: 22px 24px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 30%, transparent);
+  background: var(--panel); flex-shrink: 0;
+}
+
+.work-drawer > header h2 {
+  font-family: var(--font-heading); font-size: 22px; margin: 2px 0 0; color: var(--ink);
+}
+
+.work-drawer-body {
+  flex: 1; overflow-y: auto; padding: 22px 24px; display: flex; flex-direction: column; gap: 20px;
+}
+
+.work-drawer-footer {
+  padding: 16px 24px; border-top: 1px solid color-mix(in srgb, var(--line) 30%, transparent);
+  background: var(--panel); display: flex; align-items: center; justify-content: flex-end;
+  gap: 10px; flex-shrink: 0;
+}
+
+.drawer-section {
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.drawer-section-title {
+  font-family: var(--font-caption); font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--muted); font-weight: 700;
+}
+
+.drawer-card {
+  border: 1px solid color-mix(in srgb, var(--line) 35%, transparent);
+  border-radius: 12px; padding: 14px 16px; background: var(--paper);
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.drawer-card.highlight {
+  border-color: color-mix(in srgb, var(--burgundy) 40%, transparent);
+  background: color-mix(in srgb, var(--burgundy) 4%, var(--paper));
+}
+
+.drawer-card-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+
+.drawer-card-title {
+  font-size: 13.5px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 7px;
+}
+
+.drawer-meta-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 500;
+}
+
+.drawer-meta-badge.neutral {
+  background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink);
+}
+
+.drawer-meta-badge.active {
+  background: color-mix(in srgb, var(--burgundy) 12%, transparent); color: var(--burgundy);
+}
+
+.drawer-meta-badge.warn {
+  background: color-mix(in srgb, #b45309 14%, transparent); color: #b45309;
+}
+
+.drawer-meta-badge.done {
+  background: color-mix(in srgb, #2f6b34 14%, transparent); color: #2f6b34;
+}
+
+@keyframes drawerFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes drawerSlideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
 /* ------------------------------------------------------- session screen --- */
 
 .session-screen {

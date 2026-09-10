@@ -26,6 +26,8 @@ export interface InvoiceSnapshot {
 }
 export interface Transfer {
   id: string; ownerUid: string; rootPath: string; rootName: string; status: TransferStatus;
+  /** Relative files explicitly selected by the owner. Omitted for a whole-folder scan. */
+  sourceFiles?: string[];
   target?: WorkTarget; scan?: ScanSummary; options: ScanOptions; createdAt: string; updatedAt: string;
   folderId?: string; driveAccount?: string; link?: string; error?: string; retryAt?: number;
   invoice?: InvoiceSnapshot; synced?: boolean; shared?: boolean; sharing?: 'restricted' | 'anyone';
@@ -42,10 +44,11 @@ export interface ManifestFile {
 export interface UpdateInfo { version: string; url: string; notes: string; publishedAt: string }
 export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
 export interface DesktopAPI {
-  login(phone: string, password: string): Promise<{ customToken: string }>;
-  authorize(idToken: string): Promise<string>;
+  login(phone: string, password: string): Promise<{ customToken: string; accountType: string }>;
+  authorize(idToken: string): Promise<{ uid: string; isOwner: boolean }>;
   signOut(): Promise<void>;
   scan(options: ScanOptions, target?: WorkTarget): Promise<string | null>;
+  scanFiles(options: ScanOptions, target?: WorkTarget): Promise<string | null>;
   cancelScan(id: string): Promise<void>;
   list(): Promise<Transfer[]>;
   inspect(id: string): Promise<{ files: { path: string; error: string }[] }>;
@@ -53,6 +56,29 @@ export interface DesktopAPI {
   connectDrive(idToken: string): Promise<DriveStatus>;
   driveStatus(): Promise<DriveStatus>;
   disconnectDrive(): Promise<DriveStatus>;
+  dropboxStatus(): Promise<DropboxStatus>;
+  connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;
+  disconnectDropbox(): Promise<DropboxStatus>;
+  b2Status(): Promise<B2Status>;
+  connectB2(config: B2ConfigInput): Promise<B2Status>;
+  disconnectB2(): Promise<B2Status>;
+  deleteB2Folder(prefix: string): Promise<number>;
+  chooseDeliverableFile(): Promise<{ filePath: string; fileName: string; fileSize: number } | null>;
+  uploadDeliverable(jobId: string, filePath: string, targetFolder: string, fileName: string): Promise<string>;
+  onUploadProgress(callback: (progress: { jobId: string; percent: number; uploadedBytes: number; totalBytes: number }) => void): () => void;
+  chooseDownloadDirectory(): Promise<string | null>;
+  downloadRawData(jobId: string, rawDataLink: string, destDir: string): Promise<{ success: boolean; downloadedBytes: number; totalBytes: number; fileCount: number; path: string }>;
+  cancelDownload(jobId: string): Promise<void>;
+  onDownloadProgress(callback: (progress: DownloadProgress) => void): () => void;
+  verifyLocalFolder(jobId: string, folderPath: string): Promise<{ valid: boolean; fileCount: number; totalBytes: number }>;
+  openDownloadedFolder(jobId: string): Promise<void>;
+  forgetDownloadedFolder(jobId: string): Promise<void>;
+  checkDiskSpace(targetPath: string): Promise<DiskSpaceInfo>;
+  getDownloadSize(rawDataLink: string): Promise<number>;
+  deleteDriveFolder(folderId: string): Promise<void>;
+  deleteDropboxFile(dropboxPath: string): Promise<void>;
+  downloadDropboxFile(dropboxPath: string, localPath: string): Promise<void>;
+  chooseSaveLocation(defaultFileName: string): Promise<string | null>;
   enqueue(id: string, target: WorkTarget, invoice?: InvoiceSnapshot): Promise<void>;
   pause(id: string): Promise<void>;
   resume(id: string): Promise<void>;
@@ -70,4 +96,37 @@ export interface DesktopAPI {
   appVersion(): Promise<string>;
   diagnostics(): Promise<string>;
   onChange(callback: () => void): () => void;
+}
+
+export interface DiskSpaceInfo {
+  freeBytes: number;
+  totalBytes: number;
+  path: string;
+}
+
+export interface DownloadProgress {
+  jobId: string;
+  percent: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  fileName?: string;
+  status: 'downloading' | 'completed' | 'error';
+  error?: string;
+}
+
+export interface DropboxStatus { configured: boolean; connected: boolean; email?: string; error?: string }
+
+export interface B2Status {
+  connected: boolean;
+  bucketName?: string;
+  accountId?: string;
+  error?: string;
+}
+
+export interface B2ConfigInput {
+  keyId: string;
+  applicationKey: string;
+  bucketName: string;
+  endpoint?: string;
+  region?: string;
 }

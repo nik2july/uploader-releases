@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TransferStore } from '../src/main/store';
 import { scanDirectory } from '../src/main/scanner';
-import type { ScanOptions, ScanSummary, Transfer } from '../src/shared/contracts';
+import type { ScanOptions, ScanSummary, Transfer, WorkTarget } from '../src/shared/contracts';
 import { tempDir } from './helpers';
 
 /**
@@ -21,7 +21,7 @@ import { tempDir } from './helpers';
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const done of cleanups.splice(0)) done(); });
 
-async function scan(files: Record<string, string>, options: Partial<ScanOptions> = {}): Promise<{
+async function scan(files: Record<string, string>, options: Partial<ScanOptions> = {}, target?: WorkTarget): Promise<{
   summary: ScanSummary; job: Transfer; store: TransferStore; root: string;
 }> {
   const root = await tempDir();
@@ -37,6 +37,7 @@ async function scan(files: Record<string, string>, options: Partial<ScanOptions>
   store.save({
     id: 'scan-1', ownerUid: 'owner', rootPath: root, rootName: path.basename(root), status: 'scanning',
     options: { excludedBillingFolders: [], countPhotoPairsOnce: true, ...options },
+    target,
     createdAt: now, updatedAt: now, completedFiles: 0, uploadedBytes: 0,
   });
 
@@ -99,6 +100,24 @@ describe('what is excluded from billing', () => {
 });
 
 describe('what the folder holds', () => {
+  test('an explicit file selection does not pull in neighbouring files', async () => {
+    const root = await tempDir();
+    await fs.writeFile(path.join(root, 'selected photo.jpg'), 'one');
+    await fs.writeFile(path.join(root, 'private notes.txt'), 'two');
+    const store = new TransferStore(':memory:');
+    cleanups.push(() => store.close());
+    const now = new Date().toISOString();
+    store.save({
+      id: 'selected-scan', ownerUid: 'owner', rootPath: root, rootName: 'selected photo.jpg',
+      sourceFiles: ['selected photo.jpg'], status: 'scanning',
+      options: { excludedBillingFolders: [], countPhotoPairsOnce: true },
+      createdAt: now, updatedAt: now, completedFiles: 0, uploadedBytes: 0,
+    });
+    await scanDirectory(store, 'selected-scan', new AbortController().signal, () => {});
+    assert.equal(store.get('selected-scan').scan?.fileCount, 1);
+    assert.equal(store.next('selected-scan')?.relativePath, 'selected photo.jpg');
+  });
+
   test('records every folder so the structure can be recreated in Drive', async () => {
     const { store } = await scan({ 'DAY01/CARD_A/a.jpg': 'x', 'DAY02/b.jpg': 'x' });
     const folders = store.folders('scan-1').map(f => f.path).sort();
@@ -224,5 +243,76 @@ describe('measurements it refuses to guess at', () => {
     controller.abort();
     await assert.rejects(scanDirectory(store, 'scan-1', controller.signal, () => {}));
     assert.notEqual(store.get('scan-1').status, 'ready');
+  });
+});
+
+describe('service-aware scanning', () => {
+  const baseTarget: WorkTarget = {
+    kind: 'freelance',
+    id: 'fl-1',
+    title: 'Test Job',
+    clientName: 'Partner Studio',
+    serviceType: 'Short Form',
+    purpose: 'raw',
+  };
+
+  test('Short Form skips duration probing and scans missing files only', async () => {
+    // Note: mock video file that would fail ffprobe if probed
+    const { summary } = await scan(
+      {
+        'C0001.mp4': 'mock video bytes',
+        'C0003.mp4': 'mock video bytes',
+      },
+      {},
+      { ...baseTarget, serviceType: 'Short Form' }
+    );
+    assert.equal(summary.totalVideos, 2);
+    // Because duration probe is skipped for Short Form, unknownVideoCount is 0 (ffprobe not run)
+    assert.equal(summary.unknownVideoCount, 0);
+    assert.equal(summary.totalDurationSeconds, 0);
+    // But sequence check still finds missing clip C0002!
+    assert.equal(summary.missingClipCount, 1);
+    assert.equal(summary.billablePhotos, 0);
+  });
+
+  test('Long Form ignores photo count for billing and checks sequences', async () => {
+    const { summary } = await scan(
+      {
+        'photo1.jpg': 'x',
+        'photo2.jpg': 'x',
+      },
+      {},
+      { ...baseTarget, serviceType: 'Long Form' }
+    );
+    assert.equal(summary.totalPhotos, 2);
+    assert.equal(summary.billablePhotos, 0, 'photos are not billable for video edit (Long Form)');
+  });
+
+  test('Edited Photos and Album skip video duration probing and count photos', async () => {
+    const { summary: photoSummary } = await scan(
+      {
+        'clip.mp4': 'mock video bytes',
+        'DSC001.jpg': 'x',
+        'DSC002.jpg': 'x',
+      },
+      {},
+      { ...baseTarget, serviceType: 'Edited Photos' }
+    );
+    assert.equal(photoSummary.totalVideos, 1);
+    assert.equal(photoSummary.unknownVideoCount, 0, 'video duration is not probed for photo service');
+    assert.equal(photoSummary.billablePhotos, 2);
+
+    const { summary: albumSummary } = await scan(
+      {
+        'clip.mp4': 'mock video bytes',
+        'DSC001.jpg': 'x',
+        'DSC002.jpg': 'x',
+      },
+      {},
+      { ...baseTarget, serviceType: 'Album' }
+    );
+    assert.equal(albumSummary.totalVideos, 1);
+    assert.equal(albumSummary.unknownVideoCount, 0, 'video duration is not probed for album service');
+    assert.equal(albumSummary.billablePhotos, 2);
   });
 });
