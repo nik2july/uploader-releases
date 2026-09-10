@@ -113,26 +113,39 @@ export async function shareQuotationOnWhatsapp(
     accounts: context?.accounts,
     ownerPhone: context?.ownerPhone,
   };
-  const file = generateProposalPdf(quotation, { ...proposalOpts, returnFile: true }) as File;
   const message = quotationWhatsappMessage(quotation, studioName, messageTemplate, validityDays);
   const phone = normalisePhone(quotation.phone || '');
+  const chatUrl = getWhatsAppUrl(phone, message);
 
-  // Mobile: hand the actual PDF to the share sheet.
-  if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], text: message });
-      return 'shared';
-    } catch (err) {
-      // The user backing out of the share sheet is a normal outcome, not a failure.
-      if ((err as Error)?.name === 'AbortError') return 'cancelled';
-      // Anything else (an OS share failure) falls through to the desktop path so
-      // the studio still ends up with the PDF and an open chat.
+  const isMobile = typeof navigator !== 'undefined' && (
+    /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  );
+
+  // Mobile: hand the actual PDF to the share sheet if supported.
+  if (isMobile) {
+    const file = generateProposalPdf(quotation, { ...proposalOpts, returnFile: true }) as File;
+    if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], text: message });
+        return 'shared';
+      } catch (err) {
+        // The user backing out of the share sheet is a normal outcome, not a failure.
+        if ((err as Error)?.name === 'AbortError') return 'cancelled';
+        // Anything else falls through to the direct URL path
+      }
     }
+    // Fallback on mobile if share sheet is not supported or failed
+    window.location.href = chatUrl;
+    return 'download-and-chat';
   }
 
-  // Desktop: save the PDF, then open WhatsApp Web directly with the message already typed.
+  // Desktop: open WhatsApp Web directly with the message already typed, and download the PDF.
+  // Open the WhatsApp Web tab immediately in the user gesture to prevent popup blockers from blocking it.
+  const opened = window.open(chatUrl, '_blank', 'noopener,noreferrer');
+  if (!opened) {
+    window.location.href = chatUrl;
+  }
   generateProposalPdf(quotation, proposalOpts);
-  const chatUrl = getWhatsAppUrl(phone, message);
-  window.open(chatUrl, '_blank', 'noopener');
   return 'download-and-chat';
 }
+
