@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, Film, Settings, Upload, Users } from 'lucide-react';
+import { Archive, Briefcase, Film, HardDrive, Settings, Upload, Users } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -17,8 +17,11 @@ import { CloudArchivalModal } from './CloudArchivalModal';
 import { PostProductionPaymentsScreen } from './screens/PostProductionPaymentsScreen';
 import { PostProductionTeamScreen } from './screens/PostProductionTeamScreen';
 import { PartnerStudiosScreen } from './screens/PartnerStudiosScreen';
+import { FreelanceDepartmentView } from './freelance/FreelanceDepartmentView';
+import { FreelanceStudioView } from './freelance/FreelanceStudioView';
+import { FreelanceEditorView } from './freelance/FreelanceEditorView';
 
-type View = 'uploads' | 'freelance' | 'deliverables' | 'partners' | 'team' | 'payments' | 'settings';
+type View = 'uploads' | 'freelance' | 'deliverables' | 'partners' | 'team' | 'payments' | 'settings' | 'scanner';
 type Workspace = 'post-production' | 'baawaray-films';
 const WORKSPACE_STORAGE_KEY = 'baawaray-owner-workspace';
 
@@ -113,21 +116,18 @@ export function OwnerDashboard(): React.JSX.Element {
           </select>
         </label>
         {workspace === 'post-production' ? <>
+          <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
+            <Briefcase size={16} /> Freelance Department
+          </button>
           <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
-            <Upload size={16} /> Uploads
+            <Upload size={16} /> Upload Queue
             {active + attention > 0 && <span className="count">{active + attention}</span>}
           </button>
-          <button className="nav-item" aria-current={view === 'freelance'} onClick={() => go('freelance')}>
-            <Users size={16} /> Partner studio work
-          </button>
-          <button className="nav-item" aria-current={view === 'partners'} onClick={() => go('partners')}>
-            <Users size={16} /> Partner studios
-          </button>
-          <button className="nav-item" aria-current={view === 'team'} onClick={() => go('team')}>
-            <Users size={16} /> Post Production team
+          <button className="nav-item" aria-current={view === 'scanner'} onClick={() => go('scanner')}>
+            <HardDrive size={16} /> Raw Folder Scanner
           </button>
           <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
-            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments
+            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Post Production Payments
           </button>
           <button className="nav-item" onClick={() => setShowArchivalModal(true)}>
             <Archive size={16} /> Cloud Archival
@@ -154,8 +154,16 @@ export function OwnerDashboard(): React.JSX.Element {
         ) : view === 'uploads' ? (
           <UploadsScreen transfers={transfers} loading={loading} error={error} drive={drive}
             onOpen={setOpenId} onSettings={() => go('settings')} />
-        ) : view === 'freelance' || view === 'deliverables' ? (
-          <WorkScreen kind={view} workspace={workspace} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+        ) : view === 'freelance' ? (
+          studio.activeView === 'freelanceStudio' && studio.selectedFreelanceClientId ? (
+            <FreelanceStudioView />
+          ) : studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
+            <FreelanceEditorView />
+          ) : (
+            <FreelanceDepartmentView />
+          )
+        ) : view === 'scanner' || view === 'deliverables' ? (
+          <WorkScreen kind={view === 'scanner' ? 'freelance' : view} workspace={workspace} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
         ) : view === 'team' ? (
           <PostProductionTeamScreen />
         ) : view === 'partners' ? (

@@ -220,6 +220,14 @@ button.danger { color: var(--burgundy); border-color: color-mix(in srgb, var(--b
 .work-modal > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .work-modal h2 { font-family: var(--font-heading); font-size: 24px; margin: 3px 0 0; }
 
+.drawer-shade { position: fixed; inset: 0; background: color-mix(in srgb, var(--ink) 42%, transparent); z-index: 50; display: flex; justify-content: flex-end; }
+.work-drawer { width: min(600px, 100vw); height: 100%; overflow-y: auto; box-sizing: border-box; background: var(--panel); padding: 30px; box-shadow: -18px 0 42px color-mix(in srgb, var(--ink) 20%, transparent); }
+.work-drawer > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.work-drawer h2 { font-family: var(--font-heading); font-size: 30px; margin: 3px 0 8px; }
+.work-drawer > header .muted { max-width: 48ch; margin: 0; }
+.drawer-info { margin: 20px 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--paper) 75%, var(--panel)); }
+.drawer-info p { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
 /* -------------------------------------------------------------- drawers --- */
 
 .drawer-shade {

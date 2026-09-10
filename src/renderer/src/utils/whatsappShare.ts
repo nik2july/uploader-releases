@@ -19,10 +19,50 @@ import { DEFAULT_WHATSAPP_QUOTATION_MESSAGE } from '../data/seedData';
 export type ShareOutcome = 'shared' | 'download-and-chat' | 'cancelled';
 
 /** WhatsApp wants a bare international number — no +, spaces, or punctuation. */
-function normalisePhone(phone: string): string {
-  const digits = (phone || '').replace(/\D/g, '');
+export function normalisePhone(phone: string): string {
+  let digits = (phone || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
   // A plain 10-digit Indian mobile needs the country code prepended.
   return digits.length === 10 ? `91${digits}` : digits;
+}
+
+/** Safe encoding to prevent double URL encoding */
+function safeEncode(text: string): string {
+  try {
+    const decoded = decodeURIComponent(text);
+    return encodeURIComponent(decoded);
+  } catch {
+    return encodeURIComponent(text);
+  }
+}
+
+/**
+ * Build a WhatsApp chat URL.
+ * On desktop browsers, opens WhatsApp Web (https://web.whatsapp.com/send/?phone=...&text=...)
+ * directly with the target chat open and message pre-filled.
+ * On mobile devices, uses https://wa.me/... to open the native WhatsApp application.
+ */
+export function getWhatsAppUrl(phone?: string | null, message?: string): string {
+  const target = normalisePhone(phone || '');
+  const isMobile = typeof navigator !== 'undefined' && (
+    /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  );
+
+  const encodedText = message ? safeEncode(message) : '';
+
+  if (!target) {
+    return encodedText ? `https://web.whatsapp.com/send/?text=${encodedText}` : 'https://web.whatsapp.com';
+  }
+
+  if (isMobile) {
+    return `https://wa.me/${target}${encodedText ? `?text=${encodedText}` : ''}`;
+  }
+
+  return `https://web.whatsapp.com/send/?phone=${target}${encodedText ? `&text=${encodedText}` : ''}`;
 }
 
 /** Substitute the studio's template placeholders with this quotation's values. */
@@ -90,11 +130,9 @@ export async function shareQuotationOnWhatsapp(
     }
   }
 
-  // Desktop: save the PDF, then open the chat with the message already typed.
+  // Desktop: save the PDF, then open WhatsApp Web directly with the message already typed.
   generateProposalPdf(quotation, proposalOpts);
-  const chatUrl = phone
-    ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
-    : `https://web.whatsapp.com/send?text=${encodeURIComponent(message)}`;
+  const chatUrl = getWhatsAppUrl(phone, message);
   window.open(chatUrl, '_blank', 'noopener');
   return 'download-and-chat';
 }

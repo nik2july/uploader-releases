@@ -1,7 +1,17 @@
-import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc } from 'firebase/firestore';
+import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
-import { splitFreelanceRecord } from '../../../../../WEB APP/src/lib/freelanceSchema';
-import type { FreelanceJob, ClientDeliverable, TeamMember } from '../types';
+import { splitFreelanceRecord } from './freelanceSchema';
+import { derivePaymentStatus } from '../utils/freelance';
+import type {
+  FreelanceJob,
+  FreelanceClient,
+  ClientDeliverable,
+  TeamMember,
+  FreelancePaymentRecord,
+  FreelanceLedgerPayment,
+  FreelanceEditorPayout,
+  FreelanceActivityLog,
+} from '../types';
 import type { InvoiceSnapshot, Transfer, WorkTarget } from '../../../shared/contracts';
 
 const clean = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -27,18 +37,9 @@ export async function createPartnerStudio(input: { name: string; contactPerson?:
   return ref.id;
 }
 
-export async function updatePartnerStudio(id: string, input: { name: string; contactPerson?: string; phone: string; email?: string; city?: string; rateCard: Record<string, number> }): Promise<void> {
-  if (!id || !input.name.trim()) throw new Error('Enter the partner studio name.');
-  await setDoc(doc(db, 'freelance_clients', id), clean({
-    id,
-    name: input.name.trim(),
-    contactPerson: input.contactPerson?.trim() || '',
-    phone: input.phone.trim(),
-    email: input.email?.trim() || '',
-    city: input.city?.trim() || '',
-    rateCard: input.rateCard,
-    active: true,
-  }), { merge: true });
+export async function updatePartnerStudio(id: string, input: Partial<FreelanceClient>): Promise<void> {
+  if (!id) throw new Error('Client ID is required.');
+  await setDoc(doc(db, 'freelance_clients', id), clean(input), { merge: true });
 }
 
 /** Creates linked Post Production projects from a BAAWARAY FILMS deliverable. */
@@ -501,5 +502,296 @@ export async function updateEditorUnavailablePeriods(
   if (!memberId) throw new Error('Member ID is required.');
   await updateDoc(doc(db, 'team', String(memberId)), {
     unavailablePeriods: clean(unavailablePeriods)
+  });
+}
+
+/**
+ * Update a freelance job record with new details and partition fields correctly.
+ */
+export async function updateFreelanceJob(
+  id: string,
+  updates: Partial<FreelanceJob>,
+  logAction?: string
+): Promise<void> {
+  if (!id) throw new Error('Job ID is required.');
+  const ref = doc(db, 'freelance_jobs', id);
+  const billingRef = doc(ref, 'billing', 'main');
+  const editorRef = doc(ref, 'editor', 'main');
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('That job no longer exists.');
+    const bSnap = await tx.get(billingRef);
+    const eSnap = await tx.get(editorRef);
+
+    const current = {
+      ...snap.data(),
+      ...(bSnap.exists() ? bSnap.data() : {}),
+      ...(eSnap.exists() ? eSnap.data() : {}),
+    } as FreelanceJob;
+
+    // Recalculate client payment status if amounts updated
+    let clientPaid = updates.clientPaidAmount !== undefined ? updates.clientPaidAmount : current.clientPaidAmount;
+    if (updates.clientPayments) {
+      clientPaid = updates.clientPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    }
+    const clientCharge = updates.clientCharge !== undefined ? updates.clientCharge : current.clientCharge;
+    const clientPaymentStatus = derivePaymentStatus(clientPaid, clientCharge);
+
+    // Recalculate editor payment status if amounts updated
+    let editorPaid = updates.editorPaidAmount !== undefined ? updates.editorPaidAmount : current.editorPaidAmount;
+    if (updates.editorPayouts) {
+      editorPaid = updates.editorPayouts.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    }
+    const editorPay = updates.editorPay !== undefined ? updates.editorPay : current.editorPay;
+    const editorPaymentStatus = derivePaymentStatus(editorPaid, editorPay);
+
+    const updatedLogs: FreelanceActivityLog[] = [...(current.activityLogs || [])];
+    if (logAction) {
+      updatedLogs.push({
+        id: crypto.randomUUID(),
+        timestamp: new Date().toISOString(),
+        action: logAction,
+        details: updates.notes || '',
+        actor: 'Studio Owner',
+      });
+    }
+
+    const merged: FreelanceJob = {
+      ...current,
+      ...updates,
+      clientPaidAmount: clientPaid,
+      clientPaymentStatus,
+      editorPaidAmount: editorPaid,
+      editorPaymentStatus,
+      activityLogs: updatedLogs,
+    };
+
+    const halves = splitFreelanceRecord(clean(merged) as unknown as Record<string, unknown>);
+    tx.set(ref, halves.publicHalf, { merge: true });
+    tx.set(billingRef, halves.billingHalf, { merge: true });
+    tx.set(editorRef, halves.editorHalf, { merge: true });
+  });
+}
+
+/**
+ * Permanently delete a freelance job and its subcollections.
+ */
+export async function deleteFreelanceJob(id: string): Promise<void> {
+  if (!id) throw new Error('Job ID is required.');
+  const ref = doc(db, 'freelance_jobs', id);
+  const billingRef = doc(ref, 'billing', 'main');
+  const editorRef = doc(ref, 'editor', 'main');
+
+  const batch = writeBatch(db);
+  batch.delete(billingRef);
+  batch.delete(editorRef);
+  batch.delete(ref);
+  await batch.commit();
+}
+
+/**
+ * Delete a partner studio client record.
+ */
+export async function deleteFreelanceClient(id: string): Promise<void> {
+  if (!id) throw new Error('Client ID is required.');
+  await deleteDoc(doc(db, 'freelance_clients', id));
+}
+
+/**
+ * Record a client payment against a specific freelance job.
+ */
+export async function addFreelanceClientPayment(
+  jobId: string,
+  payment: Omit<FreelancePaymentRecord, 'id' | 'createdAt'>
+): Promise<void> {
+  if (!jobId) throw new Error('Job ID is required.');
+  const ref = doc(db, 'freelance_jobs', jobId);
+  const billingRef = doc(ref, 'billing', 'main');
+
+  await runTransaction(db, async tx => {
+    const parentSnap = await tx.get(ref);
+    if (!parentSnap.exists()) throw new Error('That job no longer exists.');
+    const bSnap = await tx.get(billingRef);
+    const billingData = bSnap.exists() ? bSnap.data() : {};
+    const existingPayments = (billingData.clientPayments || []) as FreelancePaymentRecord[];
+
+    const newRecord: FreelancePaymentRecord = {
+      ...payment,
+      amount: Number(payment.amount) || 0,
+      id: `fcp-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    const updatedPayments = [...existingPayments, newRecord];
+    const newTotalPaid = updatedPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    const charge = Number(billingData.clientCharge || parentSnap.data().clientCharge) || 0;
+    const newStatus = derivePaymentStatus(newTotalPaid, charge);
+
+    const logEntry: FreelanceActivityLog = {
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      action: `Client Payment Received: ₹${newRecord.amount.toLocaleString('en-IN')}`,
+      details: `Mode: ${payment.mode || 'UPI'}${payment.reference ? ` | Ref: ${payment.reference}` : ''}`,
+      actor: 'Studio Owner',
+    };
+
+    tx.set(billingRef, {
+      clientPayments: updatedPayments,
+      clientPaidAmount: newTotalPaid,
+      clientPaymentStatus: newStatus,
+      activityLogs: [...(billingData.activityLogs || []), logEntry],
+    }, { merge: true });
+
+    tx.update(ref, {
+      clientPaymentStatus: newStatus,
+    });
+  });
+}
+
+/**
+ * Record an editor payout against a specific freelance job.
+ */
+export async function addFreelanceEditorPayout(
+  jobId: string,
+  payout: Omit<FreelancePaymentRecord, 'id' | 'createdAt'>
+): Promise<void> {
+  if (!jobId) throw new Error('Job ID is required.');
+  const ref = doc(db, 'freelance_jobs', jobId);
+  const editorRef = doc(ref, 'editor', 'main');
+  const billingRef = doc(ref, 'billing', 'main');
+
+  await runTransaction(db, async tx => {
+    const parentSnap = await tx.get(ref);
+    if (!parentSnap.exists()) throw new Error('That job no longer exists.');
+    const eSnap = await tx.get(editorRef);
+    const editorData = eSnap.exists() ? eSnap.data() : {};
+    const bSnap = await tx.get(billingRef);
+    const billingData = bSnap.exists() ? bSnap.data() : {};
+
+    const existingPayouts = (editorData.editorPayouts || []) as FreelancePaymentRecord[];
+    const newRecord: FreelancePaymentRecord = {
+      ...payout,
+      amount: Number(payout.amount) || 0,
+      id: `fep-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+    };
+    const updatedPayouts = [...existingPayouts, newRecord];
+    const newTotalPaid = updatedPayouts.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    const agreedPay = Number(editorData.editorPay || parentSnap.data().editorPay) || 0;
+    const finalEditorPay = Math.max(agreedPay, newTotalPaid);
+    const newStatus = derivePaymentStatus(newTotalPaid, finalEditorPay);
+
+    const logEntry: FreelanceActivityLog = {
+      id: crypto.randomUUID(),
+      timestamp: new Date().toISOString(),
+      action: `Editor Payout Remitted: ₹${newRecord.amount.toLocaleString('en-IN')}`,
+      details: `Mode: ${payout.mode || 'Bank Transfer'}${payout.reference ? ` | Ref: ${payout.reference}` : ''}`,
+      actor: 'Studio Owner',
+    };
+
+    tx.set(editorRef, {
+      editorPayouts: updatedPayouts,
+      editorPaidAmount: newTotalPaid,
+      editorPay: finalEditorPay,
+      editorPaymentStatus: newStatus,
+    }, { merge: true });
+
+    tx.set(billingRef, {
+      activityLogs: [...(billingData.activityLogs || []), logEntry],
+    }, { merge: true });
+
+    tx.update(ref, {
+      editorPaymentStatus: newStatus,
+    });
+  });
+}
+
+/**
+ * Record a partner studio account payment (lump sum ledger payment).
+ */
+export async function addFreelanceAccountPayment(
+  clientId: string,
+  payment: Omit<FreelanceLedgerPayment, 'id' | 'createdAt'>
+): Promise<void> {
+  if (!clientId) throw new Error('Partner Studio ID is required.');
+  const ref = doc(db, 'freelance_clients', clientId);
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Partner studio no longer exists.');
+    const record: FreelanceLedgerPayment = {
+      ...payment,
+      amount: Number(payment.amount) || 0,
+      id: `flp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date().toISOString(),
+    };
+    const existing = (snap.data().payments || []) as FreelanceLedgerPayment[];
+    tx.update(ref, {
+      payments: clean([...existing, record]),
+    });
+  });
+}
+
+/**
+ * Remove an account payment from a partner studio's ledger.
+ */
+export async function deleteFreelanceAccountPayment(clientId: string, paymentId: string): Promise<void> {
+  if (!clientId || !paymentId) throw new Error('Client ID and Payment ID are required.');
+  const ref = doc(db, 'freelance_clients', clientId);
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Partner studio no longer exists.');
+    const existing = (snap.data().payments || []) as FreelanceLedgerPayment[];
+    tx.update(ref, {
+      payments: clean(existing.filter(p => p.id !== paymentId)),
+    });
+  });
+}
+
+/**
+ * Record an editor payout record on the team member document.
+ */
+export async function addFreelanceEditorPayoutRecord(
+  memberId: number | string,
+  payout: Omit<FreelanceEditorPayout, 'id' | 'createdAt'>
+): Promise<void> {
+  if (!memberId) throw new Error('Team member ID is required.');
+  const ref = doc(db, 'team', String(memberId));
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Team member no longer exists.');
+    const record: FreelanceEditorPayout = {
+      ...payout,
+      amount: Number(payout.amount) || 0,
+      allocations: (payout.allocations || []).filter(a => (Number(a.amount) || 0) > 0),
+      id: `flep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date().toISOString(),
+    };
+    const existing = (snap.data().freelancePayouts || []) as FreelanceEditorPayout[];
+    tx.update(ref, {
+      freelancePayouts: clean([...existing, record]),
+    });
+  });
+}
+
+/**
+ * Remove an editor payout record from the team member document.
+ */
+export async function deleteFreelanceEditorPayoutRecord(
+  memberId: number | string,
+  payoutId: string
+): Promise<void> {
+  if (!memberId || !payoutId) throw new Error('Team member ID and Payout ID are required.');
+  const ref = doc(db, 'team', String(memberId));
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Team member no longer exists.');
+    const existing = (snap.data().freelancePayouts || []) as FreelanceEditorPayout[];
+    tx.update(ref, {
+      freelancePayouts: clean(existing.filter(p => p.id !== payoutId)),
+    });
   });
 }

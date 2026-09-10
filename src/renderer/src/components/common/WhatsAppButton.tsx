@@ -1,5 +1,6 @@
 import React from 'react';
 import { MessageCircle } from 'lucide-react';
+import { getWhatsAppUrl } from '../../utils/whatsappShare';
 
 interface WhatsAppButtonProps {
   phone: string;
@@ -16,8 +17,7 @@ interface WhatsAppButtonProps {
 export const WhatsAppButton: React.FC<WhatsAppButtonProps> = ({ phone, className = '', message }) => {
   const cleanPhone = (phone || '').replace(/\D/g, '');
   if (!cleanPhone) return null;
-  const target = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-  const url = `https://wa.me/${target}${message ? `?text=${encodeURIComponent(message)}` : ''}`;
+  const url = getWhatsAppUrl(phone, message);
 
   return (
     <a

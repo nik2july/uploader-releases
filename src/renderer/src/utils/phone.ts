@@ -86,7 +86,9 @@ export function formatInternational(
   return code ? `+${code} ${full.slice(code.length)}` : `+${full}`;
 }
 
-/** A wa.me link with the message already written, or null without a usable number. */
+/** A WhatsApp chat link with the message already written, or null without a usable number.
+ * On desktop, routes directly to WhatsApp Web with the chat open and prefilled message.
+ */
 export function whatsAppLink(
   phone: string | null | undefined,
   dialCode: string | null | undefined,
@@ -94,5 +96,12 @@ export function whatsAppLink(
 ): string | null {
   const number = toWhatsAppNumber(phone, dialCode);
   if (!number) return null;
-  return `https://wa.me/${number}${message ? `?text=${encodeURIComponent(message)}` : ''}`;
+  const isMobile = typeof navigator !== 'undefined' && (
+    /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+  );
+  const encodedText = message ? encodeURIComponent(message) : '';
+  if (isMobile) {
+    return `https://wa.me/${number}${encodedText ? `?text=${encodedText}` : ''}`;
+  }
+  return `https://web.whatsapp.com/send/?phone=${number}${encodedText ? `&text=${encodedText}` : ''}`;
 }
