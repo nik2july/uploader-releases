@@ -139,12 +139,8 @@ export async function shareQuotationOnWhatsapp(
     return 'download-and-chat';
   }
 
-  // Desktop: open WhatsApp Web directly with the message already typed, and download the PDF.
-  // Open the WhatsApp Web tab immediately in the user gesture to prevent popup blockers from blocking it.
-  const opened = window.open(chatUrl, '_blank', 'noopener,noreferrer');
-  if (!opened) {
-    window.location.href = chatUrl;
-  }
+  // Desktop: open WhatsApp Web directly in a new tab with the message already typed, and download the PDF.
+  window.open(chatUrl, '_blank', 'noopener,noreferrer');
   generateProposalPdf(quotation, proposalOpts);
   return 'download-and-chat';
 }
