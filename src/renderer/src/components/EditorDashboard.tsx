@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
@@ -28,6 +28,7 @@ import { OnTimeReportModal } from './OnTimeReportModal';
 import { formatINR, getFreelanceStageMeta } from '../utils/formatters';
 import type { FreelanceJobStage } from '../types/freelance';
 import { formatBytes } from '../utils/uploadFormat';
+import { batchFolder, rawBatches, type RawBatch } from '../utils/rawBatches';
 import { submitEditorDelivery, markJobDownloaded, resetJobDownloaded } from '../lib/studioRepository';
 import {
   calculateDynamicDueDates,
@@ -79,6 +80,10 @@ export function EditorDashboard(): React.JSX.Element {
   });
 
   const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+  // Which batch of how many is moving right now, when a job has more than one.
+  const [downloadBatch, setDownloadBatch] = useState<{ index: number; total: number; label: string } | null>(null);
+  // Cancelling stops the batch in flight; this stops the queue behind it too.
+  const cancelBatches = useRef(false);
   const [downloadState, setDownloadState] = useState<{
     percent: number;
     fileName: string;
@@ -176,85 +181,111 @@ export function EditorDashboard(): React.JSX.Element {
     setTimeout(() => setCopied(''), 2200);
   }
 
-  async function handleStartDownload(job: FreelanceJob): Promise<void> {
-    if (!job.rawDataLink) return;
-    setError('');
-    setNote('');
-
-    const destDir = await window.api.chooseDownloadDirectory();
-    if (!destDir) return; // User canceled dialog
-
-    // Pre-Download Disk Space Safety Guard:
-    // Only warn if the free space is genuinely too low for the actual download size
+  /** Warns before filling a disk, and returns whether the editor still wants to go on. */
+  async function diskSpaceAllows(destDir: string, expectedBytes: number): Promise<boolean> {
     try {
       const disk = await window.api.checkDiskSpace(destDir);
-
-      // Determine expected download size from job metadata or cloud query
-      let expectedBytes =
-        (job as any).rawDataSizeBytes ||
-        ((job as any).desktopTransfers ? ((Object.values((job as any).desktopTransfers)[0] as any)?.bytes || 0) : 0) ||
-        0;
-
-      if (!expectedBytes && window.api.getDownloadSize) {
-        expectedBytes = await window.api.getDownloadSize(job.rawDataLink);
-      }
-
       if (expectedBytes > 0) {
-        // We know exactly how much data will be downloaded
         const safetyHeadroom = 1024 * 1024 * 1024; // 1 GB working headroom
         if (disk.freeBytes < expectedBytes + safetyHeadroom) {
-          const proceed = window.confirm(
-            `⚠️ Low Disk Space Warning!\n\n` +
+          return window.confirm(
+            `\u26a0\ufe0f Low Disk Space Warning!\n\n` +
             `Package size to download: ${formatBytes(expectedBytes)}\n` +
             `Available space on drive: ${formatBytes(disk.freeBytes)}\n\n` +
             `Destination: ${destDir}\n\n` +
             `This drive does not have enough free space to safely complete this download.\n` +
             `We recommend selecting an external SSD or freeing up space. Do you want to proceed anyway?`
           );
-          if (!proceed) return;
         }
-      } else {
-        // Size could not be pre-determined, only warn if disk is critically low (< 5 GB)
-        if (disk.freeBytes < 5 * 1024 * 1024 * 1024) {
-          const proceed = window.confirm(
-            `⚠️ Low Disk Space Warning!\n\n` +
-            `Selected drive has only ${formatBytes(disk.freeBytes)} free.\n\n` +
-            `Destination: ${destDir}\n\n` +
-            `We recommend selecting an external SSD or freeing up space. Do you want to proceed anyway?`
-          );
-          if (!proceed) return;
-        }
+      } else if (disk.freeBytes < 5 * 1024 * 1024 * 1024) {
+        // Size could not be pre-determined, so only a critically low disk is worth stopping for.
+        return window.confirm(
+          `\u26a0\ufe0f Low Disk Space Warning!\n\n` +
+          `Selected drive has only ${formatBytes(disk.freeBytes)} free.\n\n` +
+          `Destination: ${destDir}\n\n` +
+          `We recommend selecting an external SSD or freeing up space. Do you want to proceed anyway?`
+        );
       }
     } catch {
-      // Continue if disk space check is inconclusive
+      // Continue if the disk space check is inconclusive.
     }
+    return true;
+  }
 
+  /**
+   * Fetches the given batches into one chosen folder, one after another.
+   *
+   * Each batch lands in its own subfolder when there is more than one, because
+   * two batches of the same shoot routinely contain the same camera filenames
+   * and would otherwise overwrite each other. The job only advances to
+   * In-Process once the editor holds every batch, not merely the first.
+   */
+  async function handleStartDownload(job: FreelanceJob, batches?: RawBatch[]): Promise<void> {
+    const all = rawBatches(job);
+    const list = batches?.length ? batches : all;
+    if (!list.length) return;
+    setError('');
+    setNote('');
+
+    const destDir = await window.api.chooseDownloadDirectory();
+    if (!destDir) return; // User canceled dialog
+
+    let expectedBytes = list.reduce((sum, batch) => sum + batch.bytes, 0)
+      || (list.length === all.length ? Number((job as any).rawDataSizeBytes) || 0 : 0);
+    if (!expectedBytes && window.api.getDownloadSize) {
+      try {
+        let total = 0;
+        for (const batch of list) total += await window.api.getDownloadSize(batch.link);
+        expectedBytes = total;
+      } catch {
+        // Leave the size unknown; the guard below falls back to a low-disk check.
+      }
+    }
+    if (!(await diskSpaceAllows(destDir, expectedBytes))) return;
+
+    const multi = list.length > 1;
+    cancelBatches.current = false;
     setDownloadingJobId(job.id);
     setDownloadState({
       percent: 0,
-      fileName: 'Connecting…',
+      fileName: 'Connecting\u2026',
       downloadedBytes: 0,
       totalBytes: 0,
       status: 'downloading'
     });
 
     try {
-      await window.api.downloadRawData(job.id, job.rawDataLink, destDir);
-      // Automatically advance to in_process upon 100% download!
-      await markJobDownloaded(job.id);
-      setNote(`✓ Raw data download complete for "${job.title}". Job moved to In-Process.`);
+      for (const [index, batch] of list.entries()) {
+        if (cancelBatches.current) return;
+        setDownloadBatch(multi ? { index: index + 1, total: list.length, label: `${batch.label} \u00b7 ${batch.cloud}` } : null);
+        await window.api.downloadRawData(job.id, batch.link, multi ? `${destDir}/${batchFolder(batch)}` : destDir);
+      }
+      if (cancelBatches.current) return;
+      // Open Folder should land on the folder holding every batch, not the last one.
+      if (multi) await window.api.verifyLocalFolder(job.id, destDir).catch(() => {});
+      if (list.length === all.length) {
+        // Automatically advance to in_process once the whole job is on disk.
+        await markJobDownloaded(job.id);
+        setNote(`\u2713 Raw data download complete for "${job.title}"${multi ? ` (${list.length} batches)` : ''}. Job moved to In-Process.`);
+      } else {
+        const left = all.length - list.length;
+        setNote(`\u2713 ${list.map(b => b.label).join(', ')} downloaded. ${left} more ${left === 1 ? 'batch' : 'batches'} still to fetch before this job starts.`);
+      }
     } catch (err: any) {
       if (err?.message !== 'Download cancelled.') {
         setError(err?.message || 'Failed to download raw data.');
       }
     } finally {
       setDownloadingJobId(null);
+      setDownloadBatch(null);
     }
   }
 
   async function handleCancelDownload(jobId: string): Promise<void> {
+    cancelBatches.current = true;
     await window.api.cancelDownload(jobId);
     setDownloadingJobId(null);
+    setDownloadBatch(null);
   }
 
   async function handleResetDownloaded(jobId: string): Promise<void> {
@@ -459,6 +490,7 @@ export function EditorDashboard(): React.JSX.Element {
                 const hasRevisions = revisions.length > 0;
                 const workflowStage = getEditorWorkflowStage(job);
                 const scheduleRes = scheduleResults.get(job.id);
+                const batches = rawBatches(job);
 
                 return (
                   <article key={job.id} className="panel job-card">
@@ -570,19 +602,65 @@ export function EditorDashboard(): React.JSX.Element {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
                               <Download size={15} style={{ color: 'var(--burgundy)' }} />
                               Raw Footage Available
+                              {batches.length > 1 && (
+                                <span className="muted" style={{ fontWeight: 500, fontSize: 11.5 }}>
+                                  · {batches.length} batches
+                                </span>
+                              )}
                             </div>
-                            <div className="sub" style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
-                              {job.rawDataLink.startsWith('b2://') || job.rawDataLink.includes('backblazeb2.com')
-                                ? 'Direct cloud package on Backblaze B2'
-                                : 'Client shared cloud link (Drive / Dropbox / External)'}
-                            </div>
+                            {batches.length > 1 ? (
+                              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {batches.map(batch => (
+                                  <div
+                                    key={batch.id}
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, fontSize: 11.5,
+                                      padding: '4px 7px', background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 6 }}
+                                  >
+                                    <span className="muted">
+                                      <strong style={{ color: 'var(--ink)' }}>{batch.label}</strong> · {batch.cloud}
+                                      {batch.bytes > 0 ? ` · ${formatBytes(batch.bytes)}` : ''}
+                                      {batch.fileCount > 0 ? ` · ${batch.fileCount} files` : ''}
+                                    </span>
+                                    <span style={{ display: 'flex', gap: 10, flexShrink: 0 }}>
+                                      <button
+                                        className="text-button"
+                                        style={{ fontSize: 11, padding: 0 }}
+                                        disabled={downloadingJobId === job.id}
+                                        onClick={() => void handleStartDownload(job, [batch])}
+                                      >
+                                        Download
+                                      </button>
+                                      {/^https?:\/\//.test(batch.link) && (
+                                        <button
+                                          className="text-button"
+                                          style={{ fontSize: 11, padding: 0 }}
+                                          onClick={() => copy(batch.id, batch.link)}
+                                        >
+                                          {copied === batch.id ? (
+                                            <><Check size={11} style={{ verticalAlign: -2, marginRight: 3 }} />Copied</>
+                                          ) : (
+                                            <><Copy size={11} style={{ verticalAlign: -2, marginRight: 3 }} />Copy link</>
+                                          )}
+                                        </button>
+                                      )}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="sub" style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+                                {job.rawDataLink.startsWith('b2://') || job.rawDataLink.includes('backblazeb2.com')
+                                  ? 'Direct cloud package on Backblaze B2'
+                                  : 'Client shared cloud link (Drive / Dropbox / External)'}
+                              </div>
+                            )}
 
                             {job.downloadedAt ? (
                               <div style={{ marginTop: 6, fontSize: 12 }}>
                                 <span style={{ color: 'var(--accent, #3b82f6)', fontWeight: 500 }}>
                                   ✓ Raw data downloaded on {new Date(job.downloadedAt).toLocaleDateString()}
                                 </span>
-                                <div style={{ marginTop: 6, display: 'flex', gap: 10 }}>
+                                <div style={{ marginTop: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                                   <button
                                     className="text-button"
                                     style={{ fontSize: 11, padding: 0 }}
@@ -590,6 +668,19 @@ export function EditorDashboard(): React.JSX.Element {
                                   >
                                     <FolderOpen size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Open Folder
                                   </button>
+                                  {batches.length === 1 && /^https?:\/\//.test(batches[0].link) && (
+                                    <button
+                                      className="text-button"
+                                      style={{ fontSize: 11, padding: 0 }}
+                                      onClick={() => copy(`${job.id}:done`, batches[0].link)}
+                                    >
+                                      {copied === `${job.id}:done` ? (
+                                        <><Check size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Copied</>
+                                      ) : (
+                                        <><Copy size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Copy link</>
+                                      )}
+                                    </button>
+                                  )}
                                   <button
                                     className="text-button"
                                     style={{ fontSize: 11, padding: 0 }}
@@ -600,9 +691,9 @@ export function EditorDashboard(): React.JSX.Element {
                                   <button
                                     className="text-button"
                                     style={{ fontSize: 11, padding: 0 }}
-                                    onClick={() => void handleStartDownload(job)}
+                                    onClick={() => void handleStartDownload(job, batches)}
                                   >
-                                    Re-download footage
+                                    {batches.length > 1 ? 'Re-download all batches' : 'Re-download footage'}
                                   </button>
                                   <button
                                     className="text-button"
@@ -616,7 +707,11 @@ export function EditorDashboard(): React.JSX.Element {
                             ) : downloadingJobId === job.id ? (
                               <div style={{ marginTop: 8, padding: 8, background: 'var(--panel)', borderRadius: 8, border: '1px solid var(--line)' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
-                                  <span style={{ fontWeight: 600 }}>Downloading raw footage…</span>
+                                  <span style={{ fontWeight: 600 }}>
+                                    {downloadBatch
+                                      ? `${downloadBatch.label} — ${downloadBatch.index} of ${downloadBatch.total}…`
+                                      : 'Downloading raw footage…'}
+                                  </span>
                                   <span className="mono" style={{ fontWeight: 600 }}>{downloadState.percent}%</span>
                                 </div>
                                 <div style={{ width: '100%', height: 6, background: 'var(--line)', borderRadius: 3, overflow: 'hidden' }}>
@@ -640,21 +735,34 @@ export function EditorDashboard(): React.JSX.Element {
                                 <button
                                   className="primary"
                                   disabled={busy === `${job.id}:locate`}
-                                  onClick={() => void handleStartDownload(job)}
+                                  onClick={() => void handleStartDownload(job, batches)}
                                   style={{ width: '100%', justifyContent: 'center' }}
                                 >
                                   <Download size={13} style={{ verticalAlign: -2, marginRight: 5 }} />
-                                  Download Raw Footage
+                                  {batches.length > 1 ? `Download all ${batches.length} batches` : 'Download Raw Footage'}
                                 </button>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                                   {job.rawDataLink.startsWith('http://') || job.rawDataLink.startsWith('https://') ? (
-                                    <button
-                                      className="text-button"
-                                      style={{ fontSize: 11, padding: 0 }}
-                                      onClick={() => void window.api.openExternal(job.rawDataLink!)}
-                                    >
-                                      <ExternalLink size={11} style={{ verticalAlign: -2, marginRight: 3 }} />Open in browser
-                                    </button>
+                                    <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                      <button
+                                        className="text-button"
+                                        style={{ fontSize: 11, padding: 0 }}
+                                        onClick={() => void window.api.openExternal(job.rawDataLink!)}
+                                      >
+                                        <ExternalLink size={11} style={{ verticalAlign: -2, marginRight: 3 }} />Open in browser
+                                      </button>
+                                      <button
+                                        className="text-button"
+                                        style={{ fontSize: 11, padding: 0 }}
+                                        onClick={() => copy(`${job.id}:link`, job.rawDataLink!)}
+                                      >
+                                        {copied === `${job.id}:link` ? (
+                                          <><Check size={11} style={{ verticalAlign: -2, marginRight: 3 }} />Copied</>
+                                        ) : (
+                                          <><Copy size={11} style={{ verticalAlign: -2, marginRight: 3 }} />Copy link</>
+                                        )}
+                                      </button>
+                                    </span>
                                   ) : (
                                     <span className="muted" style={{ fontSize: 11 }}>
                                       Due date runs continuously.

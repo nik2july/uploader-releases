@@ -42,6 +42,8 @@ interface UploaderSettings {
   excludedBillingFolders?: string[];
   countPhotoPairsOnce?: boolean;
   keepAwake?: boolean;
+  /** Which cloud raw footage uploads to. Absent on installs that predate the choice. */
+  destination?: 'drive' | 'b2';
 }
 
 export interface AppContextType {

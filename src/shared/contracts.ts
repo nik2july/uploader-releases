@@ -42,6 +42,8 @@ export interface ManifestFile {
   state: 'pending' | 'uploading' | 'verified'; error?: string;
 }
 export interface UpdateInfo { version: string; url: string; notes: string; publishedAt: string }
+/** Where raw-footage transfers land. Chosen once in Uploader settings, shared by the studio. */
+export type UploadDestination = 'drive' | 'b2';
 export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
 export interface DesktopAPI {
   login(phone: string, password: string): Promise<{ customToken: string; accountType: string }>;
@@ -56,6 +58,7 @@ export interface DesktopAPI {
   connectDrive(idToken: string): Promise<DriveStatus>;
   driveStatus(): Promise<DriveStatus>;
   disconnectDrive(): Promise<DriveStatus>;
+  setUploadDestination(destination: UploadDestination): Promise<void>;
   dropboxStatus(): Promise<DropboxStatus>;
   connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;
   disconnectDropbox(): Promise<DropboxStatus>;

@@ -218,6 +218,10 @@ export async function setupIpcHandlers(): Promise<() => void> {
     catch (error) { log('drive:connect failed', error); throw error; }
   });
   handle('drive:disconnect', async () => { engine.pauseAll(); return google.disconnect(); });
+  // Shared studio preference, held by the queue because only the queue can act on it.
+  handle('transfers:destination', (destination: string) => {
+    engine.setDestination(destination === 'drive' ? 'drive' : 'b2');
+  }, false);
   handle('transfers:enqueue', (id: string, target: WorkTarget, invoice?: InvoiceSnapshot) => {
     const job = owned(id);
     if (!['ready', 'paused'].includes(job.status) || !job.scan || job.scan.readErrors) throw new Error('A complete scan is required.');

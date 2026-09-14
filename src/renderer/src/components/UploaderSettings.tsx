@@ -3,7 +3,7 @@ import type { B2Status, DriveStatus } from '../../../shared/contracts';
 import { useApp } from '../context/AppContext';
 import { saveUploaderSettings, saveDropboxSettings, saveB2Settings } from '../lib/studioRepository';
 import { auth } from '../lib/auth';
-export function UploaderSettings({ refresh }: { drive?: DriveStatus; refresh: () => Promise<void> }) {
+export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refresh: () => Promise<void> }) {
   const { studioSettings, currentUser } = useApp();
   const defaults = studioSettings?.uploader;
   const dbxConfig = studioSettings?.dropbox;
@@ -20,6 +20,7 @@ export function UploaderSettings({ refresh }: { drive?: DriveStatus; refresh: ()
   const [exclusions, setExclusions] = useState((defaults?.excludedBillingFolders ?? ['Proxies', 'Proxy']).join(', '));
   const [pairs, setPairs] = useState(defaults?.countPhotoPairsOnce ?? true);
   const [awake, setAwake] = useState(defaults?.keepAwake ?? false);
+  const [dest, setDest] = useState<'drive' | 'b2'>(defaults?.destination ?? 'b2');
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   useEffect(() => {
     if (dbxConfig) {
@@ -39,12 +40,95 @@ export function UploaderSettings({ refresh }: { drive?: DriveStatus; refresh: ()
       void window.api.b2Status().then(setB2Status).catch(() => {});
     }
   }, [b2Config]);
+  useEffect(() => { if (defaults?.destination) setDest(defaults.destination); }, [defaults?.destination]);
+  /** The uploader document is written whole, so every save carries the current defaults. */
+  function uploaderPayload(overrides: Partial<{ destination: 'drive' | 'b2' }> = {}) {
+    return {
+      keepPercentDefault: keep, photosPerSheet: sheets,
+      excludedBillingFolders: exclusions.split(',').map(t => t.trim()).filter(Boolean),
+      countPhotoPairsOnce: pairs, keepAwake: awake, destination: dest, ...overrides
+    };
+  }
   async function run(fn: () => Promise<unknown>, success: string): Promise<void> {
     setBusy(true); setError(''); setMessage('');
     try { await fn(); await refresh(); setMessage(success); } catch (err) { setError(err instanceof Error ? err.message : 'Settings could not be saved.'); } finally { setBusy(false); }
   }
   return (
     <div className="settings-grid">
+      <section className="panel">
+        <span className="eyebrow">RAW FOOTAGE DESTINATION</span>
+        <h2>Where raw footage uploads</h2>
+        <p className="muted">
+          Every raw-footage transfer from this app goes to the cloud you pick here. Transfers already
+          finished keep their existing links and stay downloadable; only new and resumed uploads move.
+          Changing this pauses anything currently uploading so nothing is split across two clouds.
+        </p>
+        <label className="check-label">
+          <input type="radio" name="upload-destination" checked={dest === 'drive'} onChange={() => setDest('drive')}/>
+          Google Drive {drive?.connected ? `— connected as ${drive.email}` : '— not connected yet'}
+        </label>
+        <label className="check-label">
+          <input type="radio" name="upload-destination" checked={dest === 'b2'} onChange={() => setDest('b2')}/>
+          Backblaze B2 {b2Status?.connected || b2Config?.keyId ? `— bucket ${b2Config?.bucketName || b2Status?.bucketName}` : '— not connected yet'}
+        </label>
+        {dest === 'drive' && !drive?.connected && (
+          <p className="notice">Connect a Google account below before starting a transfer.</p>
+        )}
+        {dest === 'drive' && drive?.connected && (
+          <p className="success">New raw-footage uploads will go to Google Drive.</p>
+        )}
+        <div className="actions">
+          <button className="primary" disabled={busy || dest === (defaults?.destination ?? 'b2')} onClick={() => void run(async () => {
+            await saveUploaderSettings(uploaderPayload({ destination: dest }));
+            await window.api.setUploadDestination(dest);
+          }, dest === 'drive' ? 'Raw footage now uploads to Google Drive.' : 'Raw footage now uploads to Backblaze B2.')}>
+            {busy ? 'Saving…' : 'Save destination'}
+          </button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <span className="eyebrow">GOOGLE DRIVE STORAGE</span>
+        <h2>Google Drive (Raw Footage)</h2>
+        <p>
+          {drive?.connected
+            ? `Connected as ${drive.email}.`
+            : 'Connect the Google account that should hold raw footage.'}
+        </p>
+        <p className="muted">
+          Uploads are resumable and checksum-verified file by file, so a dropped connection picks up
+          where it stopped rather than starting the folder again. Each finished folder is link-shared
+          automatically, and editors download it straight through this app without a Google sign-in.
+        </p>
+        {drive?.connected ? (
+          <p className="success">Google Drive is connected. Select it above to make it the destination.</p>
+        ) : drive?.configured === false ? (
+          <p className="error">Google Drive sign-in is not set up on the studio website yet.</p>
+        ) : (
+          <p className="notice">One-time per Mac: sign in with the studio Google account in your browser.</p>
+        )}
+        {drive?.error && <p className="error">{drive.error}</p>}
+        <details style={{ margin: '14px 0', fontSize: 13 }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--burgundy)' }}>Before you switch: Drive storage and daily limits</summary>
+          <ul style={{ paddingLeft: 20, lineHeight: 1.6, margin: '8px 0', color: 'var(--ink)' }}>
+            <li>The connected Google account needs enough storage for the raw footage — a free account holds 15 GB, so a Workspace plan with pooled storage is what a wedding shoot needs.</li>
+            <li>Google caps uploads at roughly 750 GB per account per day. The queue notices the cap, waits, and continues by itself — an over-cap folder simply finishes the next day.</li>
+            <li>The app can only see folders and files it creates itself. It never reads the rest of that Drive.</li>
+          </ul>
+        </details>
+        <div className="actions">
+          <button className="primary" disabled={busy} onClick={() => void run(async () => {
+            const user = auth.currentUser;
+            if (!user) throw new Error('Sign in to the studio first.');
+            await window.api.connectDrive(await user.getIdToken());
+          }, 'Google Drive connected.')}>{busy ? 'Connecting…' : drive?.connected ? 'Reconnect Google Drive' : 'Connect Google Drive'}</button>
+          <button className="text-button" onClick={() => void window.api.openExternal('https://drive.google.com/drive/my-drive')}>Open Google Drive</button>
+          {drive?.connected && <button disabled={busy} onClick={() => void run(async () => {
+            await window.api.disconnectDrive();
+          }, 'Google Drive disconnected. Uploads in progress were paused.')}>Disconnect</button>}
+        </div>
+      </section>
+
       <section className="panel">
         <span className="eyebrow">BACKBLAZE B2 STORAGE</span>
         <h2>Backblaze B2 Cloud Storage (Raw Footage)</h2>
@@ -147,7 +231,7 @@ export function UploaderSettings({ refresh }: { drive?: DriveStatus; refresh: ()
     <label className="check-label"><input type="checkbox" checked={awake} onChange={e => setAwake(e.target.checked)}/>Keep this Mac awake while uploading</label>
     <p className="muted">Transfers already stop the Mac suspending them. Turn this on as well if your Mac is set to sleep quickly and you want the screen kept on too. Uploads pause on sleep and resume on waking either way.</p>
     <p className="muted">All these files still upload. Only measurement totals change. The invoice records the policy used. Album sheets round up; selected photos round to the nearest whole photo.</p>
-    <button disabled={busy} className="primary" onClick={() => void run(() => saveUploaderSettings({ keepPercentDefault: keep, photosPerSheet: sheets, excludedBillingFolders: exclusions.split(',').map(s => s.trim()).filter(Boolean), countPhotoPairsOnce: pairs, keepAwake: awake }), 'Defaults saved to your shared studio settings.')}>Save shared defaults</button>
+    <button disabled={busy} className="primary" onClick={() => void run(() => saveUploaderSettings(uploaderPayload()), 'Defaults saved to your shared studio settings.')}>Save shared defaults</button>
     <hr/><p>Studio: {studioSettings?.studioName || 'Baawaray'}<br/>Currency: {studioSettings?.currency || 'INR'}<br/>Configured tax: {studioSettings?.taxGstPercent || 0}%</p>
     <p className="muted">Partner rates, deliverable prices and editor details are read from your existing web settings. Time billing keeps the one-minute / one-hour minimum.</p>
     <button onClick={() => void window.api.openExternal('https://app.baawaray.com')}>Open studio web app</button>

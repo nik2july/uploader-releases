@@ -153,7 +153,7 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
   });
 }
 
-export async function saveUploaderSettings(settings: { keepPercentDefault: number; photosPerSheet: number; excludedBillingFolders: string[]; countPhotoPairsOnce: boolean; keepAwake: boolean }): Promise<void> {
+export async function saveUploaderSettings(settings: { keepPercentDefault: number; photosPerSheet: number; excludedBillingFolders: string[]; countPhotoPairsOnce: boolean; keepAwake: boolean; destination?: 'drive' | 'b2' }): Promise<void> {
   if (settings.keepPercentDefault < 0 || settings.keepPercentDefault > 100 || !Number.isInteger(settings.photosPerSheet) || settings.photosPerSheet < 1 || settings.photosPerSheet > 100) throw new Error('Invalid uploader defaults.');
   await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.uploader': settings });
 }

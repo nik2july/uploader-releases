@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import type { ManifestFile, Transfer } from '../shared/contracts';
+import type { ManifestFile, Transfer, UploadDestination } from '../shared/contracts';
 import { DriveClient, DriveError } from './drive';
 import type { B2Client } from './b2Client';
 import { b2ObjectName } from './b2Paths';
@@ -26,7 +26,37 @@ export class TransferEngine {
     this.timer = setInterval(() => { void this.pump(); }, 5000); this.timer.unref();
   }
   setB2Client(b2: B2Client): void { this.b2 = b2; }
-  private isB2(): boolean { return Boolean(this.b2 && this.b2.isConnected()); }
+  /**
+   * Which cloud the studio wants raw footage to land in. B2 stays the default so
+   * an install that never picks one keeps behaving exactly as it did; choosing
+   * Drive routes to Drive even while B2 credentials are still configured.
+   */
+  private destination: UploadDestination = 'b2';
+  setDestination(destination: UploadDestination): void {
+    const wanted: UploadDestination = destination === 'drive' ? 'drive' : 'b2';
+    if (wanted === this.destination) return;
+    this.destination = wanted;
+    this.pauseAll(); // A job cannot change cloud mid-flight; the studio resumes it deliberately.
+    this.changed();
+  }
+  getDestination(): UploadDestination { return this.destination; }
+  private isB2(): boolean { return this.destination === 'b2' && Boolean(this.b2 && this.b2.isConnected()); }
+  /**
+   * The cloud a transfer has already put bytes into, recorded on its first run.
+   * A half-sent folder cannot change cloud: verified files are never sent again,
+   * so finishing it elsewhere would leave each cloud holding part of it while
+   * reconciliation — which counts files, not destinations — still called it done.
+   */
+  private startedOn(job: Transfer): UploadDestination | undefined {
+    return job.driveAccount ? (job.driveAccount.startsWith('B2:') ? 'b2' : 'drive') : undefined;
+  }
+  private wrongCloud(job: Transfer): string | undefined {
+    const started = this.startedOn(job);
+    const now: UploadDestination = this.isB2() ? 'b2' : 'drive';
+    if (!started || started === now) return undefined;
+    const name = (where: UploadDestination): string => where === 'b2' ? 'Backblaze B2' : 'Google Drive';
+    return `This folder already started uploading to ${name(started)}. Switch the destination back to ${name(started)} to finish it, or scan it again as a new transfer to send it to ${name(now)}.`;
+  }
   setOwner(owner: string): void { this.owner = owner; }
   pause(id: string): void {
     const job = this.store.get(id);
@@ -42,7 +72,11 @@ export class TransferEngine {
   resume(id: string): void {
     const job = this.store.get(id);
     if (!job.target || !job.scan || job.scan.readErrors) throw new Error('Finish reviewing a complete scan before uploading.');
-    if (!this.isB2() && !this.account()) throw new Error('Connect Google Drive or Backblaze B2 first.');
+    if (!this.isB2() && !this.account()) throw new Error(this.destination === 'b2' && this.b2
+      ? 'Connect Backblaze B2 in Uploader settings first, or switch the destination to Google Drive.'
+      : 'Connect Google Drive in Uploader settings first.');
+    const mismatch = this.wrongCloud(job);
+    if (mismatch) throw new Error(mismatch);
     if (!this.isB2() && job.driveAccount && job.driveAccount !== this.account()) throw new Error('Reconnect the original Drive account for this transfer.');
     if (job.status === 'completed') return;
     this.failures.delete(id);
@@ -56,6 +90,8 @@ export class TransferEngine {
     this.busy = true;
     const controller = new AbortController(); this.active = { id: job.id, controller };
     try {
+      const mismatch = this.wrongCloud(job);
+      if (mismatch) throw new Error(mismatch);
       if (!this.isB2() && job.driveAccount && job.driveAccount !== this.account()) throw new Error('This transfer belongs to a different Google Drive account.');
       const activeAccount = this.isB2() ? `B2: ${this.b2?.credentials?.bucketName || 'active'}` : this.account();
       this.store.patch(job.id, { status: 'uploading', driveAccount: activeAccount, error: undefined, retryAt: undefined }); this.changed();

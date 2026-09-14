@@ -6,7 +6,7 @@ import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
 import { useTransfers } from '../hooks/useTransfers';
 import { ACTIVE_STATUSES } from '../utils/uploadFormat';
-import { saveRawDataLink } from '../lib/studioRepository';
+import { attachVerifiedTransfer } from '../lib/studioRepository';
 import { UploadsScreen } from './screens/UploadsScreen';
 import { WorkScreen } from './screens/WorkScreen';
 import { TransferDetail } from './screens/TransferDetail';
@@ -41,8 +41,22 @@ export function OwnerDashboard(): React.JSX.Element {
   const keepAwake = studio.studioSettings?.uploader?.keepAwake;
   useEffect(() => { void window.api.setKeepAwake(Boolean(keepAwake)); }, [keepAwake]);
 
-  // Automatically sync any completed transfer's Backblaze B2 link to Firestore rawDataLink
-  // so assigned editors can immediately access and download the raw footage
+  // Same for the upload destination: stored with the studio, enforced by the queue.
+  const destination = studio.studioSettings?.uploader?.destination;
+  useEffect(() => {
+    void window.api.setUploadDestination(destination === 'drive' ? 'drive' : 'b2');
+  }, [destination]);
+
+  /**
+   * Record every verified transfer against its work so the assigned editor can
+   * download it, whichever cloud it went to.
+   *
+   * A project can hold more than one transfer — a second batch of raw footage
+   * may be sent to the other cloud entirely — so each one is filed under its own
+   * id and the job's headline rawDataLink is only filled while it is still
+   * empty. Overwriting it would point the editor at the newest batch and lose
+   * the earlier one, which still exists and is still theirs to download.
+   */
   useEffect(() => {
     if (!studio.currentUser || studio.currentUser.accountType !== 'owner') return;
     for (const t of transfers) {
@@ -54,17 +68,11 @@ export function OwnerDashboard(): React.JSX.Element {
             (t.target?.jobCode && j.jobCode === t.target.jobCode) ||
             (t.target?.title && j.title?.trim().toLowerCase() === t.target.title.trim().toLowerCase())
           );
-          const attemptKey = `freelance:${(job as any)?._documentId || job?.id || t.target.id}:${t.link}`;
-          if (job && (!job.rawDataLink || job.rawDataLink !== t.link) && !rawLinkSyncAttempts.current.has(attemptKey)) {
-            rawLinkSyncAttempts.current.add(attemptKey);
-            console.log(`[Auto-Sync] Syncing B2 rawDataLink to freelance_jobs/${job.id}:`, t.link);
-            const syncTarget = {
-              ...t.target,
-              id: (job as any)._documentId || String(job.id),
-              _documentId: (job as any)._documentId || String(job.id)
-            };
-            void saveRawDataLink(syncTarget, t.link).catch(err =>
-              console.warn('[Auto-Sync] Failed to sync rawDataLink:', err)
+          if (job && !(job as any).desktopTransfers?.[t.id] && !rawLinkSyncAttempts.current.has(t.id)) {
+            rawLinkSyncAttempts.current.add(t.id);
+            const docId = (job as any)._documentId || String(job.id);
+            void attachVerifiedTransfer({ ...t, target: { ...t.target, id: docId } }).catch(err =>
+              console.warn('[Auto-Sync] Failed to record transfer on the job:', err)
             );
           }
         } else if (t.target.kind === 'deliverable') {
@@ -72,11 +80,10 @@ export function OwnerDashboard(): React.JSX.Element {
           if (clientId) {
             const client = studio.clients.find(c => String(c.id) === String(clientId));
             const del = client?.deliverables?.find(d => d.id === t.target?.id);
-            const attemptKey = `deliverable:${clientId}:${t.target.id}:${t.link}`;
-            if (del && (!del.rawDataLink || del.rawDataLink !== t.link) && !rawLinkSyncAttempts.current.has(attemptKey)) {
-              rawLinkSyncAttempts.current.add(attemptKey);
-              void saveRawDataLink(t.target, t.link).catch(err =>
-                console.warn('[Auto-Sync] Failed to sync deliverable rawDataLink:', err)
+            if (del && !(del as any).desktopTransfers?.[t.id] && !rawLinkSyncAttempts.current.has(t.id)) {
+              rawLinkSyncAttempts.current.add(t.id);
+              void attachVerifiedTransfer(t).catch(err =>
+                console.warn('[Auto-Sync] Failed to record deliverable transfer:', err)
               );
             }
           }
