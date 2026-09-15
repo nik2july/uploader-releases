@@ -231,6 +231,31 @@ export async function setupIpcHandlers(): Promise<() => void> {
     if (invoice) invoiceValid(invoice);
     store.patch(id, { target, invoice: job.invoice?.status === 'issued' ? job.invoice : invoice ?? job.invoice }); engine.resume(id);
   });
+  /**
+   * Take a transfer out of the queue.
+   *
+   * `keepUploaded` is the difference between abandoning a folder and cleaning
+   * it up: kept, whatever already reached the cloud stays where it is and its
+   * link is returned so the studio can still reach it; otherwise the partial
+   * folder is deleted first, and a failure to delete stops the removal rather
+   * than leaving bytes behind that nothing on this Mac remembers.
+   */
+  handle('transfers:remove', async (id: string, keepUploaded = true) => {
+    const job = owned(id);
+    engine.pause(id);
+    const partial = job.link && job.uploadedBytes > 0 ? job.link : undefined;
+    if (!keepUploaded && job.folderId) {
+      if (job.link?.startsWith('b2://')) {
+        if (!b2.isConnected()) throw new Error('Connect Backblaze B2 to delete what was already uploaded, or keep it instead.');
+        await b2.deletePrefix(job.folderId);
+      } else {
+        await drive.delete(job.folderId);
+      }
+    }
+    store.remove(id);
+    changed();
+    return { removed: true, keptLink: keepUploaded ? partial : undefined };
+  });
   handle('transfers:pause', (id: string) => { owned(id); engine.pause(id); });
   handle('transfers:resume', (id: string) => { owned(id); engine.resume(id); });
   handle('transfers:relocate', async (id: string) => {

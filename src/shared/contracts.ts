@@ -59,6 +59,7 @@ export interface DesktopAPI {
   driveStatus(): Promise<DriveStatus>;
   disconnectDrive(): Promise<DriveStatus>;
   setUploadDestination(destination: UploadDestination): Promise<void>;
+  removeTransfer(id: string, keepUploaded?: boolean): Promise<{ removed: boolean; keptLink?: string }>;
   dropboxStatus(): Promise<DropboxStatus>;
   connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;
   disconnectDropbox(): Promise<DropboxStatus>;

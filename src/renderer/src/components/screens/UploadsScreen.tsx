@@ -1,10 +1,45 @@
 import { useState } from 'react';
-import { AlertTriangle, Pause, Play } from 'lucide-react';
+import { AlertTriangle, Pause, Play, Trash2 } from 'lucide-react';
 import type { DriveStatus, Transfer } from '../../../../shared/contracts';
 import {
   ACTIVE_STATUSES, formatBytes, formatRetryWait, progressFraction, remainingSummary, statusLabel,
 } from '../../utils/uploadFormat';
 import { formatEta, formatSpeed, useTransferSpeed } from '../../utils/uploadSpeed';
+
+/**
+ * Take a transfer off the queue, having asked what should happen to the part of
+ * it that already reached the cloud.
+ *
+ * Those bytes cost real money and real hours to send, and a folder abandoned
+ * without a record is worse than one deliberately deleted, so keeping them is
+ * the default and deleting is the answer the studio has to choose.
+ */
+async function remove(job: Transfer): Promise<void> {
+  const sent = job.uploadedBytes > 0 && Boolean(job.link);
+  if (!sent) {
+    if (!window.confirm(`Remove "${job.target?.title || job.rootName}" from the queue?\n\nNothing has been uploaded yet, so nothing in the cloud changes. The folder on disk is untouched.`)) return;
+    await window.api.removeTransfer(job.id, true);
+    return;
+  }
+  const keep = window.confirm(
+    `Remove "${job.target?.title || job.rootName}" from the queue?\n\n` +
+    `${formatBytes(job.uploadedBytes)} has already been uploaded.\n\n` +
+    `OK — keep those files in the cloud and copy their link.\n` +
+    `Cancel — choose whether to delete them instead.`
+  );
+  if (!keep) {
+    const del = window.confirm(
+      `Delete the ${formatBytes(job.uploadedBytes)} already uploaded for "${job.target?.title || job.rootName}"?\n\n` +
+      `This permanently removes that partial folder from the cloud and cannot be undone.\n\n` +
+      `Cancel here leaves the transfer exactly as it is.`
+    );
+    if (!del) return;
+    await window.api.removeTransfer(job.id, false);
+    return;
+  }
+  const result = await window.api.removeTransfer(job.id, true);
+  if (result.keptLink) void navigator.clipboard.writeText(result.keptLink).catch(() => {});
+}
 
 function TransferCard({ job, busy, drive, onOpen, onRun }: {
   job: Transfer; busy: string; drive: DriveStatus | null;
@@ -64,6 +99,15 @@ function TransferCard({ job, busy, drive, onOpen, onRun }: {
 
       <div className="actions">
         <button className="primary" onClick={() => onOpen(job.id)}>Open</button>
+        <button
+          className="text-button"
+          disabled={busy === job.id || ACTIVE_STATUSES.includes(job.status)}
+          style={{ color: 'var(--warn)' }}
+          title={ACTIVE_STATUSES.includes(job.status) ? 'Pause this transfer before removing it.' : undefined}
+          onClick={() => void onRun(job.id, () => remove(job))}
+        >
+          <Trash2 size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Remove
+        </button>
         {ACTIVE_STATUSES.includes(job.status) && (
           <button disabled={busy === job.id} onClick={() => void onRun(job.id, () => window.api.pause(job.id))}>
             <Pause size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Pause

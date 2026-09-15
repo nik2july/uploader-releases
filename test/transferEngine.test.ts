@@ -527,3 +527,57 @@ describe('choosing where raw footage lands', () => {
     assert.equal(store.get(job.id).status, 'paused');
   });
 });
+
+/**
+ * Taking a transfer off the queue.
+ *
+ * This is the one operation that destroys a journal, so what matters is that it
+ * destroys exactly one: the folder rows and file rows that belong to it, and
+ * nothing belonging to the transfer sitting next to it.
+ */
+describe('removing a transfer', () => {
+  test('drops its files and folders, and leaves other transfers whole', async () => {
+    const { store } = harness();
+    const doomed = await seedJob(store, await tempDir(), FILES, FOLDERS);
+    // seedJob writes a fixed id, so the neighbour is built from it by hand.
+    const keeper = { ...doomed, id: 'transfer-2' };
+    store.save(keeper);
+    store.addFile(keeper.id, { relativePath: 'C.mov', size: 500, mtimeMs: 0, kind: 'video', billingIncluded: true });
+    store.saveFolder(keeper.id, '', 'keeper-root');
+
+    store.saveFolder(doomed.id, 'DAY01', 'folder-id');
+    assert.equal(store.folders(doomed.id).length, FOLDERS.length);
+
+    store.remove(doomed.id);
+
+    assert.throws(() => store.get(doomed.id), /not found/i);
+    assert.equal(store.next(doomed.id), undefined, 'its manifest rows should be gone');
+    assert.equal(store.folders(doomed.id).length, 0);
+
+    assert.equal(store.get(keeper.id).id, keeper.id);
+    assert.equal(store.stats(keeper.id).completedFiles, 0);
+    assert.ok(store.next(keeper.id), 'the untouched transfer keeps its manifest');
+    assert.equal(store.all('owner').length, 1);
+  });
+
+  test('a part-uploaded transfer can be removed without touching what it sent', async () => {
+    const { store, engine } = harness();
+    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
+
+    // One verified file, then the studio gives up on the folder.
+    const file = store.next(job.id)!;
+    file.state = 'verified';
+    file.offset = file.size;
+    store.saveFile(file);
+    store.patch(job.id, { link: 'https://drive.google.com/drive/folders/abc', folderId: 'abc', ...store.stats(job.id) });
+    const before = store.get(job.id);
+    assert.ok(before.uploadedBytes > 0, 'precondition: something was uploaded');
+
+    engine.pause(job.id);
+    store.remove(job.id);
+
+    assert.throws(() => store.get(job.id), /not found/i);
+    // The link the caller kept is the studio's only handle on those bytes.
+    assert.equal(before.link, 'https://drive.google.com/drive/folders/abc');
+  });
+});

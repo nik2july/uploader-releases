@@ -10,6 +10,7 @@ const api: DesktopAPI = {
   connectDrive: idToken => ipcRenderer.invoke('drive:connect', idToken), driveStatus: () => ipcRenderer.invoke('drive:status'),
   disconnectDrive: () => ipcRenderer.invoke('drive:disconnect'),
   setUploadDestination: destination => ipcRenderer.invoke('transfers:destination', destination),
+  removeTransfer: (id, keepUploaded) => ipcRenderer.invoke('transfers:remove', id, keepUploaded),
   dropboxStatus: () => ipcRenderer.invoke('studio:dropboxStatus'),
   connectDropbox: (token) => ipcRenderer.invoke('studio:connectDropbox', token),
   disconnectDropbox: () => ipcRenderer.invoke('studio:disconnectDropbox'),

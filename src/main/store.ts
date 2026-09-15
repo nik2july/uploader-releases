@@ -107,6 +107,26 @@ export class TransferStore {
     const row = this.db.prepare('SELECT path FROM downloads WHERE owner=? AND job=?').get(owner, job);
     return row?.path ? String(row.path) : undefined;
   }
+  /**
+   * Drop a transfer and its journal entirely.
+   *
+   * Foreign keys are on, so the children go first. This only forgets what the
+   * Mac was tracking; whatever already reached the cloud is untouched, and
+   * removing the record is what makes it unreachable from here — the caller
+   * decides whether those bytes are deleted before this runs.
+   */
+  remove(id: string): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('DELETE FROM files WHERE job=?').run(id);
+      this.db.prepare('DELETE FROM folders WHERE job=?').run(id);
+      this.db.prepare('DELETE FROM jobs WHERE id=?').run(id);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   forgetDownload(owner: string, job: string): void {
     this.db.prepare('DELETE FROM downloads WHERE owner=? AND job=?').run(owner, job);
   }
