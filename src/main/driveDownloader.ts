@@ -384,8 +384,26 @@ export class DriveDownloader {
           const outPath = safeDownloadTarget(destDir, file.relativePath);
           await fs.mkdir(dirname(outPath), { recursive: true });
 
+          const local = await this.localProgress(outPath, file.size);
+          if (local.done) {
+            // Already here in full from an earlier attempt: counted, not fetched.
+            cumulativeDownloaded += local.have;
+            onProgress({
+              jobId,
+              percent: grandTotal > 0 ? Math.min(99, Math.round((cumulativeDownloaded / grandTotal) * 100)) : 50,
+              downloadedBytes: cumulativeDownloaded,
+              totalBytes: grandTotal,
+              fileName: `${file.relativePath} — already downloaded`,
+              status: 'downloading'
+            });
+            continue;
+          }
+
           const fileUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`;
-          const fileRes = await fetch(fileUrl, { headers: { Authorization: `Bearer ${token}` }, signal });
+          const fileRes = await fetch(fileUrl, {
+            headers: { Authorization: `Bearer ${token}`, ...(local.have > 0 ? { Range: `bytes=${local.have}-` } : {}) },
+            signal
+          });
 
           if (!fileRes.ok) {
             throw new Error(`Failed to download ${file.name} (status ${fileRes.status})`);
@@ -399,7 +417,8 @@ export class DriveDownloader {
             grandTotal,
             file.relativePath,
             signal,
-            onProgress
+            onProgress,
+            fileRes.status === 206 ? local.have : 0
           );
 
           cumulativeDownloaded += fileBytes;
@@ -526,6 +545,20 @@ export class DriveDownloader {
           const targetPath = safeDownloadTarget(destDir, relativeName);
           await fs.mkdir(dirname(targetPath), { recursive: true });
 
+          const local = await this.localProgress(targetPath, file.contentLength);
+          if (local.done) {
+            cumulativeBytes += local.have;
+            onProgress({
+              jobId,
+              percent: grandTotal > 0 ? Math.min(99, Math.round((cumulativeBytes / grandTotal) * 100)) : 50,
+              downloadedBytes: cumulativeBytes,
+              totalBytes: grandTotal,
+              fileName: `[${i + 1}/${files.length}] ${basename(file.fileName)} — already downloaded`,
+              status: 'downloading'
+            });
+            continue;
+          }
+
           const fileDownloaded = await this.b2.downloadFile(
             file.fileName,
             targetPath,
@@ -541,7 +574,8 @@ export class DriveDownloader {
                 fileName: `[${i + 1}/${files.length}] ${basename(file.fileName)}`,
                 status: 'downloading'
               });
-            }
+            },
+            local.have
           );
           cumulativeBytes += fileDownloaded;
         }
@@ -663,14 +697,17 @@ export class DriveDownloader {
     grandTotal: number,
     fileName: string,
     signal: AbortSignal,
-    onProgress: (progress: DownloadProgress) => void
+    onProgress: (progress: DownloadProgress) => void,
+    resumeFrom = 0
   ): Promise<number> {
     if (!response.body) {
       throw new Error(`Empty response body for ${fileName}`);
     }
 
-    const fileStream = createWriteStream(targetPath);
-    let fileBytes = 0;
+    // Returns what the file holds in total, not what this attempt fetched, so a
+    // resumed file still counts once towards the job.
+    const fileStream = createWriteStream(targetPath, resumeFrom > 0 ? { flags: 'a' } : undefined);
+    let fileBytes = resumeFrom;
     const nodeStream = Readable.fromWeb(response.body as any);
 
     nodeStream.on('data', (chunk: Buffer) => {
@@ -689,6 +726,28 @@ export class DriveDownloader {
 
     await pipeline(nodeStream, fileStream, { signal });
     return fileBytes;
+  }
+
+  /**
+   * How much of a file is already on disk, and whether it is finished.
+   *
+   * A 385 GB folder that drops at 80% used to be re-fetched in full, because
+   * nothing checked what had already landed. A file whose size matches the
+   * cloud's is taken as done; a shorter one is resumed from where it stops; a
+   * longer one cannot be a prefix of the real file, so it is replaced outright
+   * rather than appended to.
+   */
+  private async localProgress(targetPath: string, expected: number): Promise<{ done: boolean; have: number }> {
+    if (!(expected > 0)) return { done: false, have: 0 };
+    try {
+      const stat = await fs.stat(targetPath);
+      if (!stat.isFile()) return { done: false, have: 0 };
+      if (stat.size === expected) return { done: true, have: stat.size };
+      if (stat.size > expected) return { done: false, have: 0 };
+      return { done: false, have: stat.size };
+    } catch {
+      return { done: false, have: 0 };
+    }
   }
 
   /**

@@ -431,11 +431,19 @@ export class B2Client {
   /**
    * Download a file from B2 directly to local destination path with progress.
    */
+  /**
+   * `resumeFrom` continues a file that is already partly on disk, so a dropped
+   * connection costs the remainder rather than the whole file. B2 answers a
+   * range request with 206; anything else means it sent the file from the top,
+   * and the partial bytes are discarded rather than appended to — appending to
+   * a full body would produce a file that is the right length nowhere.
+   */
   async downloadFile(
     b2FileName: string,
     destPath: string,
     signal?: AbortSignal,
-    onProgress?: (downloadedBytes: number, totalBytes: number) => void
+    onProgress?: (downloadedBytes: number, totalBytes: number) => void,
+    resumeFrom = 0
   ): Promise<number> {
     const auth = await this.authorize();
     const bucketName = this.creds?.bucketName;
@@ -443,7 +451,8 @@ export class B2Client {
 
     const res = await fetch(downloadUrl, {
       headers: {
-        Authorization: auth.authorizationToken
+        Authorization: auth.authorizationToken,
+        ...(resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : {})
       },
       signal
     });
@@ -452,11 +461,12 @@ export class B2Client {
       throw new Error(`Failed to download B2 file "${b2FileName}" (status ${res.status})`);
     }
 
-    const totalBytes = parseInt(res.headers.get('content-length') || '0', 10);
-    let downloadedBytes = 0;
+    const resumed = resumeFrom > 0 && res.status === 206;
+    let downloadedBytes = resumed ? resumeFrom : 0;
+    const totalBytes = parseInt(res.headers.get('content-length') || '0', 10) + downloadedBytes;
 
     await fs.mkdir(path.dirname(destPath), { recursive: true });
-    const fileStream = createWriteStream(destPath);
+    const fileStream = createWriteStream(destPath, resumed ? { flags: 'a' } : undefined);
 
     if (!res.body) throw new Error('Response body is null.');
 
