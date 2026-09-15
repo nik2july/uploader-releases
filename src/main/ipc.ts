@@ -9,12 +9,12 @@ import { TransferStore } from './store';
 import { GoogleAuth } from './googleAuth';
 import { DriveClient } from './drive';
 import { TransferEngine } from './transferEngine';
-import { checkForUpdate } from './updater';
+import { checkForUpdate, downloadUpdate, installUpdate } from './updater';
 import { log, recentLog } from './log';
 import { dropbox } from './dropboxClient';
 import { DriveDownloader } from './driveDownloader';
 import { B2Client } from './b2Client';
-import type { InvoiceSnapshot, ScanOptions, WorkTarget } from '../shared/contracts';
+import type { InvoiceSnapshot, ScanOptions, UpdateInfo, WorkTarget } from '../shared/contracts';
 import firebaseConfig from '../renderer/src/lib/firebase-applet-config.json';
 
 export function allowedExternal(url: string): boolean {
@@ -112,6 +112,8 @@ export async function setupIpcHandlers(): Promise<() => void> {
     b2
   );
   const scans = new Map<string, AbortController>();
+  /** Path to the unpacked update waiting to replace this app, once downloaded. */
+  let staged = '';
   function trusted(event: IpcMainInvokeEvent): void {
     if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted IPC frame.');
     const url = new URL(event.senderFrame.url);
@@ -313,6 +315,27 @@ export async function setupIpcHandlers(): Promise<() => void> {
   handle('app:version', () => app.getVersion(), false);
   handle('app:diagnostics', () => recentLog(), false);
   handle('updates:check', () => checkForUpdate(), false);
+  handle('updates:download', async (info: UpdateInfo) => {
+    if (!info || typeof info.version !== 'string') throw new Error('No update to download.');
+    const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    let lastSent = 0;
+    staged = await downloadUpdate(info, (received, total) => {
+      // The renderer only needs enough to move a bar; a send per chunk would
+      // flood it on a 226 MB download.
+      if (Date.now() - lastSent < 200 && received !== total) return;
+      lastSent = Date.now();
+      window?.webContents.send('update:progress', { received, total });
+    });
+    return { ready: true, version: info.version };
+  }, false);
+  handle('updates:install', async () => {
+    if (!staged) throw new Error('Download the update before installing it.');
+    // A transfer killed mid-flight resumes from its journal, but pausing first
+    // means the queue is written down deliberately rather than recovered.
+    engine.pauseAll();
+    await installUpdate(staged);
+    app.quit();
+  }, false);
   handle('power:keepAwake', (on: boolean) => { keepAwake = on === true; evaluatePower(); }, false);
   handle('external:open', async (url: string) => { if (!allowedExternal(url)) throw new Error('This link is not allowed.'); await shell.openExternal(url); }, false);
   handle('dialog:openVideoFile', async () => {

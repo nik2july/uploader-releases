@@ -11,6 +11,13 @@ const api: DesktopAPI = {
   disconnectDrive: () => ipcRenderer.invoke('drive:disconnect'),
   setUploadDestination: destination => ipcRenderer.invoke('transfers:destination', destination),
   removeTransfer: (id, keepUploaded) => ipcRenderer.invoke('transfers:remove', id, keepUploaded),
+  downloadUpdate: info => ipcRenderer.invoke('updates:download', info),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onUpdateProgress: callback => {
+    const listener = (_: unknown, data: { received: number; total: number }): void => callback(data);
+    ipcRenderer.on('update:progress', listener);
+    return () => { ipcRenderer.removeListener('update:progress', listener); };
+  },
   dropboxStatus: () => ipcRenderer.invoke('studio:dropboxStatus'),
   connectDropbox: (token) => ipcRenderer.invoke('studio:connectDropbox', token),
   disconnectDropbox: () => ipcRenderer.invoke('studio:disconnectDropbox'),

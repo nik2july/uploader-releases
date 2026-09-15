@@ -41,7 +41,19 @@ export interface ManifestFile {
   driveId?: string; session?: string; offset: number; md5?: string;
   state: 'pending' | 'uploading' | 'verified'; error?: string;
 }
-export interface UpdateInfo { version: string; url: string; notes: string; publishedAt: string }
+export interface UpdateInfo {
+  version: string;
+  /** Where to send the studio to get it by hand — the .dmg if the release has one. */
+  url: string;
+  /**
+   * The zip of the .app bundle, when the release ships one. This is what the
+   * app installs over itself; without it the banner offers the manual
+   * download-and-drag instead.
+   */
+  packageUrl?: string;
+  notes: string;
+  publishedAt: string;
+}
 /** Where raw-footage transfers land. Chosen once in Uploader settings, shared by the studio. */
 export type UploadDestination = 'drive' | 'b2';
 export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
@@ -60,6 +72,9 @@ export interface DesktopAPI {
   disconnectDrive(): Promise<DriveStatus>;
   setUploadDestination(destination: UploadDestination): Promise<void>;
   removeTransfer(id: string, keepUploaded?: boolean): Promise<{ removed: boolean; keptLink?: string }>;
+  downloadUpdate(info: UpdateInfo): Promise<{ ready: boolean; version: string }>;
+  installUpdate(): Promise<void>;
+  onUpdateProgress(callback: (progress: { received: number; total: number }) => void): () => void;
   dropboxStatus(): Promise<DropboxStatus>;
   connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;
   disconnectDropbox(): Promise<DropboxStatus>;

@@ -5,19 +5,23 @@ import type { UpdateInfo } from '../../../shared/contracts';
 const DISMISSED = 'baawaray-uploader-dismissed-update';
 
 /**
- * "There is a newer version" — and nothing more.
+ * "There is a newer version" — and, when the release ships a package, the
+ * whole install.
  *
- * The app is not signed with an Apple Developer ID, and macOS will not install
- * an update into an unsigned application: Apple's updater checks the signature
- * before it will replace anything. So this deliberately does not pretend to
- * update itself. It tells the studio a version exists and opens the download;
- * installing is a drag into Applications, the same as the first time.
+ * The app carries no Apple Developer ID, so Apple's own updater will not touch
+ * it: Squirrel checks the signature of what it is replacing. Instead the app
+ * fetches the new bundle itself, checks it over, and hands the swap to a script
+ * that runs once this process has exited. A release with no zip asset falls
+ * back to what this always did — open the download, drag it in by hand.
  *
- * It also stays quiet about failure. A version check that could not reach
- * GitHub is not something to interrupt a two-terabyte upload with.
+ * It stays quiet about failure. A version check that could not reach GitHub is
+ * not something to interrupt a two-terabyte upload with.
  */
 export function UpdateBanner(): React.JSX.Element | null {
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
+  const [stage, setStage] = useState<'idle' | 'downloading' | 'ready'>('idle');
+  const [percent, setPercent] = useState(0);
+  const [failed, setFailed] = useState('');
   const [dismissed, setDismissed] = useState<string>(() => {
     try { return localStorage.getItem(DISMISSED) || ''; } catch { return ''; }
   });
@@ -36,7 +40,27 @@ export function UpdateBanner(): React.JSX.Element | null {
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
+  useEffect(() => window.api.onUpdateProgress(({ received, total }) => {
+    setPercent(total > 0 ? Math.min(100, Math.round((received / total) * 100)) : 0);
+  }), []);
+
   if (!update || dismissed === update.version) return null;
+
+  async function install(chosen: UpdateInfo): Promise<void> {
+    setFailed('');
+    if (!chosen.packageUrl) { void window.api.openExternal(chosen.url); return; }
+    try {
+      setStage('downloading');
+      setPercent(0);
+      await window.api.downloadUpdate(chosen);
+      setStage('ready');
+    } catch (error) {
+      // Falling back to the manual download is always possible, so say so
+      // rather than leaving the studio stuck on a broken button.
+      setStage('idle');
+      setFailed(error instanceof Error ? error.message : 'The update could not be downloaded.');
+    }
+  }
 
   function hide(version: string): void {
     setDismissed(version);
@@ -48,12 +72,27 @@ export function UpdateBanner(): React.JSX.Element | null {
       <ArrowDownToLine size={15} />
       <span>
         <strong>Version {update.version} is available.</strong>{' '}
-        Download it, then drag it into Applications over the current app. Your transfers and
-        Drive connection are kept.
+        {stage === 'ready'
+          ? 'Ready to install. The app closes, updates and reopens on its own — transfers in progress are paused and resume after.'
+          : stage === 'downloading'
+          ? `Downloading… ${percent}%`
+          : update.packageUrl
+          ? 'Install it without leaving the app. Your transfers, Drive and Backblaze connections are kept.'
+          : 'Download it, then drag it into Applications over the current app. Your transfers and Drive connection are kept.'}
+        {failed && <><br/><span className="error">{failed} You can still use Download to install it by hand.</span></>}
       </span>
-      <button className="primary" onClick={() => void window.api.openExternal(update.url)}>
-        Download
-      </button>
+      {stage === 'ready' ? (
+        <button className="primary" onClick={() => void window.api.installUpdate()}>
+          Install and restart
+        </button>
+      ) : (
+        <button className="primary" disabled={stage === 'downloading'} onClick={() => void install(update)}>
+          {stage === 'downloading' ? `${percent}%` : update.packageUrl ? 'Update now' : 'Download'}
+        </button>
+      )}
+      {failed && (
+        <button onClick={() => void window.api.openExternal(update.url)}>Download</button>
+      )}
       <button className="icon-button" aria-label="Not now" onClick={() => hide(update.version)}>
         <X size={16} />
       </button>

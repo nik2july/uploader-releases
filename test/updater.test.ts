@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { compareVersions } from '../src/main/updater';
+import { appBundlePath, compareVersions, trustedReleaseUrl } from '../src/main/updater';
 
 /**
  * The comparison that decides whether anyone is told about a release. Getting
@@ -28,5 +28,40 @@ describe('compareVersions', () => {
     assert.ok(compareVersions('1.1', '1.0.9') > 0);
     assert.equal(compareVersions('1.0', '1.0.0'), 0);
     assert.equal(compareVersions('', ''), 0);
+  });
+});
+
+/**
+ * The installer replaces a directory on disk and reopens whatever ends up
+ * there, so both of these answer a question with consequences: which path may
+ * be overwritten, and which hosts may supply what overwrites it.
+ */
+describe('what the installer is allowed to touch', () => {
+  test('the bundle is derived from the running executable', () => {
+    assert.equal(
+      appBundlePath('/Applications/Baawaray Uploader.app/Contents/MacOS/Baawaray Uploader'),
+      '/Applications/Baawaray Uploader.app'
+    );
+  });
+
+  test('a path outside a bundle yields nothing to replace', () => {
+    assert.equal(appBundlePath('/usr/local/bin/node'), null);
+    assert.equal(appBundlePath('/Users/nikhil/dev/out/main/index.js'), null);
+  });
+
+  test('a bundle nested under another path still resolves to itself', () => {
+    assert.equal(
+      appBundlePath('/Volumes/USB/Tools/Baawaray Uploader.app/Contents/MacOS/Baawaray Uploader'),
+      '/Volumes/USB/Tools/Baawaray Uploader.app'
+    );
+  });
+
+  test('only GitHub release hosts may supply a package', () => {
+    assert.ok(trustedReleaseUrl('https://github.com/nik2july/uploader-releases/releases/download/v1.2.0/app.zip'));
+    assert.ok(trustedReleaseUrl('https://objects.githubusercontent.com/github-production-release-asset/x'));
+    assert.equal(trustedReleaseUrl('http://github.com/nik2july/uploader-releases/x.zip'), false, 'plain http is not trusted');
+    assert.equal(trustedReleaseUrl('https://github.com.evil.example/x.zip'), false);
+    assert.equal(trustedReleaseUrl('https://evil.example/github.com/x.zip'), false);
+    assert.equal(trustedReleaseUrl('not a url'), false);
   });
 });
