@@ -43,6 +43,28 @@ export async function updatePartnerStudio(id: string, input: Partial<FreelanceCl
   await setDoc(doc(db, 'freelance_clients', id), clean(input), { merge: true });
 }
 
+/**
+ * The studio's own work, as a partner studio of Post Production.
+ *
+ * Post Production treats BAAWARAY FILMS like any other studio it takes work
+ * from, so it needs a record on the roster. The id is fixed rather than
+ * generated: a second one added by hand from Add Studio would split the same
+ * studio's jobs across two rows that never add up.
+ *
+ * Idempotent — a merge of the same three fields — so calling it on every open
+ * costs one small write and keeps the roster right even on a fresh install.
+ */
+export const BAAWARAY_FILMS_STUDIO_ID = 'internal_baawaray_films';
+
+export async function ensureBaawarayFilmsStudio(): Promise<string> {
+  await setDoc(doc(db, 'freelance_clients', BAAWARAY_FILMS_STUDIO_ID), clean({
+    id: BAAWARAY_FILMS_STUDIO_ID, name: 'BAAWARAY FILMS', phone: '', active: true,
+    createdAt: new Date().toISOString().slice(0, 10),
+    notes: 'The studio\'s own work. Deliverables filed here become Post Production jobs.',
+  }), { merge: true });
+  return BAAWARAY_FILMS_STUDIO_ID;
+}
+
 /** Creates linked Post Production projects from a BAAWARAY FILMS deliverable. */
 export async function sendBaawarayDeliverableToPostProduction(
   clientId: string,
@@ -53,12 +75,7 @@ export async function sendBaawarayDeliverableToPostProduction(
     throw new Error('Upload raw footage to Backblaze B2 or log hard drive handover before sending this deliverable to Post Production.');
   }
   if (services.length === 0) throw new Error('Choose at least one Post Production service.');
-  const partnerId = 'internal_baawaray_films';
-  await setDoc(doc(db, 'freelance_clients', partnerId), clean({
-    id: partnerId, name: 'BAAWARAY FILMS', phone: '', active: true,
-    createdAt: new Date().toISOString().slice(0, 10),
-    notes: 'Internal partner studio. Created for linked BAAWARAY FILMS post-production work.',
-  }), { merge: true });
+  const partnerId = await ensureBaawarayFilmsStudio();
   const ids: string[] = [];
   for (const serviceType of services) {
     ids.push(await createFreelanceJob({

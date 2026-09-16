@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { ensureBaawarayFilmsStudio } from '../../lib/studioRepository';
 import { useApp } from '../../context/AppContext';
 import { FreelanceJob, FreelanceJobStage } from '../../types';
 import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
@@ -90,6 +91,11 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
     }
     return 'jobs';
   });
+
+  // The studio's own work belongs on the roster whether or not a deliverable has
+  // been filed yet, so the board guarantees it rather than waiting for the first
+  // send to create it.
+  useEffect(() => { void ensureBaawarayFilmsStudio().catch(() => { /* offline: the send path still creates it */ }); }, []);
 
   useEffect(() => {
     try {
