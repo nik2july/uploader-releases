@@ -73,14 +73,12 @@ const STAGE_TONE: Record<string, string> = {
   changes_sent_to_editor: 'warn', final_delivered: 'done', completed: 'done',
 };
 
-export function WorkScreen({ kind, workspace = 'post-production', transfers, drive, onScanStarted, onSettings, onOpen }: {
+export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, onOpen }: {
   kind: 'freelance' | 'deliverables';
-  workspace?: 'post-production' | 'baawaray-films';
   transfers: Transfer[]; drive: DriveStatus | null;
   onScanStarted: (id: string | null) => void; onSettings: () => void; onOpen: (id: string) => void;
 }): React.JSX.Element {
   const studio = useApp();
-  const isBaawarayFilms = workspace === 'baawaray-films';
   const [query, setQuery] = useState('');
   const [partnerFilter, setPartnerFilter] = useState('all');
   const [editorFilter, setEditorFilter] = useState('all');
@@ -265,7 +263,7 @@ export function WorkScreen({ kind, workspace = 'post-production', transfers, dri
     <div className="screen">
       <header>
         <div>
-          <h2>{kind === 'freelance' ? 'Partner studio work' : isBaawarayFilms ? 'BAAWARAY FILMS deliverables' : 'Client deliverables'}</h2>
+          <h2>{kind === 'freelance' ? 'Partner studio work' : 'Client deliverables'}</h2>
         </div>
         <div className="actions" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search jobs, studios, editors…"
@@ -470,7 +468,7 @@ export function WorkScreen({ kind, workspace = 'post-production', transfers, dri
                   )}
                 </div>
 
-                {isBaawarayFilms && kind === 'deliverables' && (
+                {kind === 'deliverables' && (
                   <div className="job-cell">
                     <div className="cell-label">Post Production</div>
                     {row.postProductionJobIds?.length ? (

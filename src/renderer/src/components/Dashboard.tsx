@@ -22,16 +22,11 @@ import { FreelanceStudioView } from './freelance/FreelanceStudioView';
 import { FreelanceEditorView } from './freelance/FreelanceEditorView';
 
 type View = 'uploads' | 'freelance' | 'deliverables' | 'partners' | 'team' | 'payments' | 'settings' | 'scanner';
-type Workspace = 'post-production' | 'baawaray-films';
-const WORKSPACE_STORAGE_KEY = 'baawaray-owner-workspace';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
   const { transfers, drive, error, loading, refresh } = useTransfers();
   const [view, setView] = useState<View>('uploads');
-  const [workspace, setWorkspace] = useState<Workspace>(() =>
-    localStorage.getItem(WORKSPACE_STORAGE_KEY) === 'baawaray-films' ? 'baawaray-films' : 'post-production'
-  );
   const [openId, setOpenId] = useState<string | null>(null);
   const [showArchivalModal, setShowArchivalModal] = useState(false);
   const rawLinkSyncAttempts = useRef(new Set<string>());
@@ -104,49 +99,30 @@ export function OwnerDashboard(): React.JSX.Element {
   }
 
   function go(next: View): void { setOpenId(null); setView(next); }
-  function switchWorkspace(next: Workspace): void {
-    setWorkspace(next);
-    localStorage.setItem(WORKSPACE_STORAGE_KEY, next);
-    setOpenId(null);
-    setView(next === 'baawaray-films' ? 'deliverables' : 'uploads');
-  }
 
   return (
     <div className="app-shell">
       <nav className="sidebar">
         <div className="wordmark"><img src={longLogo} alt="Baawaray" /></div>
-        <label style={{ padding: '0 10px 12px', margin: 0 }}>
-          <span className="cell-label">Workspace</span>
-          <select value={workspace} onChange={event => switchWorkspace(event.target.value as Workspace)}>
-            <option value="post-production">Post Production</option>
-            <option value="baawaray-films">BAAWARAY FILMS</option>
-          </select>
-        </label>
-        {workspace === 'post-production' ? <>
-          <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
-            <Briefcase size={16} /> Freelance Department
-          </button>
-          <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
-            <Film size={16} /> Deliverables
-          </button>
-          <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
-            <Upload size={16} /> Upload Queue
-            {active + attention > 0 && <span className="count">{active + attention}</span>}
-          </button>
-          <button className="nav-item" aria-current={view === 'scanner'} onClick={() => go('scanner')}>
-            <HardDrive size={16} /> Raw Folder Scanner
-          </button>
-          <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
-            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Post Production Payments
-          </button>
-          <button className="nav-item" onClick={() => setShowArchivalModal(true)}>
-            <Archive size={16} /> Cloud Archival
-          </button>
-        </> : (
-          <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
-            <Film size={16} /> Deliverables
-          </button>
-        )}
+        <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
+          <Briefcase size={16} /> Freelance Department
+        </button>
+        <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
+          <Film size={16} /> Deliverables
+        </button>
+        <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
+          <Upload size={16} /> Upload Queue
+          {active + attention > 0 && <span className="count">{active + attention}</span>}
+        </button>
+        <button className="nav-item" aria-current={view === 'scanner'} onClick={() => go('scanner')}>
+          <HardDrive size={16} /> Raw Folder Scanner
+        </button>
+        <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
+          <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments
+        </button>
+        <button className="nav-item" onClick={() => setShowArchivalModal(true)}>
+          <Archive size={16} /> Cloud Archival
+        </button>
         <div className="spacer" />
         <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
           <Settings size={16} /> Settings
@@ -170,16 +146,13 @@ export function OwnerDashboard(): React.JSX.Element {
             <FreelanceDepartmentView />
           )
         ) : view === 'scanner' || view === 'deliverables' ? (
-          <WorkScreen kind={view === 'scanner' ? 'freelance' : view} workspace={workspace} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+          <WorkScreen kind={view === 'scanner' ? 'freelance' : view} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
         ) : view === 'team' ? (
           <PostProductionTeamScreen />
         ) : view === 'partners' ? (
           <PartnerStudiosScreen />
         ) : view === 'payments' ? (
-          <PostProductionPaymentsScreen
-            clientName={workspace === 'baawaray-films' ? 'BAAWARAY FILMS' : undefined}
-            title={workspace === 'baawaray-films' ? 'BAAWARAY FILMS payments to Post Production' : undefined}
-          />
+          <PostProductionPaymentsScreen />
         ) : (
           <div className="screen">
             <header><div><span className="eyebrow">SETTINGS</span><h2>Uploader settings</h2>
