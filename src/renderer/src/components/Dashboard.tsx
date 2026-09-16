@@ -126,6 +126,9 @@ export function OwnerDashboard(): React.JSX.Element {
           <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
             <Briefcase size={16} /> Freelance Department
           </button>
+          <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
+            <Film size={16} /> Deliverables
+          </button>
           <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
             <Upload size={16} /> Upload Queue
             {active + attention > 0 && <span className="count">{active + attention}</span>}
@@ -139,14 +142,11 @@ export function OwnerDashboard(): React.JSX.Element {
           <button className="nav-item" onClick={() => setShowArchivalModal(true)}>
             <Archive size={16} /> Cloud Archival
           </button>
-        </> : <>
+        </> : (
           <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
             <Film size={16} /> Deliverables
           </button>
-          <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
-            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments to Post Production
-          </button>
-        </>}
+        )}
         <div className="spacer" />
         <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
           <Settings size={16} /> Settings
