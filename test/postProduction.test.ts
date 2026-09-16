@@ -27,6 +27,21 @@ describe('filing a deliverable into post production', () => {
     assert.equal(shouldFileIntoPostProduction(raw(''), {}), false);
   });
 
+  test('the service name is matched however it was typed into settings', () => {
+    // These come from a category someone typed; an exact match would have the
+    // feature look like it was never built.
+    assert.equal(shouldFileIntoPostProduction(raw('short form'), {}), true);
+    assert.equal(shouldFileIntoPostProduction(raw('SHORT FORM'), {}), true);
+    assert.equal(shouldFileIntoPostProduction(raw('  Edited Photos  '), {}), true);
+    assert.equal(shouldFileIntoPostProduction(raw('edited photos'), {}), true);
+  });
+
+  test('tolerance stops at spelling — a different service is still a different service', () => {
+    assert.equal(shouldFileIntoPostProduction(raw('Short Films'), {}), false);
+    assert.equal(shouldFileIntoPostProduction(raw('Photos'), {}), false);
+    assert.equal(shouldFileIntoPostProduction(raw('Albums'), {}), false);
+  });
+
   test('a deliverable already filed is never filed twice', () => {
     assert.equal(shouldFileIntoPostProduction(raw('Long Form'), { postProductionJobIds: ['job_1'] }), false);
     assert.equal(shouldFileIntoPostProduction(raw('Long Form'), { postProductionJobIds: [] }), true);

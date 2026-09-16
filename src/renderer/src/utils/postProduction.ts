@@ -26,6 +26,20 @@ export function shouldFileIntoPostProduction(
   if (!target || !deliverable) return false;
   return target.kind === 'deliverable'
     && target.purpose === 'raw'
-    && POST_PRODUCTION_SERVICES.includes(target.serviceType || '')
+    && isPostProductionService(target.serviceType)
     && !(deliverable.postProductionJobIds || []).length;
+}
+
+/**
+ * Whether a service name is one of Post Production's, however it was typed.
+ *
+ * The name comes from a category someone typed into studio settings, and an
+ * exact comparison would have "Short form" or a trailing space quietly stop
+ * every deliverable filing itself — a failure that looks like the feature was
+ * never built rather than like a typo. Case and surrounding space are ignored;
+ * nothing else is, so an unrelated service still files nothing.
+ */
+export function isPostProductionService(name: string | undefined): boolean {
+  const cleaned = (name || '').trim().toLowerCase();
+  return POST_PRODUCTION_SERVICES.some(service => service.toLowerCase() === cleaned);
 }
