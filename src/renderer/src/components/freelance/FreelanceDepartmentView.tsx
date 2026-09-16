@@ -43,7 +43,15 @@ import { FreelanceJobDetailModal } from '../modals/FreelanceJobDetailModal';
 import { FreelancePaymentModal } from '../modals/FreelancePaymentModal';
 import { FreelanceRevisionModal } from '../modals/FreelanceRevisionModal';
 
-export const FreelanceDepartmentView: React.FC = () => {
+/**
+ * The freelance board, with client deliverables as one of its sections.
+ *
+ * Deliverables arrives already wired, as a node rather than as the five props
+ * that screen needs — transfers, drive, and three callbacks that belong to the
+ * dashboard. This view decides where the section sits; it does not need to know
+ * what the section is made of.
+ */
+export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode }> = ({ deliverables }) => {
   const {
 
     freelanceJobs,
@@ -71,10 +79,11 @@ export const FreelanceDepartmentView: React.FC = () => {
    * back from one would otherwise land on Jobs, several clicks from the roster you were
    * just looking at.
    */
-  const [section, setSection] = useState<'jobs' | 'clients' | 'editors' | 'schedule' | 'radar'>(() => {
+  const [section, setSection] = useState<'jobs' | 'clients' | 'editors' | 'schedule' | 'radar' | 'deliverables'>(() => {
     try {
       const saved = localStorage.getItem('baawaray_freelance_section');
-      if (saved === 'jobs' || saved === 'clients' || saved === 'editors' || saved === 'schedule' || saved === 'radar')
+      if (saved === 'jobs' || saved === 'clients' || saved === 'editors' || saved === 'schedule' || saved === 'radar'
+        || saved === 'deliverables')
         return saved;
     } catch {
       /* private browsing, or storage disabled — the default is fine */
@@ -313,6 +322,7 @@ export const FreelanceDepartmentView: React.FC = () => {
       <div className="flex items-center bg-[#f9f8f6] p-1 rounded-xl border border-[#d4c1a3] w-fit">
         {([
           { id: 'jobs', label: 'Jobs' },
+          { id: 'deliverables', label: 'Deliverables' },
           { id: 'clients', label: 'Partner Studios' },
           { id: 'editors', label: 'Editor Payouts' },
           { id: 'schedule', label: 'Editor Schedule' },
@@ -331,7 +341,9 @@ export const FreelanceDepartmentView: React.FC = () => {
         ))}
       </div>
 
-      {section === 'clients' ? (
+      {section === 'deliverables' ? (
+        deliverables ?? null
+      ) : section === 'clients' ? (
         <FreelanceClientsPanel />
       ) : section === 'editors' ? (
         <FreelanceEditorsPanel />

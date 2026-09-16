@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, Briefcase, Film, HardDrive, Settings, Upload, Users } from 'lucide-react';
+import { Archive, Briefcase, HardDrive, Settings, Upload, Users } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -21,7 +21,7 @@ import { FreelanceDepartmentView } from './freelance/FreelanceDepartmentView';
 import { FreelanceStudioView } from './freelance/FreelanceStudioView';
 import { FreelanceEditorView } from './freelance/FreelanceEditorView';
 
-type View = 'uploads' | 'freelance' | 'deliverables' | 'partners' | 'team' | 'payments' | 'settings' | 'scanner';
+type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'settings' | 'scanner';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
@@ -107,9 +107,6 @@ export function OwnerDashboard(): React.JSX.Element {
         <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
           <Briefcase size={16} /> Freelance Department
         </button>
-        <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => go('deliverables')}>
-          <Film size={16} /> Deliverables
-        </button>
         <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
           <Upload size={16} /> Upload Queue
           {active + attention > 0 && <span className="count">{active + attention}</span>}
@@ -143,10 +140,15 @@ export function OwnerDashboard(): React.JSX.Element {
           ) : studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
             <FreelanceEditorView />
           ) : (
-            <FreelanceDepartmentView />
+            <FreelanceDepartmentView
+              deliverables={
+                <WorkScreen kind="deliverables" transfers={transfers} drive={drive}
+                  onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+              }
+            />
           )
-        ) : view === 'scanner' || view === 'deliverables' ? (
-          <WorkScreen kind={view === 'scanner' ? 'freelance' : view} transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+        ) : view === 'scanner' ? (
+          <WorkScreen kind="freelance" transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
         ) : view === 'team' ? (
           <PostProductionTeamScreen />
         ) : view === 'partners' ? (
