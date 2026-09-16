@@ -280,6 +280,52 @@ export async function setupIpcHandlers(): Promise<() => void> {
     }).finally(() => { scans.delete(id); changed(); });
     return true;
   });
+  handle('transfers:skipUnreadable', (id: string) => {
+    const job = owned(id);
+    if (!job.scan || !job.scan.unreadableFiles || job.scan.unreadableFiles.length === 0) {
+      return job;
+    }
+    const unreadablePaths = job.scan.unreadableFiles.map(f => f.path);
+    const filesToRemove = store.getFilesByPaths(id, unreadablePaths);
+    const totalRemovedBytes = filesToRemove.reduce((sum, f) => sum + (f.size || 0), 0);
+    const removedCount = filesToRemove.length || unreadablePaths.length;
+
+    let removedVideos = 0;
+    let removedPhotos = 0;
+    let removedBillablePhotos = 0;
+
+    for (const f of filesToRemove) {
+      if (f.kind === 'video') removedVideos++;
+      if (f.kind === 'photo') {
+        removedPhotos++;
+        if (f.billingIncluded) removedBillablePhotos++;
+      }
+    }
+
+    if (['uploading', 'verifying'].includes(job.status)) {
+      engine.pause(id);
+    }
+
+    store.removeFiles(id, unreadablePaths);
+
+    const updatedScan = {
+      ...job.scan,
+      fileCount: Math.max(0, (job.scan.fileCount || 0) - removedCount),
+      totalBytes: Math.max(0, (job.scan.totalBytes || 0) - totalRemovedBytes),
+      totalVideos: Math.max(0, (job.scan.totalVideos || 0) - removedVideos),
+      totalPhotos: Math.max(0, (job.scan.totalPhotos || 0) - removedPhotos),
+      billablePhotos: Math.max(0, (job.scan.billablePhotos || 0) - removedBillablePhotos),
+      unknownVideoCount: 0,
+      unreadableFiles: []
+    };
+
+    const updatedJob = store.patch(id, {
+      scan: updatedScan,
+      error: undefined
+    });
+    changed();
+    return updatedJob;
+  });
   handle('transfers:share', async (id: string, mode: 'restricted' | 'anyone', email: string) => {
     const job = owned(id);
     if (job.status !== 'completed' || !job.link) throw new Error('Finish verification before sharing.');

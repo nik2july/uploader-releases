@@ -85,6 +85,30 @@ export class TransferStore {
     return this.db.prepare("SELECT path,json_extract(data,'$.error') error FROM files WHERE job=? AND json_extract(data,'$.error') IS NOT NULL LIMIT 200").all(job)
       .map(row => ({ path: String(row.path), error: String(row.error) }));
   }
+  getFilesByPaths(job: string, paths: string[]): ManifestFile[] {
+    if (!paths.length) return [];
+    const stmt = this.db.prepare('SELECT * FROM files WHERE job=? AND path=?');
+    const results: ManifestFile[] = [];
+    for (const p of paths) {
+      const row = stmt.get(job, p);
+      if (row) results.push(this.file(row as Record<string, unknown>));
+    }
+    return results;
+  }
+  removeFiles(job: string, paths: string[]): void {
+    if (!paths.length) return;
+    this.db.exec('BEGIN');
+    try {
+      const stmt = this.db.prepare('DELETE FROM files WHERE job=? AND path=?');
+      for (const p of paths) {
+        stmt.run(job, p);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
   addFolder(job: string, path: string): void {
     this.db.prepare('INSERT OR IGNORE INTO folders(job,path) VALUES(?,?)').run(job, path);
   }

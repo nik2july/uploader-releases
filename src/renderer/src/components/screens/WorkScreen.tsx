@@ -79,6 +79,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
   onScanStarted: (id: string | null) => void; onSettings: () => void; onOpen: (id: string) => void;
 }): React.JSX.Element {
   const studio = useApp();
+  const destName = studio.studioSettings?.uploader?.destination === 'b2' ? 'Backblaze B2' : 'Google Drive';
   const [query, setQuery] = useState('');
   const [partnerFilter, setPartnerFilter] = useState('all');
   const [editorFilter, setEditorFilter] = useState('all');
@@ -487,7 +488,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                             rawDurationMinutes: row.rawDurationMinutes, rawPhotoCount: row.rawPhotoCount,
                           }, services);
                         }, 'Linked Post Production project created.')}>Send to Post Production</button>
-                    ) : <div className="muted">Upload raw data to Backblaze B2 or log hard drive handover before sending to Post Production.</div>}
+                    ) : <div className="muted">Upload raw data to {destName} or log hard drive handover before sending to Post Production.</div>}
                   </div>
                 )}
 
@@ -500,7 +501,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                         {formatCount(transfer.scan?.fileCount || 0)} files · {formatBytes(transfer.scan?.totalBytes || 0)}
                       </div>
                       <div className="sub" style={{ fontSize: 11.5, color: '#2f6b34', marginTop: 2 }}>
-                        ✓ Uploaded to Backblaze B2
+                        ✓ Uploaded to {destName}
                       </div>
                       <div className="link-row" style={{ marginTop: 6 }}>
                         {row.editorPhone && (
@@ -508,7 +509,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                             onClick={() => void run(`${row.key}:send`, async () => {
                               if (transfer.link) await saveRawDataLink(row.target, transfer.link);
                               await window.api.openExternal(whatsappUrl(
-                                `Hi ${row.editorName || ''}, raw footage for "${row.title}" is uploaded to Backblaze B2 and ready for direct download in the Desktop App.`,
+                                `Hi ${row.editorName || ''}, raw footage for "${row.title}" is uploaded to ${destName} and ready for direct download in the Desktop App.`,
                                 row.editorPhone
                               ));
                               await window.api.markMessagePrepared(transfer.id);
@@ -555,7 +556,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                         <button disabled={busy === row.key} onClick={() => void run(row.key, async () => {
                           onScanStarted(await window.api.scan(options, row.target));
                         })}>
-                          <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload to Backblaze B2
+                          <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload to {destName}
                         </button>
                       </div>
                     </>
@@ -575,7 +576,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                           <button className="primary" disabled={busy === `${row.key}:send`}
                             onClick={() => void run(`${row.key}:send`, async () => {
                               await window.api.openExternal(whatsappUrl(
-                                `Hi ${row.editorName || ''}, raw footage for "${row.title}" is uploaded to Backblaze B2 and ready for direct download in the Desktop App.`,
+                                `Hi ${row.editorName || ''}, raw footage for "${row.title}" is uploaded to ${destName} and ready for direct download in the Desktop App.`,
                                 row.editorPhone
                               ));
                               if (kind === 'freelance') await advanceStage(row.jobId, 'sent_to_editor', 'Raw data ready for editor');
@@ -604,12 +605,12 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                         <button className="primary" disabled={busy === row.key} onClick={() => void run(row.key, async () => {
                           onScanStarted(await window.api.scan(options, row.target));
                         })}>
-                          <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload folder (Backblaze B2)
+                          <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload folder ({destName})
                         </button>
                         <button disabled={busy === `${row.key}:files`} onClick={() => void run(`${row.key}:files`, async () => {
                           onScanStarted(await window.api.scanFiles(options, row.target));
                         })}>
-                          <FilePlus2 size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload files (Backblaze B2)
+                          <FilePlus2 size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload files ({destName})
                         </button>
                         <button onClick={() => setManualRawFor(row)}>
                           <HardDrive size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Enter hard drive / link details

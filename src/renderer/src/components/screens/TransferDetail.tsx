@@ -50,18 +50,70 @@ export function TransferDetail({ job, onBack, refresh }: {
 
   // ------------------------------------------------------------- measurement
   const defaults = studio.studioSettings?.uploader;
+
+  const parsedTitleMinutes = useMemo(() => {
+    const textToSearch = [
+      target?.title,
+      deliverable?.title,
+      deliverable?.category,
+      freelanceJob?.title,
+      target?.serviceType
+    ].filter(Boolean).join(' ');
+    const match = textToSearch.match(/(\d+)\s*(?:mins?|minutes?|m\b)/i);
+    return match ? parseInt(match[1], 10) : undefined;
+  }, [target, deliverable, freelanceJob]);
+
+  const targetDurationMinutes = useMemo(() => {
+    if (deliverable?.billableQuantity && deliverable.billableQuantity > 0) {
+      return deliverable.billableQuantity;
+    }
+    if (freelanceJob?.pricing?.durationMinutes && freelanceJob.pricing.durationMinutes > 0) {
+      return freelanceJob.pricing.durationMinutes;
+    }
+    if (freelanceJob?.quotedPricing?.durationMinutes && freelanceJob.quotedPricing.durationMinutes > 0) {
+      return freelanceJob.quotedPricing.durationMinutes;
+    }
+    if (parsedTitleMinutes) {
+      return parsedTitleMinutes;
+    }
+    const isTrailer = (target?.serviceType || deliverable?.title || deliverable?.category || target?.title || '').toLowerCase().includes('trailer');
+    if (isTrailer) return 5;
+    return undefined;
+  }, [deliverable, freelanceJob, parsedTitleMinutes, target]);
+
+  const [driveStatus, setDriveStatus] = useState<{ email?: string; connected?: boolean } | null>(null);
+  const [b2Status, setB2Status] = useState<{ bucketName?: string; connected?: boolean } | null>(null);
+  useEffect(() => {
+    void window.api.driveStatus().then(setDriveStatus).catch(() => {});
+    void window.api.b2Status().then(setB2Status).catch(() => {});
+  }, []);
+
+  const configuredDest = studio.studioSettings?.uploader?.destination || 'drive';
+  const isB2 = job.driveAccount ? job.driveAccount.startsWith('B2:') : (job.link?.startsWith('b2://') || configuredDest === 'b2');
+  const cloudDestinationName = isB2 ? 'Backblaze B2' : 'Google Drive';
+
+  const cloudAccountLabel = isB2
+    ? (job.driveAccount?.replace(/^B2:/, '') || b2Status?.bucketName || 'B2')
+    : (job.driveAccount || driveStatus?.email || 'baawaray.raw@gmail.com');
+
   // null means "not typed in yet", so the rate card can still fill it once
   // Firestore answers — and clearing the box stays cleared.
   const [typedRate, setTypedRate] = useState<string | null>(null);
   const [keepPercent, setKeepPercent] = useState(defaults?.keepPercentDefault ?? 20);
   const [photosPerSheet, setPhotosPerSheet] = useState(defaults?.photosPerSheet ?? 5);
-  const [outputMinutes, setOutputMinutes] = useState(0);
+  const [outputMinutes, setOutputMinutes] = useState(targetDurationMinutes ?? 0);
   const [outputSeconds, setOutputSeconds] = useState(0);
   const [override, setOverride] = useState('');
   const [problems, setProblems] = useState<{ path: string; error: string }[]>([]);
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (targetDurationMinutes && outputMinutes === 0) {
+      setOutputMinutes(targetDurationMinutes);
+    }
+  }, [targetDurationMinutes]);
 
   // The rate card is what this partner is normally charged; a job that already
   // carries a rate keeps it, so re-scanning never quietly reprices past work.
@@ -165,6 +217,10 @@ export function TransferDetail({ job, onBack, refresh }: {
                 <div className="stat"><div className="label">Raw video</div><div className="value">{formatDuration(scan.totalDurationSeconds)}</div>
                   <div className="foot">{formatCount(scan.totalVideos)} clips, all cameras added together</div></div>
               )}
+              {targetDurationMinutes !== undefined && (
+                <div className="stat"><div className="label">Final cut duration</div><div className="value">{targetDurationMinutes} mins</div>
+                  <div className="foot">Target length for finished edit</div></div>
+              )}
               {isShortForm && (
                 <div className="stat"><div className="label">Short form verification</div><div className="value">{scan.missingClipCount === 0 ? 'All clips intact' : `${scan.missingClipCount} missing`}</div>
                   <div className="foot">{formatCount(scan.fileCount)} files indexed · sequence gaps scanned</div></div>
@@ -181,13 +237,29 @@ export function TransferDetail({ job, onBack, refresh }: {
 
             {(scan.unreadableFiles?.length || 0) > 0 && (
               <div className="warning" style={{ marginTop: 14 }}>
-                <b style={{ display: 'block', marginBottom: 4 }}>
-                  {formatCount(scan.unreadableFiles?.length || 0)} files are here but could not be read.
-                </b>
-                <p style={{ margin: '0 0 8px' }}>
-                  An empty file, or a clip with no duration in its header. Usually a copy that stopped
-                  part way. They will still upload — but they will upload broken.
-                </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
+                  <div>
+                    <b style={{ display: 'block', marginBottom: 4 }}>
+                      {formatCount(scan.unreadableFiles?.length || 0)} files are here but could not be read.
+                    </b>
+                    <p style={{ margin: '0 0 8px' }}>
+                      An empty file, or a clip with no duration in its header. Usually a copy that stopped
+                      part way. They will still upload — but they will upload broken.
+                    </p>
+                  </div>
+                  {['ready', 'paused', 'needs_attention'].includes(job.status) && (
+                    <button
+                      className="text-button"
+                      style={{ padding: '6px 14px', border: '1px solid var(--border)', borderRadius: 6, fontWeight: 600, fontSize: 13, background: 'var(--panel)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      disabled={busy === 'skip'}
+                      onClick={() => void run('skip', async () => {
+                        await window.api.skipUnreadableFiles(job.id);
+                      }, 'Corrupted and 0-byte files excluded from upload queue.')}
+                    >
+                      {busy === 'skip' ? 'Skipping...' : 'Skip corrupted files'}
+                    </button>
+                  )}
+                </div>
                 <ul className="file-problems" style={{ maxHeight: 180 }}>
                   {(scan.unreadableFiles || []).slice(0, 60).map(file => (
                     <li key={file.path}><span className="mono">{file.path}</span>{file.reason}</li>
@@ -256,6 +328,12 @@ export function TransferDetail({ job, onBack, refresh }: {
                   : 'This is part of an agreed package. Measuring the folder records the workload; it does not reprice what was quoted.'}
               </p>
               <table className="ledger"><tbody>
+                {targetDurationMinutes !== undefined && (
+                  <tr><td>Target final duration</td><td>{targetDurationMinutes} mins</td></tr>
+                )}
+                {scan.totalDurationSeconds > 0 && (
+                  <tr><td>Raw footage scanned</td><td>{formatDuration(scan.totalDurationSeconds)}</td></tr>
+                )}
                 <tr><td>Agreed price</td><td>{currency} {agreedCharge.toLocaleString('en-IN')}</td></tr>
               </tbody></table>
             </>
@@ -345,7 +423,7 @@ export function TransferDetail({ job, onBack, refresh }: {
       <section className="panel">
         <span className="eyebrow">TRANSFER</span>
         <h2 style={{ fontSize: 20 }}>
-          {job.status === 'completed' ? 'Verified and ready to share' : 'Upload to Cloud Storage'}
+          {job.status === 'completed' ? 'Verified and ready to share' : `Upload to ${cloudDestinationName}`}
         </h2>
 
         {job.status !== 'scanning' && (
@@ -353,7 +431,7 @@ export function TransferDetail({ job, onBack, refresh }: {
             <div className="bar"><span style={{ width: `${(progressFraction(job) * 100).toFixed(1)}%` }} /></div>
             <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
               {formatBytes(job.uploadedBytes)} of {formatBytes(scan?.totalBytes || 0)} · {remainingSummary(job)}
-              {job.driveAccount ? ` · ${job.driveAccount}` : ''}
+              {` · ${cloudDestinationName} (${cloudAccountLabel})`}
             </p>
             {moving && bytesPerSecond > 0 && (
               <p className="mono" style={{ fontSize: 12.5, color: 'var(--burgundy)', margin: '4px 0 0' }}>
@@ -367,7 +445,7 @@ export function TransferDetail({ job, onBack, refresh }: {
         {job.status === 'completed' ? <ShareActions job={job} refresh={refresh} /> : (
           <>
             <p className="muted" style={{ fontSize: 13 }}>
-              Every file is verified in Backblaze B2 by size and checksum after it lands. The folder is only
+              Every file is verified in {cloudDestinationName} by size and checksum after it lands. The folder is only
               called ready when all of them pass, and re-running it sends nothing that is already verified.
             </p>
             <div className="actions">
@@ -461,8 +539,21 @@ export function TransferDetail({ job, onBack, refresh }: {
               damage in transit, not damage that was already on the card.
             </p>
             <div className="actions">
-              <button disabled={busy === 'start'} onClick={() => setConfirmingProblems(false)}>Go back and check</button>
-              <button className="primary" disabled={busy === 'start'}
+              <button disabled={busy === 'start' || busy === 'skip'} onClick={() => setConfirmingProblems(false)}>Go back and check</button>
+              {(scan!.unreadableFiles?.length || 0) > 0 && (
+                <button
+                  className="primary"
+                  style={{ background: 'var(--burgundy)', borderColor: 'var(--burgundy)', color: '#fff' }}
+                  disabled={busy === 'start' || busy === 'skip'}
+                  onClick={() => void run('skip', async () => {
+                    await window.api.skipUnreadableFiles(job.id);
+                    setConfirmingProblems(false);
+                  }, 'Corrupted files removed. You can now start the upload.')}
+                >
+                  {busy === 'skip' ? 'Skipping...' : 'Skip broken files'}
+                </button>
+              )}
+              <button disabled={busy === 'start' || busy === 'skip'}
                 onClick={() => void run('start', async () => {
                   await window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined));
                   setConfirmingProblems(false);

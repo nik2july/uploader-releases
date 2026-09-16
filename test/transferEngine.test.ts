@@ -580,4 +580,51 @@ describe('removing a transfer', () => {
     // The link the caller kept is the studio's only handle on those bytes.
     assert.equal(before.link, 'https://drive.google.com/drive/folders/abc');
   });
+
+  test('skipping unreadable files removes them from the manifest and allows reconciliation', async () => {
+    const { store } = harness();
+    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
+
+    // Add a corrupted 0-byte file to the manifest
+    store.addFile(job.id, { relativePath: 'DAY01/corrupt.mp4', size: 0, mtimeMs: 0, kind: 'video', billingIncluded: true, error: 'Empty file' });
+    store.patch(job.id, {
+      scan: {
+        ...job.scan!,
+        fileCount: Object.keys(FILES).length + 1,
+        totalBytes: TOTAL_BYTES,
+        unreadableFiles: [{ path: 'DAY01/corrupt.mp4', reason: 'The file is empty — 0 bytes.' }]
+      }
+    });
+
+    const unreadable = store.getFilesByPaths(job.id, ['DAY01/corrupt.mp4']);
+    assert.equal(unreadable.length, 1);
+    assert.equal(unreadable[0].relativePath, 'DAY01/corrupt.mp4');
+
+    // Remove the file
+    store.removeFiles(job.id, ['DAY01/corrupt.mp4']);
+    assert.equal(store.getFilesByPaths(job.id, ['DAY01/corrupt.mp4']).length, 0);
+
+    // Patch scan to reflect skipped files
+    store.patch(job.id, {
+      scan: {
+        ...job.scan!,
+        fileCount: Object.keys(FILES).length,
+        totalBytes: TOTAL_BYTES,
+        unreadableFiles: []
+      }
+    });
+
+    // Verify all remaining files
+    let file;
+    while ((file = store.next(job.id))) {
+      file.state = 'verified';
+      file.offset = file.size;
+      store.saveFile(file);
+    }
+
+    const stats = store.stats(job.id);
+    const updatedJob = store.get(job.id);
+    assert.equal(stats.completedFiles, updatedJob.scan?.fileCount);
+    assert.equal(stats.uploadedBytes, updatedJob.scan?.totalBytes);
+  });
 });

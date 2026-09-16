@@ -105,6 +105,8 @@ export interface DesktopAPI {
   relocate(id: string): Promise<void>;
   /** Re-scan a transfer's folder and queue anything that is not already verified. */
   rescan(id: string): Promise<boolean>;
+  /** Skip and remove corrupted or 0-byte unreadable files from the transfer. */
+  skipUnreadableFiles(id: string): Promise<Transfer>;
   share(id: string, mode: 'restricted' | 'anyone', email: string): Promise<string>;
   markSynced(id: string): Promise<void>;
   markMessagePrepared(id: string): Promise<void>;
