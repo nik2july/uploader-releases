@@ -59,10 +59,13 @@ export interface ClientDeliverable {
   costPrice?: number;
   sellingPrice?: number;
   /**
-   * What was sold, in the unit this deliverable's service bills by — minutes of
-   * output, sheets, photos. Agreed with the couple on the quotation and carried
-   * here at booking; Post Production prices the editing from it, and what it
-   * charges lands back in costPrice above.
+   * How much of this there is, in the unit its service bills by — minutes of
+   * output, sheets, photos. Agreed when the quote is built and carried here at
+   * booking; Post Production prices its own work from it, and what it quotes
+   * lands in costPrice above as what BAAWARAY FILMS was charged.
+   *
+   * Long Form is the exception and needs none: it is priced on the raw data
+   * handed over, which is measured when the footage arrives.
    */
   billableQuantity?: number;
   paidToEditor?: boolean;

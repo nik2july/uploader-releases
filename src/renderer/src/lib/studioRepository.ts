@@ -112,11 +112,14 @@ export async function sendBaawarayDeliverableToPostProduction(
           ...item,
           postProductionJobIds: Array.from(new Set([...(item.postProductionJobIds || []), ...ids])),
           /*
-           * What Post Production charged is what this deliverable cost to produce,
-           * so sellingPrice less costPrice is the studio's real margin on it.
-           * Only written when something was actually priced: a zero would read as
-           * pure profit, which is worse than leaving the figure alone until the
-           * job is billed and the charge is known.
+           * What Post Production quoted for this work, recorded as what BAAWARAY
+           * FILMS was charged for it.
+           *
+           * This is the only figure that crosses between the two: what the couple
+           * pays BAAWARAY FILMS is its own business and Post Production never sees
+           * it. Only written when something was actually priced — an unpriced job
+           * leaves the figure alone rather than writing a zero that would read as
+           * work done for nothing.
            */
           ...(charged > 0 ? { costPrice: (Number(item.costPrice) || 0) + charged } : {}),
         }
