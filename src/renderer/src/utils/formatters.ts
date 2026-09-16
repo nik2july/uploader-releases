@@ -565,8 +565,8 @@ export function resolveMemberEventFee(
  */
 export function calculateMemberEventFee(
   member: TeamMember,
-  event?: ProjectEvent,
-  configuredRoles?: CrewRoleConfig[],
+  _event?: ProjectEvent,
+  _configuredRoles?: CrewRoleConfig[],
   catalogItemId?: string,
   roleId?: string
 ): number {
@@ -661,7 +661,7 @@ export function calculateMemberEventFee(
  * Checks if a client's shoot events have all concluded (or client has no events = post-production only).
  */
 export function isClientShootDone(
-  client: Client,
+  _client: Client,
   clientEvents: ProjectEvent[],
   now: number = Date.now()
 ): boolean {
@@ -686,8 +686,8 @@ export function isClientDeliverablesCompleted(client: Client): boolean {
  */
 export function isClientPostProductionEligible(
   client: Client,
-  clientEvents?: ProjectEvent[],
-  now: number = Date.now()
+  _clientEvents?: ProjectEvent[],
+  _now: number = Date.now()
 ): boolean {
   const s = (client.status || '').toLowerCase();
   if (s === 'new_enquiry' || s === 'new lead' || s === 'lost') return false;
