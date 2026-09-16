@@ -58,6 +58,13 @@ export interface ClientDeliverable {
   deliveredDate?: string;
   costPrice?: number;
   sellingPrice?: number;
+  /**
+   * What was sold, in the unit this deliverable's service bills by — minutes of
+   * output, sheets, photos. Agreed with the couple on the quotation and carried
+   * here at booking; Post Production prices the editing from it, and what it
+   * charges lands back in costPrice above.
+   */
+  billableQuantity?: number;
   paidToEditor?: boolean;
   paidAt?: string;
   link?: string;

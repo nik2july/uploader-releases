@@ -1,5 +1,6 @@
 import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { shouldFileIntoPostProduction } from '../utils/postProduction';
+import { chargeForDeliverable, pricingForDeliverable } from '../utils/deliverablePricing';
 import { db } from './firebase';
 import { splitFreelanceRecord } from './freelanceSchema';
 import { derivePaymentStatus } from '../utils/freelance';
@@ -76,13 +77,28 @@ export async function sendBaawarayDeliverableToPostProduction(
   }
   if (services.length === 0) throw new Error('Choose at least one Post Production service.');
   const partnerId = await ensureBaawarayFilmsStudio();
+  // What BAAWARAY FILMS is charged per unit. Read once: a job records the rate it
+  // was billed at, so editing the card later never rewrites work already sent.
+  const rateCard = ((await getDoc(doc(db, 'freelance_clients', partnerId))).data()?.rateCard || {}) as Record<string, number>;
+  const measurements = {
+    billableQuantity: deliverable.billableQuantity,
+    rawDurationHours: deliverable.rawDurationHours,
+    rawDurationMinutes: deliverable.rawDurationMinutes,
+    rawPhotoCount: deliverable.rawPhotoCount,
+  };
+
   const ids: string[] = [];
+  let charged = 0;
   for (const serviceType of services) {
+    const pricing = pricingForDeliverable(serviceType, rateCard[serviceType], measurements);
+    const clientCharge = chargeForDeliverable(serviceType, rateCard[serviceType], measurements);
+    charged += clientCharge;
     ids.push(await createFreelanceJob({
       title: deliverable.title, serviceType, freelanceClientId: partnerId,
       clientName: 'BAAWARAY FILMS', clientPhone: '', rawDataLink: deliverable.rawDataLink,
       rawDataSource: deliverable.rawDataSource, rawDurationHours: deliverable.rawDurationHours,
       rawDurationMinutes: deliverable.rawDurationMinutes, rawPhotoCount: deliverable.rawPhotoCount,
+      clientCharge, pricing,
       sourceCompany: 'baawaray-films', sourceClientId: String(clientId), sourceDeliverableId: deliverable.id,
       editorName: '', editorPhone: '', dueDate: deliverable.dueDate || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
     }));
@@ -92,7 +108,19 @@ export async function sendBaawarayDeliverableToPostProduction(
     const snap = await tx.get(ref); if (!snap.exists()) throw new Error('The source client no longer exists.');
     const items = snap.data().deliverables || [];
     tx.update(ref, { deliverables: items.map((item: ClientDeliverable) => item.id === deliverable.id
-      ? { ...item, postProductionJobIds: Array.from(new Set([...(item.postProductionJobIds || []), ...ids])) } : item) });
+      ? {
+          ...item,
+          postProductionJobIds: Array.from(new Set([...(item.postProductionJobIds || []), ...ids])),
+          /*
+           * What Post Production charged is what this deliverable cost to produce,
+           * so sellingPrice less costPrice is the studio's real margin on it.
+           * Only written when something was actually priced: a zero would read as
+           * pure profit, which is worse than leaving the figure alone until the
+           * job is billed and the charge is known.
+           */
+          ...(charged > 0 ? { costPrice: (Number(item.costPrice) || 0) + charged } : {}),
+        }
+      : item) });
   });
   return ids;
 }
