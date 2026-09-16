@@ -83,6 +83,14 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   // recorded on their team record as how they are paid, and asking for it again here
   // only created a second answer that could contradict the first.
   const [editorError, setEditorError] = useState('');
+  /**
+   * Why Save did nothing, said next to Save.
+   *
+   * The button sits in the footer, outside the scrolling form, so a complaint
+   * rendered beside the field it concerns can be scrolled out of sight while the
+   * button stays put — which looks exactly like a button that does not work.
+   */
+  const [formError, setFormError] = useState('');
   const [useManualEditor, setUseManualEditor] = useState(
     Boolean(initialJob && !initialJob.editorMemberId && initialJob.editorName)
   );
@@ -374,17 +382,28 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim()) {
+      setFormError('Give the project a title.');
+      return;
+    }
     // A studio answers for the name; only a one-off client has to type one.
-    if (!selectedStudio && !clientName.trim()) return;
-    if (!serviceType) return;
+    if (!selectedStudio && !clientName.trim()) {
+      setFormError('Choose a registered studio, or type who this work is billed to.');
+      return;
+    }
+    if (!serviceType) {
+      setFormError('Choose a service category — it sets how the job is priced.');
+      return;
+    }
     // Without an editor there is nobody the work is queued against, so neither the
     // delivery date nor the payout it eventually costs has anything to hang on.
     if (!editorAssigned) {
       setEditorError('Choose who is doing this work.');
+      setFormError('Choose who is doing this work, under Editor Execution.');
       return;
     }
     setEditorError('');
+    setFormError('');
 
     const pricing: FreelancePricing | undefined = pricingDraft
       ? { ...pricingDraft, billableUnits }
@@ -1098,6 +1117,11 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
           >
             Cancel
           </button>
+          {formError && (
+            <p role="alert" className="flex-1 px-4 text-[11px] font-semibold text-rose-700">
+              {formError}
+            </p>
+          )}
           <button
             type="button"
             onClick={handleSubmit}
