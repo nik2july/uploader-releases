@@ -160,16 +160,16 @@ export async function sendBaawarayDeliverableToPostProduction(
 export async function reuseDeliverableRawData(
   clientId: string,
   targetDeliverableId: string,
-  sourceDeliverableId: string
+  sourceDeliverableId: string,
+  targetServiceType?: string
 ): Promise<string[]> {
   if (!clientId || !targetDeliverableId || !sourceDeliverableId) {
     throw new Error('Client ID and deliverable IDs are required.');
   }
   const ref = doc(db, 'clients', clientId);
-  let fileIntoPostProduction = false;
-  let copiedData: any = null;
   let targetDeliverable: ClientDeliverable | null = null;
-  const configuredServices = await studioPostProductionServices();
+  let serviceToCreate = '';
+  let existingJobIds: string[] = [];
 
   await runTransaction(db, async tx => {
     const snap = await tx.get(ref);
@@ -182,9 +182,13 @@ export async function reuseDeliverableRawData(
 
     const rootDeliverableId = source.reusedFromDeliverableId || source.id;
     const rootDeliverableTitle = source.reusedFromTitle || source.title;
+    const rawDataLink =
+      source.rawDataLink ||
+      Object.values(source.desktopTransfers || {}).find((t: any) => t.link)?.link ||
+      '';
 
-    copiedData = {
-      rawDataLink: source.rawDataLink || '',
+    const copiedData = {
+      rawDataLink,
       rawDataSource: source.rawDataSource || 'upload',
       hardDriveNotes: source.hardDriveNotes || '',
       rawDurationHours: source.rawDurationHours || 0,
@@ -200,26 +204,37 @@ export async function reuseDeliverableRawData(
       ...copiedData,
     };
 
-    const targetWork: WorkTarget = {
-      kind: 'deliverable',
-      id: target.id,
-      clientId: String(clientId),
-      title: target.title,
-      clientName: snap.data().couple || snap.data().name || target.title,
-      serviceType: target.category || '',
-      purpose: 'raw',
-      dueDate: target.dueDate,
-    };
+    serviceToCreate = (targetServiceType || target.category || target.title || '').trim();
 
-    fileIntoPostProduction = shouldFileIntoPostProduction(targetWork, targetDeliverable || undefined, configuredServices);
+    if ((target.postProductionJobIds || []).length > 0) {
+      existingJobIds = target.postProductionJobIds!;
+      tx.update(ref, {
+        deliverables: items.map(d => (d.id === targetDeliverableId ? targetDeliverable : d)),
+      });
+      for (const jId of existingJobIds) {
+        const jobRef = doc(db, 'freelance_jobs', jId);
+        tx.update(jobRef, {
+          rawDataLink,
+          rawDataSource: source.rawDataSource || 'upload',
+          rawDurationHours: source.rawDurationHours || 0,
+          rawDurationMinutes: source.rawDurationMinutes || 0,
+          rawPhotoCount: source.rawPhotoCount || 0,
+        });
+      }
+      return;
+    }
 
     tx.update(ref, {
       deliverables: items.map(d => (d.id === targetDeliverableId ? targetDeliverable : d)),
     });
   });
 
-  if (fileIntoPostProduction && targetDeliverable) {
-    const service = (targetDeliverable as ClientDeliverable).category || (targetDeliverable as ClientDeliverable).title;
+  if (existingJobIds.length > 0) {
+    return existingJobIds;
+  }
+
+  if (targetDeliverable) {
+    const service = serviceToCreate || (targetDeliverable as ClientDeliverable).title;
     return await sendBaawarayDeliverableToPostProduction(
       clientId,
       targetDeliverable,

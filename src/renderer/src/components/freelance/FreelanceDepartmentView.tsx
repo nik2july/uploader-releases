@@ -98,6 +98,7 @@ export const FreelanceDepartmentView: React.FC<{
   const [selectedStageTab, setSelectedStageTab] = useState<string>('all');
   const [paymentFilter, setPaymentFilter] = useState<'all' | 'client_due' | 'editor_due' | 'overdue'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'kanban'>('grid');
+  const [attachingId, setAttachingId] = useState<string | null>(null);
   /**
    * Which of the department's three faces is showing.
    *
@@ -609,17 +610,29 @@ export const FreelanceDepartmentView: React.FC<{
                           <button
                             key={reuse.id}
                             type="button"
+                            disabled={attachingId === pending.target.id}
                             onClick={async () => {
                               try {
-                                await reuseDeliverableRawData(pending.target.clientId!, pending.target.id, reuse.id);
+                                setAttachingId(pending.target.id);
+                                await reuseDeliverableRawData(
+                                  pending.target.clientId!,
+                                  pending.target.id,
+                                  reuse.id,
+                                  pending.target.serviceType
+                                );
                               } catch (err: any) {
+                                console.error('Failed to reuse raw data:', err);
                                 alert(err.message || 'Failed to reuse raw data');
+                              } finally {
+                                setAttachingId(null);
                               }
                             }}
-                            className="w-full text-left px-2 py-1.5 bg-white hover:bg-emerald-50 border border-[#d4c1a3]/60 hover:border-emerald-300 rounded-lg text-[11px] text-[#111417] font-medium transition-colors flex items-center justify-between cursor-pointer"
+                            className="w-full text-left px-2 py-1.5 bg-white hover:bg-emerald-50 border border-[#d4c1a3]/60 hover:border-emerald-300 rounded-lg text-[11px] text-[#111417] font-medium transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60"
                           >
                             <span className="truncate">Use data from {reuse.reusedFromTitle || reuse.title}</span>
-                            <span className="shrink-0 text-[10px] text-emerald-700 font-bold ml-1">Attach ⚡</span>
+                            <span className="shrink-0 text-[10px] text-emerald-700 font-bold ml-1">
+                              {attachingId === pending.target.id ? 'Attaching... ⚡' : 'Attach ⚡'}
+                            </span>
                           </button>
                         ))}
                       </div>
@@ -885,22 +898,28 @@ export const FreelanceDepartmentView: React.FC<{
                             {pendingRow.reusableDeliverables && pendingRow.reusableDeliverables.length > 0 && (
                               <button
                                 type="button"
+                                disabled={attachingId === pendingRow.target.id}
                                 onClick={async () => {
                                   try {
+                                    setAttachingId(pendingRow.target.id);
                                     await reuseDeliverableRawData(
                                       pendingRow.target.clientId!,
                                       pendingRow.target.id,
-                                      pendingRow.reusableDeliverables![0].id
+                                      pendingRow.reusableDeliverables![0].id,
+                                      pendingRow.target.serviceType
                                     );
                                   } catch (err: any) {
+                                    console.error('Failed to reuse data:', err);
                                     alert(err.message || 'Failed to reuse data');
+                                  } finally {
+                                    setAttachingId(null);
                                   }
                                 }}
-                                className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer"
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer disabled:opacity-60"
                                 title={`Use data from ${pendingRow.reusableDeliverables[0].reusedFromTitle || pendingRow.reusableDeliverables[0].title}`}
                               >
                                 <LinkIcon className="w-3 h-3" />
-                                Reuse client data
+                                {attachingId === pendingRow.target.id ? 'Attaching... ⚡' : 'Reuse client data'}
                               </button>
                             )}
                             <button
