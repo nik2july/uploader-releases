@@ -80,11 +80,11 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
    * back from one would otherwise land on Jobs, several clicks from the roster you were
    * just looking at.
    */
-  const [section, setSection] = useState<'jobs' | 'clients' | 'editors' | 'schedule' | 'radar' | 'deliverables'>(() => {
+  const [section, setSection] = useState<'jobs' | 'clients' | 'editors' | 'schedule' | 'radar'>(() => {
     try {
       const saved = localStorage.getItem('baawaray_freelance_section');
-      if (saved === 'jobs' || saved === 'clients' || saved === 'editors' || saved === 'schedule' || saved === 'radar'
-        || saved === 'deliverables')
+      // A section saved by an older build that no longer exists falls back to jobs.
+      if (saved === 'jobs' || saved === 'clients' || saved === 'editors' || saved === 'schedule' || saved === 'radar')
         return saved;
     } catch {
       /* private browsing, or storage disabled — the default is fine */
@@ -327,8 +327,7 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
       {/* Jobs vs Partner Studios */}
       <div className="flex items-center bg-[#f9f8f6] p-1 rounded-xl border border-[#d4c1a3] w-fit">
         {([
-          { id: 'jobs', label: 'Jobs' },
-          { id: 'deliverables', label: 'Deliverables' },
+          { id: 'jobs', label: 'All Work' },
           { id: 'clients', label: 'Partner Studios' },
           { id: 'editors', label: 'Editor Payouts' },
           { id: 'schedule', label: 'Editor Schedule' },
@@ -347,9 +346,7 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
         ))}
       </div>
 
-      {section === 'deliverables' ? (
-        deliverables ?? null
-      ) : section === 'clients' ? (
+      {section === 'clients' ? (
         <FreelanceClientsPanel />
       ) : section === 'editors' ? (
         <FreelanceEditorsPanel />
@@ -447,6 +444,18 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
           </div>
         </div>
       </div>
+
+      {/*
+        The studio's own work, in the same view as everyone else's.
+
+        It sits between the money summary and the job board rather than being
+        interleaved into it: a deliverable has no charge, editor cost or profit
+        yet, so it would show as four empty columns in the table and has no
+        stage to file under in kanban. Grouped, each kind keeps the actions that
+        make sense for it — footage goes up from here, and the moment it lands
+        the deliverable files itself as a job and joins the board below.
+      */}
+      {deliverables && <div className="pt-2">{deliverables}</div>}
 
       {/* Filter & Search Bar */}
       <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs space-y-3">
