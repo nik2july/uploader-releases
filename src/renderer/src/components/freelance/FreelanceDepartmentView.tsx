@@ -4,6 +4,7 @@ import { BAAWARAY_FILMS_STUDIO_ID } from '../../lib/studioRepository';
 import type { WorkTarget } from '../../../../shared/contracts';
 import type { ClientDeliverable } from '../../types';
 import { isPostProductionService } from '../../utils/postProduction';
+import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import { useApp } from '../../context/AppContext';
 import { FreelanceJob, FreelanceJobStage } from '../../types';
 import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
@@ -70,6 +71,8 @@ export const FreelanceDepartmentView: React.FC<{
     freelanceJobs,
     freelanceJobRequests,
     clients,
+    studioSettings,
+    studioPriceList,
     freelanceClients,
     advanceFreelanceJobStage,
     freelanceJobPayment,
@@ -145,11 +148,18 @@ export const FreelanceDepartmentView: React.FC<{
    * deliverable files itself.
    */
   const pendingDeliverables = useMemo<PendingRow[]>(() => {
+    // A deliverable's service lives on the service it is linked to in Quotation
+    // Settings, not on its category — which is the old vocabulary and often says
+    // only "Photo" or "Video". Resolved the same way every other screen does it.
+    const roles = normaliseServices(
+      studioSettings?.crewRoles || studioPriceList?.crewRoles || [],
+      resolveRoleGroups(studioSettings?.roleGroups)
+    );
     const rows: PendingRow[] = [];
     for (const client of clients || []) {
       for (const item of (client.deliverables || []) as ClientDeliverable[]) {
         if ((item.postProductionJobIds || []).length) continue;
-        const service = item.category || '';
+        const service = roles.find(r => r.id === item.linkedRoleId)?.name || item.category || '';
         if (!isPostProductionService(service)) continue;
         const target: WorkTarget = {
           kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
@@ -178,7 +188,7 @@ export const FreelanceDepartmentView: React.FC<{
       }
     }
     return rows;
-  }, [clients]);
+  }, [clients, studioSettings, studioPriceList]);
 
   const filteredJobs = useMemo(() => {
     // The studio's own pending work sits first: it is the work that cannot start
