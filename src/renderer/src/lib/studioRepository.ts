@@ -1,4 +1,5 @@
 import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { shouldFileIntoPostProduction } from '../utils/postProduction';
 import { db } from './firebase';
 import { splitFreelanceRecord } from './freelanceSchema';
 import { derivePaymentStatus } from '../utils/freelance';
@@ -134,6 +135,8 @@ export async function saveBilling(target: WorkTarget, invoice: InvoiceSnapshot, 
 export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
   if (job.status !== 'completed' || !job.link || !job.target) throw new Error('Only verified transfers can be attached.');
   const target = job.target;
+  /** Set inside the transaction, acted on after it commits. */
+  let fileIntoPostProduction = false;
   const entry = { id: job.id, link: job.link, purpose: target.purpose, createdAt: job.createdAt,
     fileCount: job.scan?.fileCount || 0, bytes: job.scan?.totalBytes || 0, status: 'verified' };
   await runTransaction(db, async tx => {
@@ -145,12 +148,27 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
       tx.update(ref, { desktopTransfers: { ...(record.desktopTransfers || {}), [job.id]: entry }, ...(!record[field] ? { [field]: job.link } : {}) });
     } else {
       const items = record.deliverables || [];
-      if (!items.some((d: ClientDeliverable) => d.id === target.id)) throw new Error('Deliverable no longer exists.');
+      const deliverable = items.find((d: ClientDeliverable) => d.id === target.id);
+      if (!deliverable) throw new Error('Deliverable no longer exists.');
+      // Raw footage arriving is the moment this becomes Post Production's work.
+      // Deciding here, rather than by sweeping the collection later, is what
+      // keeps it to deliverables filed from now on: nothing existing is touched.
+      fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable);
       const field = target.purpose === 'raw' ? 'rawDataLink' : 'link';
       tx.update(ref, { deliverables: items.map((d: any) => d.id === target.id ? { ...d,
         desktopTransfers: { ...(d.desktopTransfers || {}), [job.id]: entry }, ...(!d[field] ? { [field]: job.link } : {}) } : d) });
     }
   });
+
+  if (fileIntoPostProduction) {
+    // Its own step, after the transfer is safely recorded: a studio that has the
+    // footage and no linked job can file it by hand, but a job that exists for
+    // footage nothing recorded would be a job pointing at nothing.
+    await sendBaawarayDeliverableToPostProduction(target.clientId!, {
+      id: target.id, title: target.title, category: target.serviceType,
+      status: 'pending', rawDataLink: job.link, dueDate: target.dueDate,
+    } as ClientDeliverable, [target.serviceType]);
+  }
 }
 
 export async function saveUploaderSettings(settings: { keepPercentDefault: number; photosPerSheet: number; excludedBillingFolders: string[]; countPhotoPairsOnce: boolean; keepAwake: boolean; destination?: 'drive' | 'b2' }): Promise<void> {
@@ -424,10 +442,23 @@ export async function saveManualRawData(target: WorkTarget, input: {
     await updateDoc(doc(db, 'freelance_jobs', target.id), data);
   } else {
     const ref = doc(db, 'clients', target.clientId!);
+    let fileIntoPostProduction = false;
     await runTransaction(db, async tx => {
       const snap = await tx.get(ref); if (!snap.exists()) throw new Error('The client no longer exists.');
-      tx.update(ref, { deliverables: (snap.data().deliverables || []).map((item: ClientDeliverable) => item.id === target.id ? { ...item, ...data } : item) });
+      const items = snap.data().deliverables || [];
+      const deliverable = items.find((item: ClientDeliverable) => item.id === target.id);
+      // A drive handed over is raw data arriving just as much as an upload is,
+      // so it files the same job rather than leaving this one intake manual.
+      fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable);
+      tx.update(ref, { deliverables: items.map((item: ClientDeliverable) => item.id === target.id ? { ...item, ...data } : item) });
     });
+    if (fileIntoPostProduction) {
+      await sendBaawarayDeliverableToPostProduction(target.clientId!, {
+        id: target.id, title: target.title, category: target.serviceType, status: 'pending',
+        rawDataLink: data.rawDataLink, rawDataSource: input.source, dueDate: target.dueDate,
+        rawDurationHours: input.hours, rawDurationMinutes: input.minutes, rawPhotoCount: input.photoCount,
+      } as ClientDeliverable, [target.serviceType]);
+    }
   }
 }
 
