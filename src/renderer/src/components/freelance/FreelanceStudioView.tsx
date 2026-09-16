@@ -1,12 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { FreelanceJob } from '../../types';
-import {
-  formatDate,
-  formatINR,
-  getDueDateStatus,
-  getFreelanceStageMeta,
-} from '../../utils/formatters';
+import { formatDate, formatINR, getDueDateStatus, getFreelanceStageMeta, inrDigits } from '../../utils/formatters';
 import { FREELANCE_SERVICES, unitNoun } from '../../utils/freelancePricing';
 import { freelanceDueDate } from '../../utils/freelance';
 import { buildStudioAccount, buildStatementText } from '../../utils/freelanceAccount';
@@ -754,7 +749,7 @@ export const FreelanceStudioView: React.FC = () => {
                           ? `${job.pricing.billableUnits} ${unitNoun(
                               job.pricing.basis,
                               job.pricing.billableUnits
-                            )} × ₹${job.pricing.rate.toLocaleString('en-IN')}`
+                            )} × ₹${inrDigits(job.pricing?.rate)}`
                           : '—'}
                       </td>
                       <td className="py-3 px-4">

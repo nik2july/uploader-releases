@@ -200,6 +200,18 @@ export function getCategoryMeta(category?: TeamTierCategory | string, tierCatego
   };
 }
 
+/**
+ * Indian-grouped digits with no currency symbol, for markup that writes its own ₹.
+ *
+ * A freelance job with no agreed charge yet leaves the field undefined, and
+ * `undefined.toLocaleString()` does not fail quietly — it takes down the whole
+ * screen it was rendered in. A missing amount is nothing, not a crash.
+ */
+export function inrDigits(amount: number | string | undefined | null): string {
+  const num = typeof amount === 'string' ? parseFloat(amount) : amount;
+  return typeof num === 'number' && Number.isFinite(num) ? num.toLocaleString('en-IN') : '0';
+}
+
 export function formatINR(amount: number | string | undefined | null): string {
   if (amount === undefined || amount === null || amount === '') return '₹ 0';
   const num = typeof amount === 'string' ? parseFloat(amount) : amount;

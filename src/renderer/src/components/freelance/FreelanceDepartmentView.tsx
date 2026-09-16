@@ -5,11 +5,7 @@ import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
 import { pricingFromRequest } from '../../utils/mediaPricing';
-import {
-  getFreelanceStageMeta,
-  getDueDateStatus,
-  addDaysToDate,
-} from '../../utils/formatters';
+import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits } from '../../utils/formatters';
 import {
   Briefcase,
   Plus,
@@ -240,7 +236,7 @@ export const FreelanceDepartmentView: React.FC = () => {
       `Hello ${job.clientName},\n` +
       `The master 4K delivery for *${job.title}* is ready!\n\n` +
       (deliveryLinkOf(job) ? `*Master Link:* ${deliveryLinkOf(job)}\n\n` : '') +
-      (clientBal > 0 ? `*Pending Balance:* ₹${clientBal.toLocaleString('en-IN')}\n\n` : '') +
+      (clientBal > 0 ? `*Pending Balance:* ₹${inrDigits(clientBal)}\n\n` : '') +
       `Thank you for trusting us with your project!`
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
@@ -373,15 +369,15 @@ export const FreelanceDepartmentView: React.FC = () => {
             <ArrowDownLeft className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="text-2xl font-extrabold text-[#111417] mt-1">
-            ₹{totalClientRevenue.toLocaleString('en-IN')}
+            ₹{inrDigits(totalClientRevenue)}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-1">
             <span className="text-emerald-700 font-semibold">
-              Recv: ₹{totalClientReceived.toLocaleString('en-IN')}
+              Recv: ₹{inrDigits(totalClientReceived)}
             </span>
             {totalClientDue > 0 && (
               <span className="text-[#7a2e33] font-bold">
-                Due: ₹{totalClientDue.toLocaleString('en-IN')}
+                Due: ₹{inrDigits(totalClientDue)}
               </span>
             )}
           </div>
@@ -396,7 +392,7 @@ export const FreelanceDepartmentView: React.FC = () => {
             <ArrowUpRight className="w-4 h-4 text-amber-600" />
           </div>
           <div className="text-2xl font-extrabold text-[#111417] mt-1">
-            ₹{totalEditorCost.toLocaleString('en-IN')}
+            ₹{inrDigits(totalEditorCost)}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-1">
             <span className="text-emerald-700 font-semibold">Paid in full</span>
@@ -426,10 +422,10 @@ export const FreelanceDepartmentView: React.FC = () => {
           <div className={`text-2xl font-extrabold mt-1 ${
             totalNetMargin >= 0 ? 'text-emerald-700' : 'text-rose-700'
           }`}>
-            ₹{totalNetMargin.toLocaleString('en-IN')}
+            ₹{inrDigits(totalNetMargin)}
           </div>
           <div className="text-[11px] text-[#6b6660] font-medium mt-1">
-            Net Collected: ₹{(totalClientReceived - totalEditorPaid).toLocaleString('en-IN')}
+            Net Collected: ₹{inrDigits(totalClientReceived - totalEditorPaid)}
           </div>
         </div>
       </div>
@@ -602,14 +598,14 @@ export const FreelanceDepartmentView: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2 text-xs pt-1">
                     <div className="p-2 bg-emerald-50/60 border border-emerald-100 rounded-lg">
                       <div className="text-[10px] uppercase font-bold text-emerald-800">Client Revenue</div>
-                      <div className="font-bold text-[#111417]">₹{job.clientCharge.toLocaleString('en-IN')}</div>
+                      <div className="font-bold text-[#111417]">₹{inrDigits(job.clientCharge)}</div>
                       <div className="text-[10px] text-emerald-700">
-                        {clientBal === 0 ? 'Fully Paid' : `Due: ₹${clientBal.toLocaleString('en-IN')}`}
+                        {clientBal === 0 ? 'Fully Paid' : `Due: ₹${inrDigits(clientBal)}`}
                       </div>
                     </div>
                     <div className="p-2 bg-amber-50/60 border border-amber-100 rounded-lg">
                       <div className="text-[10px] uppercase font-bold text-amber-800">Editor Payout</div>
-                      <div className="font-bold text-[#111417]">₹{editorCost.toLocaleString('en-IN')}</div>
+                      <div className="font-bold text-[#111417]">₹{inrDigits(editorCost)}</div>
                       <div className="text-[10px] text-amber-800">
                         {job.assignedType === 'in_house'
                           ? 'Covered by salary'
@@ -784,13 +780,13 @@ export const FreelanceDepartmentView: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="font-bold">₹{job.clientCharge.toLocaleString('en-IN')}</div>
+                        <div className="font-bold">₹{inrDigits(job.clientCharge)}</div>
                         <div className="text-[10px] text-emerald-700">
-                          {clientBal === 0 ? 'Paid' : `Due: ₹${clientBal.toLocaleString('en-IN')}`}
+                          {clientBal === 0 ? 'Paid' : `Due: ₹${inrDigits(clientBal)}`}
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="font-bold">₹{editorCost.toLocaleString('en-IN')}</div>
+                        <div className="font-bold">₹{inrDigits(editorCost)}</div>
                         <div className="text-[10px] text-amber-800">
                           {job.assignedType === 'in_house'
                             ? 'Salaried'
@@ -870,7 +866,7 @@ export const FreelanceDepartmentView: React.FC = () => {
                       <div className="text-xs font-bold text-[#111417] line-clamp-1">{j.title}</div>
                       <div className="text-[10px] text-[#6b6660] flex items-center justify-between">
                         <span>{j.clientName}</span>
-                        <span className="font-bold text-emerald-700">₹{j.clientCharge.toLocaleString('en-IN')}</span>
+                        <span className="font-bold text-emerald-700">₹{inrDigits(j.clientCharge)}</span>
                       </div>
                     </div>
                   ))}
@@ -912,7 +908,7 @@ export const FreelanceDepartmentView: React.FC = () => {
                         {req.durationHours || 0}h {req.durationMinutes || 0}m {req.durationSeconds || 0}s
                         {req.quantity ? ` ${req.quantity} items` : ''}
                         {(req.keepPercent ?? req.cullPercent) ? ` (${req.keepPercent ?? req.cullPercent}% kept)` : ''}
-                        {' '}→ Quoted: ₹{req.quotedCharge?.toLocaleString('en-IN') || 0}
+                        {' '}→ Quoted: ₹{inrDigits(req.quotedCharge)}
                       </div>
                     ) : null}
                     {req.notes && (

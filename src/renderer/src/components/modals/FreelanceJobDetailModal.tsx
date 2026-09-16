@@ -4,11 +4,7 @@ import { FreelanceJob, FreelanceJobStage } from '../../types';
 import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
-import {
-  getFreelanceStageMeta,
-  getDueDateStatus,
-  addDaysToDate,
-} from '../../utils/formatters';
+import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits } from '../../utils/formatters';
 import {
   X,
   Briefcase,
@@ -183,7 +179,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
       `*Studio OS - Payment Reminder*\n` +
       `Hello ${job.clientName},\n` +
       `This is a gentle reminder regarding the outstanding balance for *${job.title}* (${job.jobCode}).\n\n` +
-      `*Total Project Fee:* ₹${job.clientCharge.toLocaleString('en-IN')}\n` +
+      `*Total Project Fee:* ₹${inrDigits(job.clientCharge)}\n` +
       `*Amount Received:* ₹${clientPaid.toLocaleString('en-IN')}\n` +
       `*Balance Due:* ₹${clientBalance.toLocaleString('en-IN')}\n\n` +
       `Kindly arrange the transfer at your convenience. Thank you!`
@@ -556,7 +552,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                 <div className="bg-white p-4 rounded-xl border border-[#d4c1a3] shadow-2xs">
                   <span className="text-[10px] uppercase font-bold text-[#6b6660]">Total Client Charge</span>
                   <div className="text-lg font-extrabold text-[#111417] mt-0.5">
-                    ₹{job.clientCharge.toLocaleString('en-IN')}
+                    ₹{inrDigits(job.clientCharge)}
                   </div>
                   <div className="text-[11px] text-emerald-700 font-semibold mt-1">
                     Received: ₹{clientPaid.toLocaleString('en-IN')}
@@ -634,7 +630,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                     <div className="flex items-center justify-between">
                       <span className="text-[#6b6660]">Charged:</span>
                       <span className="font-bold text-[#111417]">
-                        ₹{job.clientCharge.toLocaleString('en-IN')}
+                        ₹{inrDigits(job.clientCharge)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
