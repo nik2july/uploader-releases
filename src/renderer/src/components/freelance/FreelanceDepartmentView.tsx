@@ -1,5 +1,9 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ensureBaawarayFilmsStudio } from '../../lib/studioRepository';
+import { BAAWARAY_FILMS_STUDIO_ID } from '../../lib/studioRepository';
+import type { WorkTarget } from '../../../../shared/contracts';
+import type { ClientDeliverable } from '../../types';
+import { isPostProductionService } from '../../utils/postProduction';
 import { useApp } from '../../context/AppContext';
 import { FreelanceJob, FreelanceJobStage } from '../../types';
 import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
@@ -10,6 +14,7 @@ import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits } fro
 import {
   Briefcase,
   Plus,
+  Upload,
   Search,
   Filter,
   IndianRupee,
@@ -50,11 +55,21 @@ import { FreelanceRevisionModal } from '../modals/FreelanceRevisionModal';
  * dashboard. This view decides where the section sits; it does not need to know
  * what the section is made of.
  */
-export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode }> = ({ deliverables }) => {
+/**
+ * A deliverable rendered as a row on the job board. Only the fields the board
+ * reads are filled; `pendingDeliverable` is what marks it as not a real job.
+ */
+type PendingRow = FreelanceJob & { pendingDeliverable?: { target: WorkTarget } };
+
+export const FreelanceDepartmentView: React.FC<{
+  /** Starts a scan for a deliverable that has no footage yet. Owned by the dashboard. */
+  onUploadForDeliverable?: (target: WorkTarget) => void;
+}> = ({ onUploadForDeliverable }) => {
   const {
 
     freelanceJobs,
     freelanceJobRequests,
+    clients,
     freelanceClients,
     advanceFreelanceJobStage,
     freelanceJobPayment,
@@ -120,8 +135,55 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
   const pendingRequestsCount = pendingRequests.length;
 
   // Filtered jobs
+  /**
+   * BAAWARAY FILMS deliverables that have not become jobs yet, shaped like jobs.
+   *
+   * They are the same work as everything else on this board — the studio's own,
+   * rather than another studio's — so they belong in the same list rather than a
+   * section of their own. Nothing is written: these exist for as long as a render
+   * takes, and are replaced by the real job the moment footage lands and the
+   * deliverable files itself.
+   */
+  const pendingDeliverables = useMemo<PendingRow[]>(() => {
+    const rows: PendingRow[] = [];
+    for (const client of clients || []) {
+      for (const item of (client.deliverables || []) as ClientDeliverable[]) {
+        if ((item.postProductionJobIds || []).length) continue;
+        const service = item.category || '';
+        if (!isPostProductionService(service)) continue;
+        const target: WorkTarget = {
+          kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
+          clientName: client.name, serviceType: service, purpose: 'raw', dueDate: item.dueDate,
+        };
+        rows.push({
+          id: `deliverable:${client.id}:${item.id}`,
+          jobCode: 'AWAITING FOOTAGE',
+          title: item.title,
+          serviceType: service,
+          // No stage of its own: nothing has been received, which is the point.
+          stage: 'pending_assignment',
+          clientName: 'BAAWARAY FILMS',
+          clientPhone: '',
+          freelanceClientId: BAAWARAY_FILMS_STUDIO_ID,
+          editorName: '',
+          editorPhone: '',
+          clientCharge: 0,
+          dueDate: item.dueDate,
+          revisions: [],
+          pendingDeliverable: { target },
+          // Deliberately partial: a deliverable is not a job and has no code,
+          // editor, payments or stage history. Only the fields the board reads
+          // are filled, and pendingDeliverable tells the board which is which.
+        } as unknown as PendingRow);
+      }
+    }
+    return rows;
+  }, [clients]);
+
   const filteredJobs = useMemo(() => {
-    return freelanceJobs.filter(job => {
+    // The studio's own pending work sits first: it is the work that cannot start
+    // until someone does something about it.
+    return [...pendingDeliverables, ...freelanceJobs].filter(job => {
       // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -142,6 +204,12 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
         if (selectedStageTab !== 'active' && selectedStageTab !== 'revisions' && job.stage !== selectedStageTab) return false;
       }
 
+      // A deliverable with no footage has no payment or due-date history to filter
+      // on, so any filter beyond "all" is asking about jobs and it steps aside.
+      if ((job as PendingRow).pendingDeliverable) {
+        return selectedStageTab === 'all' && paymentFilter === 'all';
+      }
+
       // Payment / Alert filter
       if (paymentFilter === 'client_due' && job.clientPaymentStatus === 'paid') return false;
       if (paymentFilter === 'editor_due' && job.editorPaymentStatus === 'paid') return false;
@@ -153,7 +221,7 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
 
       return true;
     });
-  }, [freelanceJobs, searchQuery, selectedStageTab, paymentFilter]);
+  }, [pendingDeliverables, freelanceJobs, searchQuery, selectedStageTab, paymentFilter]);
 
   // Stage counts
   const stageCounts = useMemo(() => {
@@ -321,17 +389,6 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
         <CapacityRadarPanel />
       ) : (
         <>
-      {/*
-        The studio's own work, in the same view as everyone else's.
-
-        It sits above the job board rather than being interleaved into it: a deliverable has no charge, editor cost or profit
-        yet, so it would show as four empty columns in the table and has no
-        stage to file under in kanban. Grouped, each kind keeps the actions that
-        make sense for it — footage goes up from here, and the moment it lands
-        the deliverable files itself as a job and joins the board below.
-      */}
-      {deliverables && <div className="pt-2">{deliverables}</div>}
-
       {/* Filter & Search Bar */}
       <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs space-y-3">
         {/* Search & Quick Action Filters */}
@@ -435,6 +492,52 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
         /* GRID CARDS VIEW */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredJobs.map(job => {
+            const pending = (job as PendingRow).pendingDeliverable;
+            if (pending) {
+              /*
+               * The studio's own work, before there is any footage to do it with.
+               *
+               * Same card, same list, so it reads as one board — but none of a
+               * job's actions apply to it: there is no editor to chase, no charge
+               * to collect and no stage to advance. The one thing that moves it
+               * forward is footage, so that is the only thing offered.
+               */
+              return (
+                <div
+                  key={job.id}
+                  className="bg-white rounded-2xl border border-dashed border-[#d4c1a3] shadow-2xs overflow-hidden flex flex-col justify-between"
+                >
+                  <div className="p-5 space-y-3.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="text-sm font-bold text-[#111417] leading-snug">{job.title}</h3>
+                      <span className="shrink-0 px-2 py-0.5 rounded-md bg-[#f9f8f6] border border-[#d4c1a3] text-[9px] font-bold uppercase tracking-wider text-[#6b6660]">
+                        Awaiting footage
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[#6b6660] font-medium">
+                      BAAWARAY FILMS · {job.serviceType}
+                      {job.dueDate ? ` · due ${job.dueDate}` : ''}
+                    </div>
+                    <p className="text-[11px] text-[#6b6660] leading-relaxed">
+                      Send the raw footage and this becomes a job on the board, priced from
+                      BAAWARAY FILMS&rsquo; rate card.
+                    </p>
+                  </div>
+                  <div className="px-5 pb-5">
+                    <button
+                      type="button"
+                      disabled={!onUploadForDeliverable}
+                      onClick={() => onUploadForDeliverable?.(pending.target)}
+                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#7a2e33] hover:bg-[#5a2226] disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload raw footage</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            }
+
             const stageMeta = getFreelanceStageMeta(job.stage);
             const targetDueDate = freelanceDueDate(job);
             const dueStatus = getDueDateStatus(targetDueDate);
@@ -642,6 +745,31 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
               </thead>
               <tbody className="divide-y divide-[#d4c1a3]/40 text-[#111417]">
                 {filteredJobs.map(job => {
+                  const pendingRow = (job as PendingRow).pendingDeliverable;
+                  if (pendingRow) {
+                    // Its own row rather than a job's: running payment and stage
+                    // logic over a deliverable would report zeros as though they
+                    // were facts about work that has not started.
+                    return (
+                      <tr key={job.id} className="hover:bg-[#f9f8f6]/40 transition-colors text-[#6b6660]">
+                        <td className="px-3 py-2.5 font-semibold text-[#111417]">{job.title}</td>
+                        <td className="px-3 py-2.5">BAAWARAY FILMS</td>
+                        <td className="px-3 py-2.5">{job.serviceType}</td>
+                        <td className="px-3 py-2.5" colSpan={20}>
+                          <button
+                            type="button"
+                            disabled={!onUploadForDeliverable}
+                            onClick={() => onUploadForDeliverable?.(pendingRow.target)}
+                            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7a2e33] hover:underline disabled:opacity-40 cursor-pointer"
+                          >
+                            <Upload className="w-3 h-3" />
+                            Awaiting footage — upload to start
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
+
                   const stageMeta = getFreelanceStageMeta(job.stage);
                   const targetDue = freelanceDueDate(job);
                   const dueStatus = getDueDateStatus(targetDue);
@@ -736,7 +864,10 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
             { stageKey: 'final_delivered', label: '5. Final Master', color: 'border-purple-300 bg-purple-50/30' },
             { stageKey: 'completed', label: '6. Completed', color: 'border-emerald-300 bg-emerald-50/30' },
           ].map(col => {
-            const colJobs = filteredJobs.filter(j =>
+            // Kanban files work by the stage it has reached. A deliverable with no
+            // footage has reached none, so it is not on this board — it is on the
+            // other two, where it can still be acted on.
+            const colJobs = filteredJobs.filter(j => !(j as PendingRow).pendingDeliverable).filter(j =>
               col.stageKey === 'changes_received'
                 ? j.stage === 'changes_received' || j.stage === 'changes_sent_to_editor'
                 : j.stage === col.stageKey

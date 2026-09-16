@@ -145,10 +145,15 @@ export function OwnerDashboard(): React.JSX.Element {
               <FreelanceEditorView />
             ) : (
               <FreelanceDepartmentView
-                deliverables={
-                  <WorkScreen kind="deliverables" transfers={transfers} drive={drive}
-                    onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
-                }
+                onUploadForDeliverable={async target => {
+                  // The same scan the deliverables screen starts, reached from the
+                  // row on the board instead of from a screen of its own.
+                  const options = {
+                    excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy'],
+                    countPhotoPairsOnce: studio.studioSettings?.uploader?.countPhotoPairsOnce ?? true,
+                  };
+                  opened(await window.api.scan(options, target));
+                }}
               />
             )}
           </div>
