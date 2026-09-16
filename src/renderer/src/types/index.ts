@@ -83,6 +83,17 @@ export interface ClientDeliverable {
   hardDriveNotes?: string;
   /** Linked Post Production project ids created from this BAAWARAY FILMS deliverable. */
   postProductionJobIds?: string[];
+  /**
+   * Every batch of raw data recorded against this deliverable, keyed by the
+   * transfer that brought it. A shoot arrives in more than one go often enough
+   * that the headline rawDataLink is only the first of them, and footage handed
+   * over on a drive is recorded here too — as received_offline, with nothing
+   * uploaded — so what arrived is visible however it came.
+   */
+  desktopTransfers?: Record<string, {
+    id: string; link?: string; purpose?: string; createdAt?: string;
+    fileCount?: number; bytes?: number; status?: string; rootName?: string;
+  }>;
   linkExpiry?: string;
 
   /**

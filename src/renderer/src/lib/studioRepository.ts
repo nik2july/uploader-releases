@@ -1,6 +1,7 @@
 import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { shouldFileIntoPostProduction } from '../utils/postProduction';
 import { chargeForDeliverable, pricingForDeliverable } from '../utils/deliverablePricing';
+import { measurementsFromScan } from '../utils/rawDataLog';
 import { db } from './firebase';
 import { splitFreelanceRecord } from './freelanceSchema';
 import { derivePaymentStatus } from '../utils/freelance';
@@ -873,4 +874,68 @@ export async function deleteFreelanceEditorPayoutRecord(
       freelancePayouts: clean(existing.filter(p => p.id !== payoutId)),
     });
   });
+}
+
+/**
+ * Record a scanned folder as raw data received, without sending it anywhere.
+ *
+ * Footage arrives on a drive as often as it arrives over a wire — from another
+ * studio, or from the studio's own shooters — and the measurements that decides
+ * the price are the same either way. They were being typed in by hand off the
+ * Finder's info panel, which is both tedious and the easiest place in the app to
+ * fat-finger an hour.
+ *
+ * The scan has already counted every photo and read every clip's duration, so
+ * this writes what it found and stops. Nothing uploads. The entry it leaves on
+ * the work is the same shape an upload leaves, marked as received on a drive, so
+ * a partner studio sees how much arrived whichever way it came.
+ */
+export async function logScannedRawData(job: Transfer, notes?: string): Promise<void> {
+  const target = job.target;
+  if (!target) throw new Error('Attach this scan to a job or deliverable first.');
+  if (!job.scan || job.scan.readErrors) throw new Error('Finish a clean scan before logging what was received.');
+
+  const measurements = clean({
+    rawDataSource: 'hard_drive',
+    hardDriveNotes: notes?.trim() || undefined,
+    ...measurementsFromScan(job.scan),
+  });
+  const entry = {
+    id: job.id, purpose: target.purpose, createdAt: job.createdAt,
+    fileCount: job.scan.fileCount || 0, bytes: job.scan.totalBytes || 0,
+    status: 'received_offline', rootName: job.rootName,
+  };
+
+  if (target.kind === 'freelance') {
+    const ref = doc(db, 'freelance_jobs', target.id);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('The linked work no longer exists.');
+    await setDoc(ref, { ...measurements, desktopTransfers: { ...(snap.data().desktopTransfers || {}), [job.id]: entry } }, { merge: true });
+    return;
+  }
+
+  let fileIntoPostProduction = false;
+  await runTransaction(db, async tx => {
+    const ref = doc(db, 'clients', target.clientId!);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('The client no longer exists.');
+    const items = snap.data().deliverables || [];
+    const deliverable = items.find((item: ClientDeliverable) => item.id === target.id);
+    if (!deliverable) throw new Error('Deliverable no longer exists.');
+    // Footage on a drive is footage arriving, so it becomes Post Production's
+    // work exactly as an upload would.
+    fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable);
+    tx.update(ref, {
+      deliverables: items.map((item: ClientDeliverable) => item.id === target.id
+        ? { ...item, ...measurements, desktopTransfers: { ...(item.desktopTransfers || {}), [job.id]: entry } }
+        : item),
+    });
+  });
+
+  if (fileIntoPostProduction) {
+    await sendBaawarayDeliverableToPostProduction(target.clientId!, {
+      id: target.id, title: target.title, category: target.serviceType, status: 'pending',
+      dueDate: target.dueDate, ...measurements,
+    } as ClientDeliverable, [target.serviceType]);
+  }
 }

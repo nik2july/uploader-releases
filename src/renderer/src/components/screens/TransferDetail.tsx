@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, HardDrive } from 'lucide-react';
 import type { InvoiceSnapshot, Transfer } from '../../../../shared/contracts';
 import { useApp } from '../../context/AppContext';
-import { saveBilling } from '../../lib/studioRepository';
+import { logScannedRawData, saveBilling } from '../../lib/studioRepository';
 import { calculateMediaBilling } from '../../utils/mediaPricing';
 import type { MediaBillingResult } from '../../utils/mediaPricing';
 import { describeBilling, isMinimumApplied, serviceDefinition, unitNoun } from '../../utils/freelancePricing';
@@ -380,6 +380,22 @@ export function TransferDetail({ job, onBack, refresh }: {
               )}
               {canUpload && needsConfirming && (
                 <button className="primary" onClick={() => setConfirmingProblems(true)}>Start upload…</button>
+              )}
+              {/*
+                Footage that arrived on a drive, and is going to the editor on one.
+                The scan has already counted the photos and read every clip, so the
+                measurements that set the price are recorded from it rather than
+                typed off the Finder's info panel — then the scan is done with, and
+                the queue has no reason to keep it.
+              */}
+              {canUpload && (
+                <button disabled={busy === 'log'}
+                  onClick={() => void run('log', async () => {
+                    await logScannedRawData(job);
+                    await window.api.removeTransfer(job.id, true);
+                  }, 'Logged as received on a drive. Nothing was uploaded.')}>
+                  <HardDrive size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Log as received (no upload)
+                </button>
               )}
               {['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status) && (
                 <button disabled={busy === 'pause'} onClick={() => void run('pause', () => window.api.pause(job.id))}>Pause</button>
