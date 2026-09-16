@@ -3,7 +3,7 @@ import { ensureBaawarayFilmsStudio, reuseDeliverableRawData } from '../../lib/st
 import { BAAWARAY_FILMS_STUDIO_ID } from '../../lib/studioRepository';
 import type { WorkTarget } from '../../../../shared/contracts';
 import type { ClientDeliverable } from '../../types';
-import { isPostProductionService } from '../../utils/postProduction';
+import { getUniqueReusableDeliverables, isPostProductionService } from '../../utils/postProduction';
 import { resolvePostProductionServices } from '../../utils/postProductionServices';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import { useApp } from '../../context/AppContext';
@@ -188,8 +188,9 @@ export const FreelanceDepartmentView: React.FC<{
           kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
           clientName: coupleOrClientName, serviceType: service, purpose: 'raw', dueDate: item.dueDate,
         };
-        const reusableDeliverables = ((client.deliverables || []) as ClientDeliverable[]).filter(
-          d => d.id !== item.id && (Boolean(d.rawDataLink) || d.rawDataSource === 'hard_drive' || Object.keys(d.desktopTransfers || {}).length > 0)
+        const reusableDeliverables = getUniqueReusableDeliverables(
+          (client.deliverables || []) as ClientDeliverable[],
+          item.id
         );
         rows.push({
           id: `deliverable:${client.id}:${item.id}`,
@@ -617,7 +618,7 @@ export const FreelanceDepartmentView: React.FC<{
                             }}
                             className="w-full text-left px-2 py-1.5 bg-white hover:bg-emerald-50 border border-[#d4c1a3]/60 hover:border-emerald-300 rounded-lg text-[11px] text-[#111417] font-medium transition-colors flex items-center justify-between cursor-pointer"
                           >
-                            <span className="truncate">Use data from {reuse.title}</span>
+                            <span className="truncate">Use data from {reuse.reusedFromTitle || reuse.title}</span>
                             <span className="shrink-0 text-[10px] text-emerald-700 font-bold ml-1">Attach ⚡</span>
                           </button>
                         ))}
@@ -896,7 +897,7 @@ export const FreelanceDepartmentView: React.FC<{
                                   }
                                 }}
                                 className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer"
-                                title={`Use data from ${pendingRow.reusableDeliverables[0].title}`}
+                                title={`Use data from ${pendingRow.reusableDeliverables[0].reusedFromTitle || pendingRow.reusableDeliverables[0].title}`}
                               >
                                 <LinkIcon className="w-3 h-3" />
                                 Reuse client data

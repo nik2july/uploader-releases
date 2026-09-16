@@ -84,6 +84,12 @@ export interface ClientDeliverable {
   /** Linked Post Production project ids created from this BAAWARAY FILMS deliverable. */
   postProductionJobIds?: string[];
   /**
+   * If this deliverable reused raw footage from another deliverable for the same client,
+   * the ID and title of the source deliverable.
+   */
+  reusedFromDeliverableId?: string;
+  reusedFromTitle?: string;
+  /**
    * Every batch of raw data recorded against this deliverable, keyed by the
    * transfer that brought it. A shoot arrives in more than one go often enough
    * that the headline rawDataLink is only the first of them, and footage handed

@@ -180,6 +180,9 @@ export async function reuseDeliverableRawData(
     if (!source) throw new Error('Source deliverable with raw data was not found.');
     if (!target) throw new Error('Target deliverable was not found.');
 
+    const rootDeliverableId = source.reusedFromDeliverableId || source.id;
+    const rootDeliverableTitle = source.reusedFromTitle || source.title;
+
     copiedData = {
       rawDataLink: source.rawDataLink || '',
       rawDataSource: source.rawDataSource || 'upload',
@@ -188,6 +191,8 @@ export async function reuseDeliverableRawData(
       rawDurationMinutes: source.rawDurationMinutes || 0,
       rawPhotoCount: source.rawPhotoCount || 0,
       desktopTransfers: source.desktopTransfers || {},
+      reusedFromDeliverableId: rootDeliverableId,
+      reusedFromTitle: rootDeliverableTitle,
     };
 
     targetDeliverable = {

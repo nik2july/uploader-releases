@@ -54,3 +54,96 @@ export function isPostProductionService(
   return Boolean(findPostProductionService(name, services));
 }
 
+/**
+ * Filters and deduplicates reusable client raw data packages so that only
+ * ONE option is presented per unique raw footage package, prioritizing the
+ * original root source deliverable over derivative edits (reels, teasers, etc.).
+ */
+export function getUniqueReusableDeliverables(
+  deliverables: any[],
+  currentDeliverableId: string
+): any[] {
+  const candidates = (deliverables || []).filter(
+    d =>
+      d &&
+      d.id !== currentDeliverableId &&
+      (Boolean(d.rawDataLink) ||
+        d.rawDataSource === 'hard_drive' ||
+        Object.keys(d.desktopTransfers || {}).length > 0)
+  );
+
+  if (candidates.length <= 1) return candidates;
+
+  const isDerivative = (title: string = '') => {
+    const t = title.toLowerCase();
+    return (
+      t.includes('reel') ||
+      t.includes('teaser') ||
+      t.includes('story') ||
+      t.includes('stories') ||
+      t.includes('post') ||
+      t.includes('short') ||
+      t.includes('promo')
+    );
+  };
+
+  // Sort candidates so the root original source is evaluated before derivative edits:
+  candidates.sort((a, b) => {
+    // 1. Deliverables that were NOT reused from another deliverable come first
+    const aReused = Boolean(a.reusedFromDeliverableId);
+    const bReused = Boolean(b.reusedFromDeliverableId);
+    if (aReused !== bReused) return aReused ? 1 : -1;
+
+    // 2. Deliverables with actual physical desktop uploads come first
+    const aTransfers = Object.keys(a.desktopTransfers || {}).length;
+    const bTransfers = Object.keys(b.desktopTransfers || {}).length;
+    if (aTransfers !== bTransfers) return bTransfers - aTransfers;
+
+    // 3. Primary formats (Edited Film, Full Coverage, Photos) come before derivatives
+    const aDeriv = isDerivative(a.title);
+    const bDeriv = isDerivative(b.title);
+    if (aDeriv !== bDeriv) return aDeriv ? 1 : -1;
+
+    return 0;
+  });
+
+  const seenKeys = new Set<string>();
+  const seenIds = new Set<string>();
+  const unique: any[] = [];
+
+  for (const d of candidates) {
+    const rawLink = (d.rawDataLink || '').trim().toLowerCase();
+    const hardDriveNotes = (d.hardDriveNotes || '').trim().toLowerCase();
+    const transferKeys = Object.keys(d.desktopTransfers || {}).sort().join(',');
+    const rootId = d.reusedFromDeliverableId;
+
+    // Check if this deliverable references a root deliverable we already accepted
+    if (rootId && (seenIds.has(rootId) || seenKeys.has(`root:${rootId}`))) {
+      continue;
+    }
+
+    let key = '';
+    if (rawLink) {
+      key = `link:${rawLink}`;
+    } else if (transferKeys) {
+      key = `tx:${transferKeys}`;
+    } else if (rootId) {
+      key = `root:${rootId}`;
+    } else if (d.rawDataSource === 'hard_drive' && hardDriveNotes) {
+      key = `hd:${hardDriveNotes}`;
+    } else {
+      key = `id:${d.id}`;
+    }
+
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      seenIds.add(d.id);
+      if (rootId) seenKeys.add(`root:${rootId}`);
+      unique.push(d);
+    }
+  }
+
+  return unique;
+}
+
+
