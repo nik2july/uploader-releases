@@ -640,6 +640,19 @@ export interface CrewRoleConfig {
    */
   postProductionBasis?: import('./freelance').FreelancePricingBasis;
   /**
+   * Preset default quantity or duration for this deliverable.
+   * e.g. 5 for a 5-minute trailer, 40 for a 40-sheet album, 3 for 3 reels, 300 for 300 photos.
+   */
+  defaultQuantity?: number;
+  /**
+   * Default editor cost / payout rate per unit (or flat) for post-production.
+   */
+  defaultCostRate?: number;
+  /**
+   * Whether client price is charged per unit or as a flat package. Defaults to 'per_unit'.
+   */
+  pricingType?: 'per_unit' | 'flat';
+  /**
    * Hours after EACH event by which this must be done — a same-day photo upload,
    * a face-recognition gallery, anything with a clock on it rather than a place in
    * a queue.
@@ -784,6 +797,7 @@ export interface QuotationEvent {
 export interface QuotationDeliverable {
   id: string;
   title: string;
+  billableQuantity?: number;
   category: 'Photo' | 'Video' | 'Album' | 'Storage' | 'Service' | string;
   tierCategory?: string; // Linked Tier Category ID e.g. 'post-production', 'production'
   linkedRoleId?: string; // Optional linked Studio Crew Role ID (from CrewRoleConfig)

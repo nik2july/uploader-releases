@@ -123,6 +123,7 @@ function measuredUnits(pricing: Measurable): number {
     case 'per_photo':
     case 'per_sheet':
     case 'per_item':
+    case 'per_raw_photo':
       return quantity;
     default:
       return 0;
@@ -156,6 +157,10 @@ export function unitNoun(basis: FreelancePricingBasis, count: number): string {
       return one ? 'photo' : 'photos';
     case 'per_sheet':
       return one ? 'sheet' : 'sheets';
+    case 'per_item':
+      return one ? 'item' : 'items';
+    case 'per_raw_photo':
+      return one ? 'raw photo' : 'raw photos';
     default:
       return 'units';
   }

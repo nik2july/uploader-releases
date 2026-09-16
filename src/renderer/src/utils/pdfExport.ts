@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { Client, ProjectEvent, Quotation, TeamMember, CrewRoleConfig, ClientPaymentLog, PaymentAccountConfig, ClientDeliverable } from '../types';
 import { formatDate, formatINR } from './formatters';
+import { resolvePostProductionServices, findPostProductionService } from './postProductionServices';
 import { generateReceiptPdf } from './pdf/receipt';
 import { registerStudioFonts, WORDMARK } from './pdf/registerFonts';
 
@@ -812,6 +813,8 @@ export function generateQuotationPdf(
     y = drawSectionLabel(doc, 'Deliverables', y);
   }
 
+  const postProdServices = resolvePostProductionServices(crewRoles);
+
   includedDeliverables.forEach((d, i) => {
     if (y > 268) {
       doc.addPage();
@@ -829,7 +832,51 @@ export function generateQuotationPdf(
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9.5);
     doc.setTextColor(...INK);
-    const titleLines = doc.splitTextToSize(d.title, 132) as string[];
+
+    // Resolve post-production specs (e.g. "5 mins", "40 sheets", "3 reels") to present cleanly
+    const svc = postProdServices.find(s => s.id === d.linkedRoleId) || findPostProductionService(d.title, postProdServices);
+    let specLabel = '';
+    if (svc) {
+      if (svc.basis === 'per_raw_hour') {
+        specLabel = 'Raw footage basis';
+      } else if (d.billableQuantity && d.billableQuantity > 0) {
+        switch (svc.basis) {
+          case 'per_output_minute':
+            specLabel = `${d.billableQuantity} min${d.billableQuantity === 1 ? '' : 's'}`;
+            break;
+          case 'per_sheet':
+            specLabel = `${d.billableQuantity} sheet${d.billableQuantity === 1 ? '' : 's'}`;
+            break;
+          case 'per_photo':
+            specLabel = `${d.billableQuantity} photo${d.billableQuantity === 1 ? '' : 's'}`;
+            break;
+          case 'per_raw_photo':
+            specLabel = `${d.billableQuantity} raw clicks`;
+            break;
+          case 'per_item': {
+            const lower = d.title.toLowerCase();
+            if (lower.includes('reel')) {
+              specLabel = `${d.billableQuantity} reel${d.billableQuantity === 1 ? '' : 's'}`;
+            } else if (lower.includes('post')) {
+              specLabel = `${d.billableQuantity} post${d.billableQuantity === 1 ? '' : 's'}`;
+            } else {
+              specLabel = `${d.billableQuantity} item${d.billableQuantity === 1 ? '' : 's'}`;
+            }
+            break;
+          }
+          default:
+            specLabel = `${d.billableQuantity} ${svc.measureLabel || 'units'}`;
+        }
+      }
+    } else if (d.billableQuantity && d.billableQuantity > 0) {
+      specLabel = `${d.billableQuantity} units`;
+    }
+
+    const displayTitle = (specLabel && !d.title.toLowerCase().includes(specLabel.toLowerCase()))
+      ? `${d.title} (${specLabel})`
+      : d.title;
+
+    const titleLines = doc.splitTextToSize(displayTitle, 132) as string[];
     doc.text(titleLines, 28, y);
 
     doc.setFont('helvetica', d.price > 0 ? 'bold' : 'normal');

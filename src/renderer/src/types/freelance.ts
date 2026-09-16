@@ -105,7 +105,8 @@ export type FreelancePricingBasis =
   | 'per_raw_hour'      // the footage handed over, in hours
   | 'per_photo'         // files delivered, after culling
   | 'per_sheet'         // sheets in an album
-  | 'per_item';         // anything counted: reels, posts, prints
+  | 'per_item'          // anything counted: reels, posts, prints
+  | 'per_raw_photo';    // raw camera files received to cull
 
 /**
  * Whether a basis can be known before the shoot.
@@ -115,7 +116,7 @@ export type FreelancePricingBasis =
  * the cards. Everything that quotes up front takes its quantity from the
  * quotation; everything else waits for the scan.
  */
-export const QUOTED_AT_SALE: FreelancePricingBasis[] = ['per_output_minute', 'per_photo', 'per_sheet', 'per_item'];
+export const QUOTED_AT_SALE: FreelancePricingBasis[] = ['per_output_minute', 'per_photo', 'per_sheet', 'per_item', 'per_raw_photo'];
 
 /**
  * How a job's client charge was worked out.

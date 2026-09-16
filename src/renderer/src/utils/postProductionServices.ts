@@ -12,6 +12,13 @@ export interface PostProductionService {
   rateSuffix: string;
   /** "Final cut length", "Sheets in the album" — what to ask for. */
   measureLabel: string;
+  /** Preset default quantity / duration (e.g. 5 for 5-min trailer, 40 for 40-sheet album) */
+  defaultQuantity?: number;
+  /** Default editor payout / cost rate */
+  defaultCostRate?: number;
+  clientBillingRate?: number;
+  note?: string;
+  minimumNote?: string;
 }
 
 const UNIT_WORDS: Record<FreelancePricingBasis, { rateSuffix: string; measureLabel: string }> = {
@@ -20,6 +27,7 @@ const UNIT_WORDS: Record<FreelancePricingBasis, { rateSuffix: string; measureLab
   per_photo: { rateSuffix: 'per photo', measureLabel: 'Photos to deliver' },
   per_sheet: { rateSuffix: 'per sheet', measureLabel: 'Sheets in the album' },
   per_item: { rateSuffix: 'per item', measureLabel: 'How many' },
+  per_raw_photo: { rateSuffix: 'per raw photo', measureLabel: 'Raw photos to cull' },
 };
 
 /**
@@ -40,6 +48,7 @@ export function resolvePostProductionServices(crewRoles: CrewRoleConfig[] | unde
     byName.set(service.name.trim().toLowerCase(), {
       name: service.name, basis: service.basis,
       rateSuffix: service.rateSuffix, measureLabel: service.measureLabel,
+      note: service.note, minimumNote: service.minimumNote,
     });
   }
   for (const role of crewRoles || []) {
@@ -47,6 +56,9 @@ export function resolvePostProductionServices(crewRoles: CrewRoleConfig[] | unde
     if (!basis || !UNIT_WORDS[basis] || !role.name?.trim()) continue;
     byName.set(role.name.trim().toLowerCase(), {
       id: role.id, name: role.name.trim(), basis, ...UNIT_WORDS[basis],
+      defaultQuantity: role.defaultQuantity,
+      defaultCostRate: role.defaultCostRate,
+      clientBillingRate: role.clientBillingRate || role.defaultRate,
     });
   }
   return [...byName.values()];

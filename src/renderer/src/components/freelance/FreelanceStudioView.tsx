@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { FreelanceJob } from '../../types';
 import { formatDate, formatINR, getDueDateStatus, getFreelanceStageMeta, inrDigits } from '../../utils/formatters';
 import { FREELANCE_SERVICES, unitNoun } from '../../utils/freelancePricing';
+import { resolvePostProductionServices } from '../../utils/postProductionServices';
 import { freelanceDueDate } from '../../utils/freelance';
 import { buildStudioAccount, buildStatementText } from '../../utils/freelanceAccount';
 import { formatInternational, whatsAppLink } from '../../utils/phone';
@@ -101,6 +102,16 @@ export const FreelanceStudioView: React.FC = () => {
     [freelanceJobs, selectedFreelanceClientId, isUnlinked]
   );
 
+  const freelanceServices = useMemo(() => {
+    const resolved = resolvePostProductionServices(studioSettings?.crewRoles);
+    return resolved.map(s => ({
+      name: s.name,
+      basis: s.basis,
+      rateSuffix: s.rateSuffix,
+      measureLabel: s.measureLabel,
+    }));
+  }, [studioSettings?.crewRoles]);
+
   /**
    * The card as it is being edited. Seeded from the studio and re-seeded whenever a
    * different studio is opened, so the boxes never show the last one's rates.
@@ -109,12 +120,12 @@ export const FreelanceStudioView: React.FC = () => {
     const stored = client?.rateCard || {};
     setRateDraft(
       Object.fromEntries(
-        FREELANCE_SERVICES.map(s => [s.name, typeof stored[s.name] === 'number' ? stored[s.name] : ''])
+        freelanceServices.map(s => [s.name, typeof stored[s.name] === 'number' ? stored[s.name] : ''])
       )
     );
-  }, [client?.id, client?.rateCard]);
+  }, [client?.id, client?.rateCard, freelanceServices]);
 
-  const rateCardDirty = FREELANCE_SERVICES.some(s => {
+  const rateCardDirty = freelanceServices.some(s => {
     const stored = client?.rateCard?.[s.name];
     const draft = rateDraft[s.name];
     return (typeof stored === 'number' ? stored : '') !== (draft === '' ? '' : Number(draft));
@@ -123,7 +134,7 @@ export const FreelanceStudioView: React.FC = () => {
   const saveRateCard = () => {
     if (!client) return;
     const next: Record<string, number> = {};
-    FREELANCE_SERVICES.forEach(s => {
+    freelanceServices.forEach(s => {
       const value = Number(rateDraft[s.name]);
       if (value > 0) next[s.name] = value;
     });
@@ -531,8 +542,8 @@ export const FreelanceStudioView: React.FC = () => {
           )}
         </div>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-[#d4c1a3]/50">
-          {FREELANCE_SERVICES.map(service => {
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-y-3 divide-x divide-y lg:divide-y-0 divide-[#d4c1a3]/50">
+          {freelanceServices.map(service => {
             const bought = serviceMix.find(m => m.name === service.name);
             const lo = bought?.rates.length ? Math.min(...bought.rates) : undefined;
             const hi = bought?.rates.length ? Math.max(...bought.rates) : undefined;
@@ -574,11 +585,11 @@ export const FreelanceStudioView: React.FC = () => {
           })}
         </div>
 
-        {serviceMix.filter(row => !FREELANCE_SERVICES.some(x => x.name === row.name)).length > 0 && (
+        {serviceMix.filter(row => !freelanceServices.some(x => x.name === row.name)).length > 0 && (
           <div className="px-5 py-2.5 border-t border-[#d4c1a3]/40 text-[10px] text-[#6b6660]">
             Also bought under older categories with no rate:{' '}
             {serviceMix
-              .filter(row => !FREELANCE_SERVICES.some(x => x.name === row.name))
+              .filter(row => !freelanceServices.some(x => x.name === row.name))
               .map(row => `${row.name} (${row.jobs})`)
               .join(', ')}
           </div>

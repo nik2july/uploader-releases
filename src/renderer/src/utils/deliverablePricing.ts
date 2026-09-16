@@ -55,7 +55,8 @@ export function pricingForDeliverable(
       }
       return hasAgreed ? finalise({ basis: service.basis, rate, durationHours: agreed }) : undefined;
     }
-    case 'per_photo': {
+    case 'per_photo':
+    case 'per_raw_photo': {
       const measured = Number(measurements.rawPhotoCount) || 0;
       if (measured > 0) return finalise({ basis: service.basis, rate, quantity: measured });
       return hasAgreed ? finalise({ basis: service.basis, rate, quantity: agreed }) : undefined;

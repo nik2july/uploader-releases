@@ -12,6 +12,7 @@ import {
   isMinimumApplied,
   serviceDefinition,
 } from '../../utils/freelancePricing';
+import { resolvePostProductionServices } from '../../utils/postProductionServices';
 import {
   FreelanceJob,
   FreelanceJobStage,
@@ -54,7 +55,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   initialJob,
   presetClientId,
 }) => {
-  const { addFreelanceJob, updateFreelanceJob, team, freelanceClients, freelanceJobs } = useApp();
+  const { addFreelanceJob, updateFreelanceJob, team, freelanceClients, freelanceJobs, studioSettings } = useApp();
 
   const todayStr = new Date().toISOString().split('T')[0];
 
@@ -344,16 +345,48 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
     [workloads]
   );
 
-  /**
-   * The four services, plus whatever category this job was logged under if it
-   * predates them — so an old job keeps its own wording instead of silently
-   * switching to whichever service sits first in the list.
-   */
-  const serviceOptions = FREELANCE_SERVICES.map(s => s.name);
+  const availableServices = useMemo(() => {
+    const resolved = resolvePostProductionServices(studioSettings?.crewRoles);
+    return resolved.map(s => ({
+      name: s.name,
+      basis: s.basis,
+      rateSuffix: s.rateSuffix,
+      measureLabel: s.measureLabel,
+      note: s.note,
+      minimumNote: s.minimumNote,
+      defaultSellingRate: s.clientBillingRate,
+      defaultCostRate: s.defaultCostRate,
+      defaultQuantity: s.defaultQuantity,
+    }));
+  }, [studioSettings?.crewRoles]);
+
+  const serviceOptions = availableServices.map(s => s.name);
   const legacyServiceType =
     serviceType && !serviceOptions.includes(String(serviceType)) ? String(serviceType) : undefined;
 
-  const service = serviceDefinition(serviceType);
+  const service = availableServices.find(s => s.name === serviceType) || serviceDefinition(serviceType);
+
+  const handleServiceChange = (newService: string) => {
+    setServiceType(newService as FreelanceServiceType);
+    const selectedSvc = availableServices.find(s => s.name === newService);
+    if (selectedSvc) {
+      if (selectedSvc.defaultQuantity !== undefined) {
+        if (selectedSvc.basis === 'per_output_minute') {
+          setOutputMinutes(selectedSvc.defaultQuantity);
+          setOutputSeconds('');
+        } else if (selectedSvc.basis === 'per_raw_hour') {
+          setRawHours('');
+          setOutputMinutes('');
+        } else {
+          setQuantity(selectedSvc.defaultQuantity);
+        }
+      }
+      if (!selectedStudio?.rateCard?.[newService] && typeof selectedSvc.defaultSellingRate === 'number' && selectedSvc.defaultSellingRate > 0) {
+        setRate(selectedSvc.defaultSellingRate);
+      }
+    }
+  };
+
   const pricingDraft = service
     ? {
         basis: service.basis,
@@ -365,7 +398,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
         durationSeconds:
           service.basis === 'per_output_minute' ? Number(outputSeconds) || 0 : undefined,
         quantity:
-          service.basis === 'per_photo' || service.basis === 'per_sheet'
+          service.basis === 'per_photo' || service.basis === 'per_sheet' || service.basis === 'per_item' || service.basis === 'per_raw_photo'
             ? Number(quantity) || 0
             : undefined,
       }
@@ -610,11 +643,11 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
                 <select
                   required
                   value={serviceType}
-                  onChange={e => setServiceType(e.target.value as FreelanceServiceType)}
+                  onChange={e => handleServiceChange(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-sm font-medium text-[#111417] focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all"
                 >
                   <option value="">-- What kind of work is this? --</option>
-                  {FREELANCE_SERVICES.map(s => (
+                  {availableServices.map(s => (
                     <option key={s.name} value={s.name}>
                       {s.name} — charged {s.rateSuffix}
                     </option>
@@ -883,19 +916,27 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
                     </div>
                   )}
 
-                  {(service.basis === 'per_photo' || service.basis === 'per_sheet') && (
+                  {(service.basis === 'per_photo' || service.basis === 'per_sheet' || service.basis === 'per_item' || service.basis === 'per_raw_photo') && (
                     <>
                       <input
                         type="number"
                         min="0"
                         step="1"
-                        placeholder={service.basis === 'per_photo' ? 'e.g. 120' : 'e.g. 30'}
+                        placeholder={
+                          service.basis === 'per_photo' ? 'e.g. 120'
+                          : service.basis === 'per_sheet' ? 'e.g. 30'
+                          : service.basis === 'per_raw_photo' ? 'e.g. 3000'
+                          : 'e.g. 3'
+                        }
                         value={quantity}
                         onChange={e => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                         className={numberFieldClass}
                       />
                       <span className="block text-[10px] text-[#6b6660] mt-0.5">
-                        {service.basis === 'per_photo' ? 'photos' : 'sheets'}
+                        {service.basis === 'per_photo' ? 'photos'
+                        : service.basis === 'per_sheet' ? 'sheets'
+                        : service.basis === 'per_raw_photo' ? 'raw clicks'
+                        : 'items'}
                       </span>
                     </>
                   )}

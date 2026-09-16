@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { createPartnerStudio, updatePartnerStudio } from '../../lib/studioRepository';
+import { resolvePostProductionServices } from '../../utils/postProductionServices';
 import type { FreelanceClient } from '../../types';
 
-const services = ['Short Form', 'Long Form', 'Edited Photos', 'Album'];
+const defaultServices = ['Short Form', 'Long Form', 'Edited Photos', 'Album'];
 const internalPartner: FreelanceClient = {
   id: 'internal_baawaray_films', name: 'BAAWARAY FILMS', contactPerson: '', phone: '', email: '', city: '',
   active: true, createdAt: '', rateCard: {},
@@ -12,6 +13,10 @@ const money = (value: number) => new Intl.NumberFormat('en-IN', { style: 'curren
 
 export function PartnerStudiosScreen(): React.JSX.Element {
   const studio = useApp();
+  const services = useMemo(() => {
+    const resolved = resolvePostProductionServices(studio.studioSettings?.crewRoles);
+    return resolved.length > 0 ? resolved.map(s => s.name) : defaultServices;
+  }, [studio.studioSettings?.crewRoles]);
   const [adding, setAdding] = useState(false); const [editing, setEditing] = useState<FreelanceClient | null>(null);
   const [name, setName] = useState(''); const [contact, setContact] = useState(''); const [phone, setPhone] = useState(''); const [email, setEmail] = useState(''); const [city, setCity] = useState(''); const [rates, setRates] = useState<Record<string, string>>({}); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
   const partners = useMemo(() => {
