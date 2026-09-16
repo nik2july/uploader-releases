@@ -135,20 +135,23 @@ export function OwnerDashboard(): React.JSX.Element {
           <UploadsScreen transfers={transfers} loading={loading} error={error} drive={drive}
             onOpen={setOpenId} onSettings={() => go('settings')} />
         ) : view === 'freelance' ? (
-          studio.activeView === 'freelanceStudio' && studio.selectedFreelanceClientId ? (
-            <FreelanceStudioView />
-          ) : studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
-            <FreelanceEditorView />
-          ) : (
-            <div className="board-area">
+          // All three bring their own Tailwind spacing rather than .screen, so the
+          // scroller belongs out here around whichever one is showing — a studio
+          // or editor page runs past the window just as readily as the board.
+          <div className="board-area">
+            {studio.activeView === 'freelanceStudio' && studio.selectedFreelanceClientId ? (
+              <FreelanceStudioView />
+            ) : studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
+              <FreelanceEditorView />
+            ) : (
               <FreelanceDepartmentView
                 deliverables={
                   <WorkScreen kind="deliverables" transfers={transfers} drive={drive}
                     onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
                 }
               />
-            </div>
-          )
+            )}
+          </div>
         ) : view === 'scanner' ? (
           <WorkScreen kind="freelance" transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
         ) : view === 'team' ? (
