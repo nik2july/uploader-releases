@@ -21,6 +21,11 @@ export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refr
   const [pairs, setPairs] = useState(defaults?.countPhotoPairsOnce ?? true);
   const [awake, setAwake] = useState(defaults?.keepAwake ?? false);
   const [dest, setDest] = useState<'drive' | 'b2'>(defaults?.destination ?? 'b2');
+  // Which build this Mac is actually running. The main process is the only
+  // thing that knows, and "am I on the new one yet?" is otherwise a trip
+  // through the About panel.
+  const [version, setVersion] = useState('');
+  useEffect(() => { void window.api.appVersion().then(setVersion).catch(() => {}); }, []);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [error, setError] = useState('');
   useEffect(() => {
     if (dbxConfig) {
@@ -232,7 +237,7 @@ export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refr
     <p className="muted">Transfers already stop the Mac suspending them. Turn this on as well if your Mac is set to sleep quickly and you want the screen kept on too. Uploads pause on sleep and resume on waking either way.</p>
     <p className="muted">All these files still upload. Only measurement totals change. The invoice records the policy used. Album sheets round up; selected photos round to the nearest whole photo.</p>
     <button disabled={busy} className="primary" onClick={() => void run(() => saveUploaderSettings(uploaderPayload()), 'Defaults saved to your shared studio settings.')}>Save shared defaults</button>
-    <hr/><p>Studio: {studioSettings?.studioName || 'Baawaray'}<br/>Currency: {studioSettings?.currency || 'INR'}<br/>Configured tax: {studioSettings?.taxGstPercent || 0}%</p>
+    <hr/><p>App version: {version || '—'}<br/>Studio: {studioSettings?.studioName || 'Baawaray'}<br/>Currency: {studioSettings?.currency || 'INR'}<br/>Configured tax: {studioSettings?.taxGstPercent || 0}%</p>
     <p className="muted">Partner rates, deliverable prices and editor details are read from your existing web settings. Time billing keeps the one-minute / one-hour minimum.</p>
     <button onClick={() => void window.api.openExternal('https://app.baawaray.com')}>Open studio web app</button>
     <hr/>
