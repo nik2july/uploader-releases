@@ -53,6 +53,18 @@ body { margin: 0; }
 .update-banner svg { color: var(--burgundy); flex-shrink: 0; }
 .update-banner button { padding: 6px 12px; font-size: 13px; }
 .screen { padding: 30px 34px 40px; overflow-y: auto; flex: 1; }
+/*
+ * The freelance board is not a .screen — it brings its own Tailwind spacing —
+ * but .main-area hides its overflow and expects whatever sits in it to do the
+ * scrolling. Without this the board is simply clipped at the window edge, which
+ * went unnoticed until a section long enough to run past it arrived.
+ */
+.board-area { flex: 1; overflow-y: auto; }
+/*
+ * A screen rendered inside the board scrolls with the board rather than against
+ * it, and lines up with the board's other sections instead of insetting itself.
+ */
+.board-area .screen { padding: 0; overflow: visible; flex: initial; }
 .screen > header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
 .screen h2 { font-family: var(--font-heading); font-size: 30px; line-height: 1.15; margin: 2px 0 0; }
 .screen header p { color: var(--muted); margin: 6px 0 0; max-width: 62ch; }

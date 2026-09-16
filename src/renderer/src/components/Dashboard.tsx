@@ -140,12 +140,14 @@ export function OwnerDashboard(): React.JSX.Element {
           ) : studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
             <FreelanceEditorView />
           ) : (
-            <FreelanceDepartmentView
-              deliverables={
-                <WorkScreen kind="deliverables" transfers={transfers} drive={drive}
-                  onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
-              }
-            />
+            <div className="board-area">
+              <FreelanceDepartmentView
+                deliverables={
+                  <WorkScreen kind="deliverables" transfers={transfers} drive={drive}
+                    onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+                }
+              />
+            </div>
           )
         ) : view === 'scanner' ? (
           <WorkScreen kind="freelance" transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
