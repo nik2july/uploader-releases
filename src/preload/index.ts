@@ -13,6 +13,7 @@ const api: DesktopAPI = {
   removeTransfer: (id, keepUploaded) => ipcRenderer.invoke('transfers:remove', id, keepUploaded),
   downloadUpdate: info => ipcRenderer.invoke('updates:download', info),
   installUpdate: () => ipcRenderer.invoke('updates:install'),
+  logRendererError: (message, stack) => ipcRenderer.invoke('log:rendererError', message, stack),
   onUpdateProgress: callback => {
     const listener = (_: unknown, data: { received: number; total: number }): void => callback(data);
     ipcRenderer.on('update:progress', listener);

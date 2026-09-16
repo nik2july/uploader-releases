@@ -74,6 +74,7 @@ export interface DesktopAPI {
   removeTransfer(id: string, keepUploaded?: boolean): Promise<{ removed: boolean; keptLink?: string }>;
   downloadUpdate(info: UpdateInfo): Promise<{ ready: boolean; version: string }>;
   installUpdate(): Promise<void>;
+  logRendererError(message: string, stack: string): Promise<void>;
   onUpdateProgress(callback: (progress: { received: number; total: number }) => void): () => void;
   dropboxStatus(): Promise<DropboxStatus>;
   connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;

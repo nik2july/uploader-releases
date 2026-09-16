@@ -314,6 +314,9 @@ export async function setupIpcHandlers(): Promise<() => void> {
   // is a public release feed. Both are useful before anyone has signed in.
   handle('app:version', () => app.getVersion(), false);
   handle('app:diagnostics', () => recentLog(), false);
+  handle('log:rendererError', (message: string, stack: string) => {
+    log('renderer crash', `${String(message).slice(0, 500)}\n${String(stack).slice(0, 2000)}`);
+  }, false);
   handle('updates:check', () => checkForUpdate(), false);
   handle('updates:download', async (info: UpdateInfo) => {
     if (!info || typeof info.version !== 'string') throw new Error('No update to download.');
