@@ -13,7 +13,9 @@ import {
   serviceDefinition,
 } from '../../utils/freelancePricing';
 import { resolvePostProductionServices } from '../../utils/postProductionServices';
+import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import {
+  ClientDeliverable,
   FreelanceJob,
   FreelanceJobStage,
   FreelancePricing,
@@ -35,6 +37,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   Film,
+  Plus,
 } from 'lucide-react';
 
 interface NewFreelanceJobModalProps {
@@ -55,13 +58,26 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   initialJob,
   presetClientId,
 }) => {
-  const { addFreelanceJob, updateFreelanceJob, team, freelanceClients, freelanceJobs, studioSettings } = useApp();
+  const {
+    addFreelanceJob,
+    updateFreelanceJob,
+    team,
+    freelanceClients,
+    freelanceJobs,
+    studioSettings,
+    studioPriceList,
+    clients,
+  } = useApp();
 
   const todayStr = new Date().toISOString().split('T')[0];
 
   const presetClient = presetClientId
     ? freelanceClients.find(c => c.id === presetClientId)
     : undefined;
+
+  const [successBanner, setSuccessBanner] = useState('');
+  const [reuseMode, setReuseMode] = useState<'new' | 'existing'>('new');
+  const [selectedSourceJobId, setSelectedSourceJobId] = useState<string>('');
 
   const [title, setTitle] = useState(initialJob?.title || '');
   const [freelanceClientId, setFreelanceClientId] = useState<string | undefined>(
@@ -345,8 +361,59 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
     [workloads]
   );
 
+  // Existing jobs for this studio / client that have raw data available
+  const clientExistingJobs = useMemo(() => {
+    return freelanceJobs.filter(j => {
+      if (initialJob && j.id === initialJob.id) return false;
+      const sameStudio = freelanceClientId && j.freelanceClientId === freelanceClientId;
+      const sameClientName = clientName.trim() && j.clientName?.trim().toLowerCase() === clientName.trim().toLowerCase();
+      const hasData = Boolean(j.rawDataLink || j.rawDurationHours || j.rawPhotoCount || (j as any).desktopTransfers);
+      return (sameStudio || sameClientName) && hasData;
+    });
+  }, [freelanceJobs, freelanceClientId, clientName, initialJob]);
+
+  // Client deliverables from studio's clients with raw data
+  const matchingClientDeliverables = useMemo(() => {
+    if (!clients) return [];
+    const matchedClient = clients.find(c =>
+      (clientName.trim() && (c.name?.toLowerCase().includes(clientName.trim().toLowerCase()) || (c.couple && c.couple.toLowerCase().includes(clientName.trim().toLowerCase()))))
+    );
+    if (!matchedClient?.deliverables) return [];
+    return ((matchedClient.deliverables || []) as ClientDeliverable[]).filter(
+      d => Boolean(d.rawDataLink) || d.rawDataSource === 'hard_drive' || Object.keys(d.desktopTransfers || {}).length > 0
+    ).map(d => ({
+      ...d,
+      clientCouple: matchedClient.couple || matchedClient.name,
+      clientId: String(matchedClient.id),
+    }));
+  }, [clients, clientName]);
+
+  const handleReuseJobSelect = (jobId: string) => {
+    setSelectedSourceJobId(jobId);
+    if (!jobId) return;
+    const sourceJob = freelanceJobs.find(j => j.id === jobId);
+    if (sourceJob) {
+      if (sourceJob.rawDataLink) setRawDataLink(sourceJob.rawDataLink);
+      if (sourceJob.dataReceivedDate) setDataReceivedDate(sourceJob.dataReceivedDate);
+      if (sourceJob.rawDurationHours) setRawHours(sourceJob.rawDurationHours);
+      if (sourceJob.pricing?.durationHours) setRawHours(sourceJob.pricing.durationHours);
+      setFormError('');
+      return;
+    }
+    const sourceDeliv = matchingClientDeliverables.find(d => d.id === jobId);
+    if (sourceDeliv) {
+      if (sourceDeliv.rawDataLink) setRawDataLink(sourceDeliv.rawDataLink);
+      if (sourceDeliv.rawDurationHours) setRawHours(sourceDeliv.rawDurationHours);
+      setFormError('');
+    }
+  };
+
   const availableServices = useMemo(() => {
-    const resolved = resolvePostProductionServices(studioSettings?.crewRoles);
+    const roles = normaliseServices(
+      studioSettings?.crewRoles || studioPriceList?.crewRoles || [],
+      resolveRoleGroups(studioSettings?.roleGroups)
+    );
+    const resolved = resolvePostProductionServices(roles);
     return resolved.map(s => ({
       name: s.name,
       basis: s.basis,
@@ -358,7 +425,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
       defaultCostRate: s.defaultCostRate,
       defaultQuantity: s.defaultQuantity,
     }));
-  }, [studioSettings?.crewRoles]);
+  }, [studioSettings?.crewRoles, studioPriceList?.crewRoles, studioSettings?.roleGroups]);
 
   const serviceOptions = availableServices.map(s => s.name);
   const legacyServiceType =
@@ -413,10 +480,10 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   // more than the job actually measured.
   const minimumApplied = Boolean(pricingDraft && isMinimumApplied(pricingDraft));
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent, addAnother: boolean = false) => {
     e.preventDefault();
     if (!title.trim()) {
-      setFormError('Give the project a title.');
+      setFormError('Give the project a title (e.g. Couple Name or Project Name).');
       return;
     }
     // A studio answers for the name; only a one-off client has to type one.
@@ -490,11 +557,27 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
 
     if (initialJob) {
       updateFreelanceJob(initialJob.id, jobPayload, 'Freelance Job Details Updated');
+      onClose();
     } else {
       addFreelanceJob(jobPayload);
+      if (addAnother) {
+        setSuccessBanner(`✓ "${jobPayload.serviceType}" deliverable logged! Add another deliverable for this client below using the same raw rushes.`);
+        setServiceType('');
+        setEditorName('');
+        setEditorPhone('');
+        setEditorMemberId(undefined);
+        setUseManualEditor(false);
+        setRate('');
+        setQuantity('');
+        setOutputMinutes('');
+        setOutputSeconds('');
+        setManualCharge('');
+        setFormError('');
+        setTimeout(() => setSuccessBanner(''), 6000);
+      } else {
+        onClose();
+      }
     }
-
-    onClose();
   };
 
   const numberFieldClass =
@@ -528,6 +611,13 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
 
         {/* Scrollable Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-6">
+          {successBanner && (
+            <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center gap-2.5 text-xs font-bold text-emerald-900 shadow-xs">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{successBanner}</span>
+            </div>
+          )}
+
           {/* Section 1: Project & Client Essentials */}
           <div className="bg-white rounded-xl p-5 border border-[#d4c1a3]/70 shadow-2xs space-y-4">
             <div className="flex items-center gap-2 pb-2 border-b border-[#d4c1a3]/40">
@@ -1101,24 +1191,99 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
             </div>
           </div>
 
-          {/* Section 5: Raw Data */}
-          {/* Section 5: Raw Data & Cloud Storage */}
-          <div className="bg-white rounded-xl p-5 border border-[#d4c1a3]/70 shadow-2xs space-y-3">
-            <div className="flex items-center gap-2 pb-2 border-b border-[#d4c1a3]/40">
-              <Film className="w-4 h-4 text-[#7a2e33]" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-[#7a2e33]">
-                5. Raw Footage & Cloud Delivery
-              </h3>
+          {/* Section 5: Raw Footage & Cloud Delivery */}
+          <div className="bg-white rounded-xl p-5 border border-[#d4c1a3]/70 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-[#d4c1a3]/40 gap-2">
+              <div className="flex items-center gap-2">
+                <Film className="w-4 h-4 text-[#7a2e33]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#7a2e33]">
+                  5. Raw Footage & Cloud Delivery
+                </h3>
+              </div>
+              {(clientExistingJobs.length > 0 || matchingClientDeliverables.length > 0) && (
+                <div className="flex items-center bg-[#f9f8f6] p-1 rounded-xl border border-[#d4c1a3]">
+                  <button
+                    type="button"
+                    onClick={() => { setReuseMode('new'); setSelectedSourceJobId(''); }}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-all cursor-pointer ${
+                      reuseMode === 'new' ? 'bg-[#7a2e33] text-white shadow-xs' : 'text-[#6b6660] hover:text-[#111417]'
+                    }`}
+                  >
+                    Different / New Data
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReuseMode('existing');
+                      const first = clientExistingJobs[0]?.id || matchingClientDeliverables[0]?.id;
+                      if (first) handleReuseJobSelect(first);
+                    }}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-all cursor-pointer ${
+                      reuseMode === 'existing' ? 'bg-[#7a2e33] text-white shadow-xs' : 'text-[#6b6660] hover:text-[#111417]'
+                    }`}
+                  >
+                    ⚡ Same Data / Reuse Rushes
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="p-3 bg-[#fbf9f5] border border-[#d4c1a3]/60 rounded-xl text-xs space-y-1">
-              <p className="font-semibold text-[#111417]">
-                Direct Desktop App Pipeline Active
-              </p>
-              <p className="text-[11px] text-[#6b6660] leading-relaxed">
-                Raw footage packages are uploaded directly from your computer via the <strong>Baawaray Studio Desktop App</strong> to Backblaze B2. Assigned editors download raw footage and submit deliverables straight through the desktop app without manual link copy-pasting.
-              </p>
-            </div>
+            {reuseMode === 'existing' && (clientExistingJobs.length > 0 || matchingClientDeliverables.length > 0) ? (
+              <div className="p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-xl space-y-2">
+                <div className="flex items-center gap-2">
+                  <LinkIcon className="w-4 h-4 text-emerald-700" />
+                  <span className="text-xs font-bold text-emerald-900">
+                    Reusing Existing Raw Rushes for this Client
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-800">
+                  Select which project or deliverable has the raw footage. Both edits will share the same rushes without re-uploading.
+                </p>
+                <select
+                  value={selectedSourceJobId}
+                  onChange={e => handleReuseJobSelect(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-semibold text-[#111417] focus:outline-none focus:border-emerald-600"
+                >
+                  <option value="">-- Choose existing project rushes --</option>
+                  {clientExistingJobs.map(j => (
+                    <option key={j.id} value={j.id}>
+                      {j.jobCode} · {j.title} ({j.serviceType}) {j.rawDataLink ? '· Link Attached' : ''}
+                    </option>
+                  ))}
+                  {matchingClientDeliverables.map(d => (
+                    <option key={d.id} value={d.id}>
+                      Shoot Deliverable · {d.clientCouple} - {d.title} {d.rawDataLink ? '· Link Attached' : ''}
+                    </option>
+                  ))}
+                </select>
+                {rawDataLink && (
+                  <div className="text-[11px] font-mono text-emerald-800 bg-white/70 p-2 rounded-lg truncate border border-emerald-200">
+                    Shared Rushes Link: {rawDataLink}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-[#111417] mb-1">
+                    Raw Footage Link (Backblaze B2, Google Drive, Dropbox, NAS)
+                  </label>
+                  <div className="relative">
+                    <LinkIcon className="absolute left-3.5 top-3 w-4 h-4 text-[#6b6660]" />
+                    <input
+                      type="url"
+                      placeholder="https://..."
+                      value={rawDataLink}
+                      onChange={e => setRawDataLink(e.target.value)}
+                      className="w-full pl-10 pr-3.5 py-2.5 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all font-mono"
+                    />
+                  </div>
+                  <p className="text-[10px] text-[#6b6660] mt-1">
+                    Or upload directly via the Desktop App. Once uploaded, the raw footage link attaches automatically.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Section 6: Creative Brief & Instructions */}
@@ -1163,14 +1328,27 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
               {formError}
             </p>
           )}
-          <button
-            type="button"
-            onClick={handleSubmit}
-            className="flex items-center gap-2 px-6 py-2.5 bg-[#7a2e33] hover:bg-[#5a2226] text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>{initialJob ? 'Save Changes' : 'Create Freelance Project'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {!initialJob && (
+              <button
+                type="button"
+                onClick={e => handleSubmit(e, true)}
+                className="flex items-center gap-1.5 px-4 py-2.5 bg-white hover:bg-[#f9f8f6] border border-[#7a2e33] text-[#7a2e33] font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                title="Save this deliverable and immediately add another one for the same client using the same raw rushes"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Save & Add Another Deliverable</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={e => handleSubmit(e, false)}
+              className="flex items-center gap-2 px-6 py-2.5 bg-[#7a2e33] hover:bg-[#5a2226] text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{initialJob ? 'Save Changes' : 'Create Freelance Project'}</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

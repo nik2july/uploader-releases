@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ensureBaawarayFilmsStudio } from '../../lib/studioRepository';
+import { ensureBaawarayFilmsStudio, reuseDeliverableRawData } from '../../lib/studioRepository';
 import { BAAWARAY_FILMS_STUDIO_ID } from '../../lib/studioRepository';
 import type { WorkTarget } from '../../../../shared/contracts';
 import type { ClientDeliverable } from '../../types';
@@ -61,7 +61,14 @@ import { FreelanceRevisionModal } from '../modals/FreelanceRevisionModal';
  * A deliverable rendered as a row on the job board. Only the fields the board
  * reads are filled; `pendingDeliverable` is what marks it as not a real job.
  */
-type PendingRow = FreelanceJob & { pendingDeliverable?: { target: WorkTarget } };
+type PendingRow = FreelanceJob & {
+  pendingDeliverable?: {
+    target: WorkTarget;
+    client?: any;
+    deliverable?: ClientDeliverable;
+    reusableDeliverables?: ClientDeliverable[];
+  };
+};
 
 export const FreelanceDepartmentView: React.FC<{
   /** Starts a scan for a deliverable that has no footage yet. Owned by the dashboard. */
@@ -165,26 +172,35 @@ export const FreelanceDepartmentView: React.FC<{
         if ((item.postProductionJobIds || []).length) continue;
         const service = roles.find(r => r.id === item.linkedRoleId)?.name || item.category || '';
         if (!isPostProductionService(service, sold)) continue;
+        const coupleOrClientName = client.couple || client.name || item.title;
         const target: WorkTarget = {
           kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
-          clientName: client.name, serviceType: service, purpose: 'raw', dueDate: item.dueDate,
+          clientName: coupleOrClientName, serviceType: service, purpose: 'raw', dueDate: item.dueDate,
         };
+        const reusableDeliverables = ((client.deliverables || []) as ClientDeliverable[]).filter(
+          d => d.id !== item.id && (Boolean(d.rawDataLink) || d.rawDataSource === 'hard_drive' || Object.keys(d.desktopTransfers || {}).length > 0)
+        );
         rows.push({
           id: `deliverable:${client.id}:${item.id}`,
           jobCode: 'AWAITING FOOTAGE',
-          title: item.title,
+          title: coupleOrClientName,
           serviceType: service,
           // No stage of its own: nothing has been received, which is the point.
           stage: 'pending_assignment',
-          clientName: 'BAAWARAY FILMS',
-          clientPhone: '',
+          clientName: client.name || coupleOrClientName,
+          clientPhone: client.phone || '',
           freelanceClientId: BAAWARAY_FILMS_STUDIO_ID,
           editorName: '',
           editorPhone: '',
           clientCharge: 0,
           dueDate: item.dueDate,
           revisions: [],
-          pendingDeliverable: { target },
+          pendingDeliverable: {
+            target,
+            client,
+            deliverable: item,
+            reusableDeliverables,
+          },
           // Deliberately partial: a deliverable is not a job and has no code,
           // editor, payments or stage history. Only the fields the board reads
           // are filled, and pendingDeliverable tells the board which is which.
@@ -194,6 +210,30 @@ export const FreelanceDepartmentView: React.FC<{
     return rows;
   }, [clients, studioSettings, studioPriceList]);
 
+  const getJobDisplayTitle = (job: FreelanceJob) => {
+    if ((job as PendingRow).pendingDeliverable) return job.title;
+    if (job.sourceClientId) {
+      const c = clients?.find(cl => String(cl.id) === String(job.sourceClientId));
+      if (c?.couple) return c.couple;
+      if (c?.name) return c.name;
+    }
+    return job.title;
+  };
+
+  const getJobDisplayClient = (job: FreelanceJob) => {
+    if ((job as PendingRow).pendingDeliverable) {
+      return 'BAAWARAY FILMS';
+    }
+    if (job.freelanceClientId === BAAWARAY_FILMS_STUDIO_ID || job.sourceCompany === 'baawaray-films') {
+      if (job.sourceClientId) {
+        const c = clients?.find(cl => String(cl.id) === String(job.sourceClientId));
+        if (c?.name || c?.couple) return `${c.couple || c.name} · BAAWARAY FILMS`;
+      }
+      return 'BAAWARAY FILMS';
+    }
+    return job.clientName;
+  };
+
   const filteredJobs = useMemo(() => {
     // The studio's own pending work sits first: it is the work that cannot start
     // until someone does something about it.
@@ -201,12 +241,18 @@ export const FreelanceDepartmentView: React.FC<{
       // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchTitle = job.title.toLowerCase().includes(q);
-        const matchClient = job.clientName.toLowerCase().includes(q);
-        const matchEditor = job.editorName.toLowerCase().includes(q);
-        const matchCode = job.jobCode.toLowerCase().includes(q);
-        const matchService = job.serviceType.toLowerCase().includes(q);
-        if (!matchTitle && !matchClient && !matchEditor && !matchCode && !matchService) {
+        const pending = (job as PendingRow).pendingDeliverable;
+        const displayTitle = getJobDisplayTitle(job);
+        const displayClient = getJobDisplayClient(job);
+        const matchTitle = (job.title && job.title.toLowerCase().includes(q)) || (displayTitle && displayTitle.toLowerCase().includes(q));
+        const matchClient = (job.clientName && job.clientName.toLowerCase().includes(q)) || (displayClient && displayClient.toLowerCase().includes(q));
+        const matchEditor = job.editorName && job.editorName.toLowerCase().includes(q);
+        const matchCode = job.jobCode && job.jobCode.toLowerCase().includes(q);
+        const matchService = job.serviceType && job.serviceType.toLowerCase().includes(q);
+        const matchDeliverableTitle = pending?.deliverable?.title && pending.deliverable.title.toLowerCase().includes(q);
+        const matchCouple = pending?.client?.couple && pending.client.couple.toLowerCase().includes(q);
+        const matchClientRealName = pending?.client?.name && pending.client.name.toLowerCase().includes(q);
+        if (!matchTitle && !matchClient && !matchEditor && !matchCode && !matchService && !matchDeliverableTitle && !matchCouple && !matchClientRealName) {
           return false;
         }
       }
@@ -235,7 +281,7 @@ export const FreelanceDepartmentView: React.FC<{
 
       return true;
     });
-  }, [pendingDeliverables, freelanceJobs, searchQuery, selectedStageTab, paymentFilter]);
+  }, [pendingDeliverables, freelanceJobs, searchQuery, selectedStageTab, paymentFilter, clients]);
 
   // Stage counts
   const stageCounts = useMemo(() => {
@@ -523,21 +569,49 @@ export const FreelanceDepartmentView: React.FC<{
                 >
                   <div className="p-5 space-y-3.5">
                     <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-sm font-bold text-[#111417] leading-snug">{job.title}</h3>
+                      <div>
+                        <h3 className="text-sm font-bold text-[#111417] leading-snug">{job.title}</h3>
+                        <div className="text-[11px] text-[#7a2e33] font-semibold mt-0.5">
+                          {job.serviceType}
+                        </div>
+                      </div>
                       <span className="shrink-0 px-2 py-0.5 rounded-md bg-[#f9f8f6] border border-[#d4c1a3] text-[9px] font-bold uppercase tracking-wider text-[#6b6660]">
                         Awaiting footage
                       </span>
                     </div>
                     <div className="text-[11px] text-[#6b6660] font-medium">
-                      BAAWARAY FILMS · {job.serviceType}
-                      {job.dueDate ? ` · due ${job.dueDate}` : ''}
+                      BAAWARAY FILMS{job.dueDate ? ` · Due ${job.dueDate}` : ''}
                     </div>
                     <p className="text-[11px] text-[#6b6660] leading-relaxed">
-                      Send the raw footage and this becomes a job on the board, priced from
-                      BAAWARAY FILMS&rsquo; rate card.
+                      Upload raw rushes or link existing client footage to move this deliverable to Post Production.
                     </p>
                   </div>
-                  <div className="px-5 pb-5">
+                  <div className="px-5 pb-5 space-y-2">
+                    {pending.reusableDeliverables && pending.reusableDeliverables.length > 0 && (
+                      <div className="p-2.5 bg-[#fbf9f5] border border-[#d4c1a3] rounded-xl text-xs space-y-1.5">
+                        <div className="font-semibold text-[#111417] text-[11px] flex items-center gap-1">
+                          <LinkIcon className="w-3.5 h-3.5 text-[#7a2e33]" />
+                          Reuse client's uploaded raw data:
+                        </div>
+                        {pending.reusableDeliverables.map(reuse => (
+                          <button
+                            key={reuse.id}
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await reuseDeliverableRawData(pending.target.clientId!, pending.target.id, reuse.id);
+                              } catch (err: any) {
+                                alert(err.message || 'Failed to reuse raw data');
+                              }
+                            }}
+                            className="w-full text-left px-2 py-1.5 bg-white hover:bg-emerald-50 border border-[#d4c1a3]/60 hover:border-emerald-300 rounded-lg text-[11px] text-[#111417] font-medium transition-colors flex items-center justify-between cursor-pointer"
+                          >
+                            <span className="truncate">Use data from {reuse.title}</span>
+                            <span className="shrink-0 text-[10px] text-emerald-700 font-bold ml-1">Attach ⚡</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <button
                       type="button"
                       disabled={!onUploadForDeliverable}
@@ -581,7 +655,7 @@ export const FreelanceDepartmentView: React.FC<{
                       onClick={() => setSelectedDetailJobId(job.id)}
                       className="text-sm font-bold text-[#111417] group-hover:text-[#7a2e33] transition-colors cursor-pointer leading-snug line-clamp-1"
                     >
-                      {job.title}
+                      {getJobDisplayTitle(job)}
                     </h3>
                     <div className="flex items-center gap-1 text-[11px] text-[#6b6660] mt-0.5">
                       <span>{job.serviceType}</span>
@@ -591,8 +665,10 @@ export const FreelanceDepartmentView: React.FC<{
                   {/* Client & Editor mini info */}
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#d4c1a3]/40 text-xs">
                     <div>
-                      <span className="text-[10px] text-[#6b6660] uppercase font-bold">Client</span>
-                      <div className="font-semibold text-[#111417] truncate">{job.clientName}</div>
+                      <span className="text-[10px] text-[#6b6660] uppercase font-bold">
+                        {job.freelanceClientId === BAAWARAY_FILMS_STUDIO_ID || job.sourceCompany === 'baawaray-films' ? 'Partner Studio' : 'Client'}
+                      </span>
+                      <div className="font-semibold text-[#111417] truncate">{getJobDisplayClient(job)}</div>
                       <div className="text-[10px] text-[#6b6660] font-mono truncate">{job.clientPhone}</div>
                     </div>
                     <div>
@@ -766,19 +842,65 @@ export const FreelanceDepartmentView: React.FC<{
                     // were facts about work that has not started.
                     return (
                       <tr key={job.id} className="hover:bg-[#f9f8f6]/40 transition-colors text-[#6b6660]">
-                        <td className="px-3 py-2.5 font-semibold text-[#111417]">{job.title}</td>
-                        <td className="px-3 py-2.5">BAAWARAY FILMS</td>
-                        <td className="px-3 py-2.5">{job.serviceType}</td>
-                        <td className="px-3 py-2.5" colSpan={20}>
-                          <button
-                            type="button"
-                            disabled={!onUploadForDeliverable}
-                            onClick={() => onUploadForDeliverable?.(pendingRow.target)}
-                            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7a2e33] hover:underline disabled:opacity-40 cursor-pointer"
-                          >
-                            <Upload className="w-3 h-3" />
-                            Awaiting footage — upload to start
-                          </button>
+                        <td className="py-3 px-4">
+                          <span className="font-mono text-[10px] font-bold text-[#6b6660] bg-[#f9f8f6] px-2 py-0.5 rounded border border-[#d4c1a3]">
+                            AWAITING FOOTAGE
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-[#111417]">
+                            {job.title}
+                          </div>
+                          <div className="text-[11px] text-[#6b6660]">
+                            {job.serviceType} · BAAWARAY FILMS
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-xs italic text-[#6b6660]">
+                          Unassigned
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                            Awaiting Footage
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-medium text-[#111417]">
+                          {job.dueDate || '—'}
+                        </td>
+                        <td className="py-3 px-4 text-xs text-[#6b6660]">—</td>
+                        <td className="py-3 px-4 text-xs text-[#6b6660]">—</td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="inline-flex flex-col items-end gap-1">
+                            {pendingRow.reusableDeliverables && pendingRow.reusableDeliverables.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await reuseDeliverableRawData(
+                                      pendingRow.target.clientId!,
+                                      pendingRow.target.id,
+                                      pendingRow.reusableDeliverables![0].id
+                                    );
+                                  } catch (err: any) {
+                                    alert(err.message || 'Failed to reuse data');
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer"
+                                title={`Use data from ${pendingRow.reusableDeliverables[0].title}`}
+                              >
+                                <LinkIcon className="w-3 h-3" />
+                                Reuse client data
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={!onUploadForDeliverable}
+                              onClick={() => onUploadForDeliverable?.(pendingRow.target)}
+                              className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7a2e33] hover:underline disabled:opacity-40 cursor-pointer"
+                            >
+                              <Upload className="w-3 h-3" />
+                              Upload footage
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -800,10 +922,10 @@ export const FreelanceDepartmentView: React.FC<{
                           onClick={() => setSelectedDetailJobId(job.id)}
                           className="font-bold text-[#111417] hover:text-[#7a2e33] cursor-pointer"
                         >
-                          {job.title}
+                          {getJobDisplayTitle(job)}
                         </div>
                         <div className="text-[11px] text-[#6b6660]">
-                          Client: {job.clientName} ({job.clientPhone})
+                          {getJobDisplayClient(job)} {job.clientPhone ? `(${job.clientPhone})` : ''}
                         </div>
                       </td>
                       <td className="py-3 px-4">
@@ -910,9 +1032,9 @@ export const FreelanceDepartmentView: React.FC<{
                         <span className="text-[10px] font-mono font-bold text-[#7a2e33]">{j.jobCode}</span>
                         <span className="text-[10px] font-semibold text-[#6b6660]">{j.dueDate}</span>
                       </div>
-                      <div className="text-xs font-bold text-[#111417] line-clamp-1">{j.title}</div>
+                      <div className="text-xs font-bold text-[#111417] line-clamp-1">{getJobDisplayTitle(j)}</div>
                       <div className="text-[10px] text-[#6b6660] flex items-center justify-between">
-                        <span>{j.clientName}</span>
+                        <span>{getJobDisplayClient(j)}</span>
                         <span className="font-bold text-emerald-700">₹{inrDigits(j.clientCharge)}</span>
                       </div>
                     </div>

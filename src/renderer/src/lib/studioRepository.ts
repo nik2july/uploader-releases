@@ -92,6 +92,14 @@ export async function sendBaawarayDeliverableToPostProduction(
   }
   if (services.length === 0) throw new Error('Choose at least one Post Production service.');
   const partnerId = await ensureBaawarayFilmsStudio();
+
+  // Fetch client details to use Couple Name as project title
+  const clientSnap = await getDoc(doc(db, 'clients', clientId));
+  const clientData = clientSnap.exists() ? clientSnap.data() : null;
+  const coupleTitle = clientData?.couple || clientData?.name || deliverable.title;
+  const clientName = clientData?.name || clientData?.couple || 'BAAWARAY FILMS';
+  const clientPhone = clientData?.phone || '';
+
   // What BAAWARAY FILMS is charged per unit. Read once: a job records the rate it
   // was billed at, so editing the card later never rewrites work already sent.
   const rateCard = ((await getDoc(doc(db, 'freelance_clients', partnerId))).data()?.rateCard || {}) as Record<string, number>;
@@ -110,8 +118,8 @@ export async function sendBaawarayDeliverableToPostProduction(
     const clientCharge = chargeForDeliverable(serviceType, rateCard[serviceType], measurements, configured);
     charged += clientCharge;
     ids.push(await createFreelanceJob({
-      title: deliverable.title, serviceType, freelanceClientId: partnerId,
-      clientName: 'BAAWARAY FILMS', clientPhone: '', rawDataLink: deliverable.rawDataLink,
+      title: coupleTitle, serviceType, freelanceClientId: partnerId,
+      clientName: clientName, clientPhone: clientPhone, rawDataLink: deliverable.rawDataLink,
       rawDataSource: deliverable.rawDataSource, rawDurationHours: deliverable.rawDurationHours,
       rawDurationMinutes: deliverable.rawDurationMinutes, rawPhotoCount: deliverable.rawPhotoCount,
       clientCharge, pricing,
@@ -142,6 +150,78 @@ export async function sendBaawarayDeliverableToPostProduction(
       : item) });
   });
   return ids;
+}
+
+/**
+ * Reuse raw data (upload link, hard drive, duration measurements) from an existing
+ * client deliverable onto another deliverable for the same client, and send it to
+ * Post Production if appropriate.
+ */
+export async function reuseDeliverableRawData(
+  clientId: string,
+  targetDeliverableId: string,
+  sourceDeliverableId: string
+): Promise<string[]> {
+  if (!clientId || !targetDeliverableId || !sourceDeliverableId) {
+    throw new Error('Client ID and deliverable IDs are required.');
+  }
+  const ref = doc(db, 'clients', clientId);
+  let fileIntoPostProduction = false;
+  let copiedData: any = null;
+  let targetDeliverable: ClientDeliverable | null = null;
+  const configuredServices = await studioPostProductionServices();
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Client no longer exists.');
+    const items = (snap.data().deliverables || []) as ClientDeliverable[];
+    const source = items.find(d => d.id === sourceDeliverableId);
+    const target = items.find(d => d.id === targetDeliverableId);
+    if (!source) throw new Error('Source deliverable with raw data was not found.');
+    if (!target) throw new Error('Target deliverable was not found.');
+
+    copiedData = {
+      rawDataLink: source.rawDataLink || '',
+      rawDataSource: source.rawDataSource || 'upload',
+      hardDriveNotes: source.hardDriveNotes || '',
+      rawDurationHours: source.rawDurationHours || 0,
+      rawDurationMinutes: source.rawDurationMinutes || 0,
+      rawPhotoCount: source.rawPhotoCount || 0,
+      desktopTransfers: source.desktopTransfers || {},
+    };
+
+    targetDeliverable = {
+      ...target,
+      ...copiedData,
+    };
+
+    const targetWork: WorkTarget = {
+      kind: 'deliverable',
+      id: target.id,
+      clientId: String(clientId),
+      title: target.title,
+      clientName: snap.data().couple || snap.data().name || target.title,
+      serviceType: target.category || '',
+      purpose: 'raw',
+      dueDate: target.dueDate,
+    };
+
+    fileIntoPostProduction = shouldFileIntoPostProduction(targetWork, targetDeliverable || undefined, configuredServices);
+
+    tx.update(ref, {
+      deliverables: items.map(d => (d.id === targetDeliverableId ? targetDeliverable : d)),
+    });
+  });
+
+  if (fileIntoPostProduction && targetDeliverable) {
+    const service = (targetDeliverable as ClientDeliverable).category || (targetDeliverable as ClientDeliverable).title;
+    return await sendBaawarayDeliverableToPostProduction(
+      clientId,
+      targetDeliverable,
+      [service]
+    );
+  }
+  return [];
 }
 
 export async function createExtra(clientId: string, extra: Pick<ClientDeliverable, 'title' | 'linkedRoleId' | 'sellingPrice'>): Promise<string> {

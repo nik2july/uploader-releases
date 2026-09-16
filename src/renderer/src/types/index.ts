@@ -134,6 +134,9 @@ export interface Client {
   callLogs?: CallLog[];
   id: number;
   name: string;
+  couple?: string;
+  groomName?: string;
+  brideName?: string;
   phone: string;
   // Optional in practice: the client forms leave these blank, and every reader
   // already guards them. They were declared required, which hid that from tsc.
