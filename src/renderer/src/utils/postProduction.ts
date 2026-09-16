@@ -1,12 +1,19 @@
+import {
+  findPostProductionService,
+  resolvePostProductionServices,
+  type PostProductionService,
+} from './postProductionServices';
+
 /**
- * The services Post Production actually does.
+ * The built-in services, for callers with no studio settings to hand.
  *
- * A deliverable filed under anything else — storage, a raw handover, a category
- * from before these existed — is not its work. Nothing is created for those, and
- * Send to Post Production stays the way to file one by hand: guessing which
- * service an old "Video" deliverable meant would be worse than asking.
+ * A deliverable filed under anything that is not a Post Production service —
+ * storage, a raw handover, a category from before these existed — is not its
+ * work. Nothing is created for those, and Send to Post Production stays the way
+ * to file one by hand: guessing which service an old "Video" deliverable meant
+ * would be worse than asking.
  */
-export const POST_PRODUCTION_SERVICES = ['Short Form', 'Long Form', 'Edited Photos', 'Album'];
+export const POST_PRODUCTION_SERVICES = resolvePostProductionServices(undefined).map(s => s.name);
 
 /**
  * Whether raw data arriving on a deliverable should open a Post Production job.
@@ -21,12 +28,13 @@ export const POST_PRODUCTION_SERVICES = ['Short Form', 'Long Form', 'Edited Phot
  */
 export function shouldFileIntoPostProduction(
   target: { kind?: string; purpose?: string; serviceType?: string } | undefined,
-  deliverable: { postProductionJobIds?: string[] } | undefined
+  deliverable: { postProductionJobIds?: string[] } | undefined,
+  services?: PostProductionService[]
 ): boolean {
   if (!target || !deliverable) return false;
   return target.kind === 'deliverable'
     && target.purpose === 'raw'
-    && isPostProductionService(target.serviceType)
+    && isPostProductionService(target.serviceType, services)
     && !(deliverable.postProductionJobIds || []).length;
 }
 
@@ -39,7 +47,10 @@ export function shouldFileIntoPostProduction(
  * never built rather than like a typo. Case and surrounding space are ignored;
  * nothing else is, so an unrelated service still files nothing.
  */
-export function isPostProductionService(name: string | undefined): boolean {
-  const cleaned = (name || '').trim().toLowerCase();
-  return POST_PRODUCTION_SERVICES.some(service => service.toLowerCase() === cleaned);
+export function isPostProductionService(
+  name: string | undefined,
+  services: PostProductionService[] = resolvePostProductionServices(undefined)
+): boolean {
+  return Boolean(findPostProductionService(name, services));
 }
+

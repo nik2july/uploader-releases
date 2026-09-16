@@ -1,5 +1,6 @@
 import type { FreelancePricing } from '../types/freelance';
-import { FREELANCE_SERVICES, computeBillableUnits, computePricingTotal } from './freelancePricing';
+import { computeBillableUnits, computePricingTotal } from './freelancePricing';
+import { findPostProductionService, resolvePostProductionServices, type PostProductionService } from './postProductionServices';
 
 /** What a deliverable knows about how much work it is. */
 export interface DeliverableMeasurements {
@@ -36,9 +37,10 @@ function finalise(pricing: Omit<FreelancePricing, 'billableUnits'>): FreelancePr
 export function pricingForDeliverable(
   serviceType: string | undefined,
   rate: number | undefined,
-  measurements: DeliverableMeasurements
+  measurements: DeliverableMeasurements,
+  services: PostProductionService[] = resolvePostProductionServices(undefined)
 ): FreelancePricing | undefined {
-  const service = FREELANCE_SERVICES.find(s => s.name === serviceType);
+  const service = findPostProductionService(serviceType, services);
   if (!service || !rate || rate <= 0) return undefined;
 
   const agreed = Number(measurements.billableQuantity);
@@ -62,6 +64,8 @@ export function pricingForDeliverable(
       // Nothing measures a cut that has not been made.
       return hasAgreed ? finalise({ basis: service.basis, rate, durationMinutes: agreed }) : undefined;
     case 'per_sheet':
+    case 'per_item':
+      // Counted, and counted when it was sold: nothing measures how many reels.
       return hasAgreed ? finalise({ basis: service.basis, rate, quantity: agreed }) : undefined;
     default:
       return undefined;
@@ -72,8 +76,9 @@ export function pricingForDeliverable(
 export function chargeForDeliverable(
   serviceType: string | undefined,
   rate: number | undefined,
-  measurements: DeliverableMeasurements
+  measurements: DeliverableMeasurements,
+  services?: PostProductionService[]
 ): number {
-  const pricing = pricingForDeliverable(serviceType, rate, measurements);
+  const pricing = pricingForDeliverable(serviceType, rate, measurements, services);
   return pricing ? computePricingTotal(pricing) : 0;
 }

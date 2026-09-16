@@ -2,6 +2,7 @@ import { collection, doc, runTransaction, setDoc, writeBatch, updateDoc, deleteD
 import { shouldFileIntoPostProduction } from '../utils/postProduction';
 import { chargeForDeliverable, pricingForDeliverable } from '../utils/deliverablePricing';
 import { measurementsFromScan } from '../utils/rawDataLog';
+import { resolvePostProductionServices, type PostProductionService } from '../utils/postProductionServices';
 import { db } from './firebase';
 import { splitFreelanceRecord } from './freelanceSchema';
 import { derivePaymentStatus } from '../utils/freelance';
@@ -58,6 +59,19 @@ export async function updatePartnerStudio(id: string, input: Partial<FreelanceCl
  */
 export const BAAWARAY_FILMS_STUDIO_ID = 'internal_baawaray_films';
 
+/**
+ * What Post Production sells, as this studio has configured it.
+ *
+ * Read here rather than threaded in, because the functions that file work are
+ * called from uploads, drive handovers and scans alike, and none of those has the
+ * studio's settings to hand. One document read per filing, which is rare enough
+ * to be free — and reading it fresh means a service added a minute ago is sold.
+ */
+async function studioPostProductionServices(): Promise<PostProductionService[]> {
+  const settings = (await getDoc(doc(db, 'studio_config', 'main'))).data()?.studioSettings;
+  return resolvePostProductionServices(settings?.crewRoles);
+}
+
 export async function ensureBaawarayFilmsStudio(): Promise<string> {
   await setDoc(doc(db, 'freelance_clients', BAAWARAY_FILMS_STUDIO_ID), clean({
     id: BAAWARAY_FILMS_STUDIO_ID, name: 'BAAWARAY FILMS', phone: '', active: true,
@@ -88,11 +102,12 @@ export async function sendBaawarayDeliverableToPostProduction(
     rawPhotoCount: deliverable.rawPhotoCount,
   };
 
+  const configured = await studioPostProductionServices();
   const ids: string[] = [];
   let charged = 0;
   for (const serviceType of services) {
-    const pricing = pricingForDeliverable(serviceType, rateCard[serviceType], measurements);
-    const clientCharge = chargeForDeliverable(serviceType, rateCard[serviceType], measurements);
+    const pricing = pricingForDeliverable(serviceType, rateCard[serviceType], measurements, configured);
+    const clientCharge = chargeForDeliverable(serviceType, rateCard[serviceType], measurements, configured);
     charged += clientCharge;
     ids.push(await createFreelanceJob({
       title: deliverable.title, serviceType, freelanceClientId: partnerId,
@@ -186,6 +201,7 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
   const target = job.target;
   /** Set inside the transaction, acted on after it commits. */
   let fileIntoPostProduction = false;
+  const configuredServices = await studioPostProductionServices();
   const entry = { id: job.id, link: job.link, purpose: target.purpose, createdAt: job.createdAt,
     fileCount: job.scan?.fileCount || 0, bytes: job.scan?.totalBytes || 0, status: 'verified' };
   await runTransaction(db, async tx => {
@@ -202,7 +218,7 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
       // Raw footage arriving is the moment this becomes Post Production's work.
       // Deciding here, rather than by sweeping the collection later, is what
       // keeps it to deliverables filed from now on: nothing existing is touched.
-      fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable);
+      fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable, configuredServices);
       const field = target.purpose === 'raw' ? 'rawDataLink' : 'link';
       tx.update(ref, { deliverables: items.map((d: any) => d.id === target.id ? { ...d,
         desktopTransfers: { ...(d.desktopTransfers || {}), [job.id]: entry }, ...(!d[field] ? { [field]: job.link } : {}) } : d) });
@@ -492,13 +508,14 @@ export async function saveManualRawData(target: WorkTarget, input: {
   } else {
     const ref = doc(db, 'clients', target.clientId!);
     let fileIntoPostProduction = false;
+    const configuredServices = await studioPostProductionServices();
     await runTransaction(db, async tx => {
       const snap = await tx.get(ref); if (!snap.exists()) throw new Error('The client no longer exists.');
       const items = snap.data().deliverables || [];
       const deliverable = items.find((item: ClientDeliverable) => item.id === target.id);
       // A drive handed over is raw data arriving just as much as an upload is,
       // so it files the same job rather than leaving this one intake manual.
-      fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable);
+      fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable, configuredServices);
       tx.update(ref, { deliverables: items.map((item: ClientDeliverable) => item.id === target.id ? { ...item, ...data } : item) });
     });
     if (fileIntoPostProduction) {
@@ -915,6 +932,7 @@ export async function logScannedRawData(job: Transfer, notes?: string): Promise<
   }
 
   let fileIntoPostProduction = false;
+  const configuredServices = await studioPostProductionServices();
   await runTransaction(db, async tx => {
     const ref = doc(db, 'clients', target.clientId!);
     const snap = await tx.get(ref);
@@ -924,7 +942,7 @@ export async function logScannedRawData(job: Transfer, notes?: string): Promise<
     if (!deliverable) throw new Error('Deliverable no longer exists.');
     // Footage on a drive is footage arriving, so it becomes Post Production's
     // work exactly as an upload would.
-    fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable);
+    fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable, configuredServices);
     tx.update(ref, {
       deliverables: items.map((item: ClientDeliverable) => item.id === target.id
         ? { ...item, ...measurements, desktopTransfers: { ...(item.desktopTransfers || {}), [job.id]: entry } }

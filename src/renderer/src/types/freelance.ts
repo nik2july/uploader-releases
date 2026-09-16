@@ -101,10 +101,21 @@ export type FreelanceServiceType =
 
 /** The unit a service is charged by. One per service type. */
 export type FreelancePricingBasis =
-  | 'per_output_minute' // Short Form — the delivered cut
-  | 'per_raw_hour'      // Long Form — the footage handed over
-  | 'per_photo'
-  | 'per_sheet';
+  | 'per_output_minute' // the delivered cut, in minutes
+  | 'per_raw_hour'      // the footage handed over, in hours
+  | 'per_photo'         // files delivered, after culling
+  | 'per_sheet'         // sheets in an album
+  | 'per_item';         // anything counted: reels, posts, prints
+
+/**
+ * Whether a basis can be known before the shoot.
+ *
+ * A cut's length, an album's sheets and a count of reels are all agreed with the
+ * couple when the work is sold. Raw footage is not: it is whatever comes back on
+ * the cards. Everything that quotes up front takes its quantity from the
+ * quotation; everything else waits for the scan.
+ */
+export const QUOTED_AT_SALE: FreelancePricingBasis[] = ['per_output_minute', 'per_photo', 'per_sheet', 'per_item'];
 
 /**
  * How a job's client charge was worked out.

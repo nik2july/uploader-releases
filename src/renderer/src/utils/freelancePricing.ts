@@ -122,6 +122,7 @@ function measuredUnits(pricing: Measurable): number {
       return hours + minutes / 60 + seconds / 3600;
     case 'per_photo':
     case 'per_sheet':
+    case 'per_item':
       return quantity;
     default:
       return 0;

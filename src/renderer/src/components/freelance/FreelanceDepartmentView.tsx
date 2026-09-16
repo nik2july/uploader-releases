@@ -4,6 +4,7 @@ import { BAAWARAY_FILMS_STUDIO_ID } from '../../lib/studioRepository';
 import type { WorkTarget } from '../../../../shared/contracts';
 import type { ClientDeliverable } from '../../types';
 import { isPostProductionService } from '../../utils/postProduction';
+import { resolvePostProductionServices } from '../../utils/postProductionServices';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import { useApp } from '../../context/AppContext';
 import { FreelanceJob, FreelanceJobStage } from '../../types';
@@ -155,12 +156,15 @@ export const FreelanceDepartmentView: React.FC<{
       studioSettings?.crewRoles || studioPriceList?.crewRoles || [],
       resolveRoleGroups(studioSettings?.roleGroups)
     );
+    // What Post Production sells as this studio configured it, so a service added
+    // in settings shows up here without a new build.
+    const sold = resolvePostProductionServices(roles);
     const rows: PendingRow[] = [];
     for (const client of clients || []) {
       for (const item of (client.deliverables || []) as ClientDeliverable[]) {
         if ((item.postProductionJobIds || []).length) continue;
         const service = roles.find(r => r.id === item.linkedRoleId)?.name || item.category || '';
-        if (!isPostProductionService(service)) continue;
+        if (!isPostProductionService(service, sold)) continue;
         const target: WorkTarget = {
           kind: 'deliverable', id: item.id, clientId: String(client.id), title: item.title,
           clientName: client.name, serviceType: service, purpose: 'raw', dueDate: item.dueDate,

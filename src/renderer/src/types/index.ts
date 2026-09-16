@@ -631,6 +631,15 @@ export interface CrewRoleConfig {
    */
   estimatedEffortHours?: number;
   /**
+   * How Post Production measures this service, when it is one they sell.
+   *
+   * Setting it is what makes a deliverable service into work Post Production
+   * prices — by the hour of raw data, the minute of finished cut, the photo,
+   * the sheet, or simply how many. Left unset, the service is something the
+   * studio delivers itself and Post Production never sees.
+   */
+  postProductionBasis?: import('./freelance').FreelancePricingBasis;
+  /**
    * Hours after EACH event by which this must be done — a same-day photo upload,
    * a face-recognition gallery, anything with a clock on it rather than a place in
    * a queue.
