@@ -28,8 +28,6 @@ import {
   LayoutGrid,
   List,
   Columns,
-  ArrowUpRight,
-  ArrowDownLeft,
   Link as LinkIcon,
   MessageSquare,
   Eye,
@@ -120,39 +118,6 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
 
   const pendingRequests = freelanceJobRequests.filter(r => r.status === 'submitted');
   const pendingRequestsCount = pendingRequests.length;
-
-  const totalJobsCount = freelanceJobs.length;
-  const activeJobsCount = freelanceJobs.filter(j => j.stage !== 'completed').length;
-  const completedJobsCount = freelanceJobs.filter(j => j.stage === 'completed').length;
-
-  const totalClientRevenue = freelanceJobs.reduce((acc, j) => acc + (j.clientCharge || 0), 0);
-  // Read through the studios' accounts: a collective payment covering three jobs is
-  // recorded once, on the studio, and would be invisible to a per-job total.
-  const totalClientReceived = freelanceJobs.reduce(
-    (acc, j) => acc + freelanceJobPayment(j).paid,
-    0
-  );
-  const totalClientDue = Math.max(0, totalClientRevenue - totalClientReceived);
-
-  /**
-   * What the editing has cost.
-   *
-   * An editor's fee is agreed when they are paid, so cost and paid are the same
-   * figure — there is no standing debt to report. What can go wrong is the opposite:
-   * work delivered that no payout has been split onto, which reads as free until it
-   * is settled.
-   */
-  const totalEditorCost = freelanceJobs.reduce((acc, j) => acc + freelanceJobEditorCost(j), 0);
-  const totalEditorPaid = totalEditorCost;
-  const unpaidDeliveredCount = freelanceJobs.filter(
-    j =>
-      (j.stage === 'completed' || j.stage === 'final_delivered') &&
-      j.assignedType !== 'in_house' &&
-      freelanceJobEditorCost(j) === 0
-  ).length;
-
-  const totalNetMargin = totalClientRevenue - totalEditorCost;
-  const netMarginPercent = totalClientRevenue > 0 ? Math.round((totalNetMargin / totalClientRevenue) * 100) : 0;
 
   // Filtered jobs
   const filteredJobs = useMemo(() => {
@@ -356,100 +321,10 @@ export const FreelanceDepartmentView: React.FC<{ deliverables?: React.ReactNode 
         <CapacityRadarPanel />
       ) : (
         <>
-      {/* Financial & Pipeline Metrics Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {/* Metric 1: Total & Active Projects */}
-        <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-[#6b6660]">
-              Projects in Pipeline
-            </span>
-            <span className="w-2 h-2 rounded-full bg-blue-500" />
-          </div>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className="text-2xl font-extrabold text-[#111417]">{activeJobsCount}</span>
-            <span className="text-xs text-[#6b6660]">Active ({totalJobsCount} Total)</span>
-          </div>
-          <div className="text-[11px] text-emerald-700 font-semibold mt-1">
-            {completedJobsCount} Completed & Delivered
-          </div>
-        </div>
-
-        {/* Metric 2: Client Billing & Receivables */}
-        <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-[#6b6660]">
-              Client Revenue
-            </span>
-            <ArrowDownLeft className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-extrabold text-[#111417] mt-1">
-            ₹{inrDigits(totalClientRevenue)}
-          </div>
-          <div className="flex items-center justify-between text-[11px] mt-1">
-            <span className="text-emerald-700 font-semibold">
-              Recv: ₹{inrDigits(totalClientReceived)}
-            </span>
-            {totalClientDue > 0 && (
-              <span className="text-[#7a2e33] font-bold">
-                Due: ₹{inrDigits(totalClientDue)}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Metric 3: Editor Costs & Payouts */}
-        <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-[#6b6660]">
-              Freelancer Costs
-            </span>
-            <ArrowUpRight className="w-4 h-4 text-amber-600" />
-          </div>
-          <div className="text-2xl font-extrabold text-[#111417] mt-1">
-            ₹{inrDigits(totalEditorCost)}
-          </div>
-          <div className="flex items-center justify-between text-[11px] mt-1">
-            <span className="text-emerald-700 font-semibold">Paid in full</span>
-            {unpaidDeliveredCount > 0 && (
-              <span className="text-amber-800 font-bold">
-                {unpaidDeliveredCount} delivered, unpaid
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Metric 4: Net Studio Margin */}
-        <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-[#6b6660]">
-              Net Studio Profit
-            </span>
-            {/* A loss rendered in profit-green reads as a good month at a glance --
-                the one number in this panel most likely to be trusted without
-                reading it. */}
-            <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded ${
-              totalNetMargin >= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-            }`}>
-              {netMarginPercent}%
-            </span>
-          </div>
-          <div className={`text-2xl font-extrabold mt-1 ${
-            totalNetMargin >= 0 ? 'text-emerald-700' : 'text-rose-700'
-          }`}>
-            ₹{inrDigits(totalNetMargin)}
-          </div>
-          <div className="text-[11px] text-[#6b6660] font-medium mt-1">
-            Net Collected: ₹{inrDigits(totalClientReceived - totalEditorPaid)}
-          </div>
-        </div>
-      </div>
-
       {/*
         The studio's own work, in the same view as everyone else's.
 
-        It sits between the money summary and the job board rather than being
-        interleaved into it: a deliverable has no charge, editor cost or profit
+        It sits above the job board rather than being interleaved into it: a deliverable has no charge, editor cost or profit
         yet, so it would show as four empty columns in the table and has no
         stage to file under in kanban. Grouped, each kind keeps the actions that
         make sense for it — footage goes up from here, and the moment it lands
