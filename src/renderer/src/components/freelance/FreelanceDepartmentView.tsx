@@ -630,7 +630,7 @@ export const FreelanceDepartmentView: React.FC<{
                       className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#7a2e33] hover:bg-[#5a2226] disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
                     >
                       <Upload className="w-3.5 h-3.5" />
-                      <span>Upload raw footage</span>
+                      <span>Send data</span>
                     </button>
                   </div>
                 </div>
@@ -909,7 +909,7 @@ export const FreelanceDepartmentView: React.FC<{
                               className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7a2e33] hover:underline disabled:opacity-40 cursor-pointer"
                             >
                               <Upload className="w-3 h-3" />
-                              Upload footage
+                              Send data
                             </button>
                           </div>
                         </td>
