@@ -681,16 +681,42 @@ export function isClientDeliverablesCompleted(client: Client): boolean {
 
 /**
  * Checks if a client's deliverables are eligible to appear in the Post-Production panel.
- * - Any confirmed / booked client record (excluding rejected, lost, or pending raw inquiries)
- *   is eligible to have their post-production deliverables tracked and assigned.
+ * - Excludes active inquiries, new leads, or lost clients.
+ * - If client has shoot events, checks whether any shoot event has already occurred (past or today).
+ *   Clients whose events are all in the future are excluded because their footage/data has not been created yet.
+ * - If a client already has raw footage linked/uploaded on any deliverable, they are considered eligible.
  */
 export function isClientPostProductionEligible(
   client: Client,
-  _clientEvents?: ProjectEvent[],
-  _now: number = Date.now()
+  clientEvents?: ProjectEvent[],
+  now: number = Date.now()
 ): boolean {
   const s = (client.status || '').toLowerCase();
   if (s === 'new_enquiry' || s === 'new lead' || s === 'lost') return false;
+
+  // If client already has raw rushes data linked or uploaded on any deliverable, they are eligible
+  const hasRawData = (client.deliverables || []).some(
+    d => Boolean(d.rawDataLink) || d.rawDataSource === 'hard_drive' || Object.keys(d.desktopTransfers || {}).length > 0
+  );
+  if (hasRawData) return true;
+
+  // If client status is marked 'shoot done' or 'completed', shoot is definitely done
+  if (s === 'shoot done' || s === 'completed') return true;
+
+  // If client has scheduled shoot events, verify that at least one event has occurred
+  if (clientEvents && clientEvents.length > 0) {
+    const todayStr = new Date(now).toISOString().slice(0, 10);
+    const hasPastOrTodayEvent = clientEvents.some(event => {
+      if (isEventEnded(event, now)) return true;
+      if (event.date && event.date <= todayStr) return true;
+      return false;
+    });
+    // If all events are in the future, data cannot exist yet
+    if (!hasPastOrTodayEvent) {
+      return false;
+    }
+  }
+
   return true;
 }
 

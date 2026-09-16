@@ -12,7 +12,7 @@ import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
 import { pricingFromRequest } from '../../utils/mediaPricing';
-import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits } from '../../utils/formatters';
+import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits, isClientPostProductionEligible } from '../../utils/formatters';
 import {
   Briefcase,
   Plus,
@@ -79,6 +79,7 @@ export const FreelanceDepartmentView: React.FC<{
     freelanceJobs,
     freelanceJobRequests,
     clients,
+    projects,
     studioSettings,
     studioPriceList,
     freelanceClients,
@@ -167,7 +168,17 @@ export const FreelanceDepartmentView: React.FC<{
     // in settings shows up here without a new build.
     const sold = resolvePostProductionServices(roles);
     const rows: PendingRow[] = [];
+    const now = Date.now();
     for (const client of clients || []) {
+      const clientEvents = (projects || []).filter(p =>
+        (p.clientId !== undefined && String(p.clientId) === String(client.id)) ||
+        (p.couple && client.couple && p.couple.toLowerCase().trim() === client.couple.toLowerCase().trim()) ||
+        (p.couple && client.name && p.couple.toLowerCase().trim() === client.name.toLowerCase().trim())
+      );
+      if (!isClientPostProductionEligible(client, clientEvents, now)) {
+        continue;
+      }
+
       for (const item of (client.deliverables || []) as ClientDeliverable[]) {
         if ((item.postProductionJobIds || []).length) continue;
         const service = roles.find(r => r.id === item.linkedRoleId)?.name || item.category || '';
@@ -208,7 +219,7 @@ export const FreelanceDepartmentView: React.FC<{
       }
     }
     return rows;
-  }, [clients, studioSettings, studioPriceList]);
+  }, [clients, projects, studioSettings, studioPriceList]);
 
   const getJobDisplayTitle = (job: FreelanceJob) => {
     if ((job as PendingRow).pendingDeliverable) return job.title;
