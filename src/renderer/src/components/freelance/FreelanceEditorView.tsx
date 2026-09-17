@@ -8,6 +8,7 @@ import { isSalariedMember } from '../../utils/freelance';
 import { EMPTY_EDITOR_ACCOUNT } from '../../utils/freelanceAccount';
 import { FreelanceJobDetailModal } from '../modals/FreelanceJobDetailModal';
 import { NewFreelanceJobModal } from '../modals/NewFreelanceJobModal';
+import { EditTeamMemberModal } from '../modals/EditTeamMemberModal';
 import {
   ArrowLeft,
   UserCircle2,
@@ -42,9 +43,11 @@ export const FreelanceEditorView: React.FC = () => {
     freelanceEditorAccounts,
     addFreelanceEditorPayoutRecord,
     deleteFreelanceEditorPayoutRecord,
+    updateTeamMember,
   } = useApp();
 
   const [isLogging, setIsLogging] = useState(false);
+  const [isEditingMember, setIsEditingMember] = useState(false);
   const [detailJobId, setDetailJobId] = useState<string | null>(null);
   const [editingJob, setEditingJob] = useState<FreelanceJob | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -192,6 +195,15 @@ export const FreelanceEditorView: React.FC = () => {
               WhatsApp
             </a>
           )}
+          <button
+            type="button"
+            onClick={() => setIsEditingMember(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#d4c1a3] bg-white text-xs font-bold text-[#111417] hover:bg-[#f9f8f6] hover:text-[#7a2e33] transition-colors cursor-pointer"
+            title={`Edit ${member.name}'s profile and rates`}
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            Edit Profile
+          </button>
           <button
             type="button"
             onClick={() => setIsLogging(v => !v)}
@@ -633,6 +645,20 @@ export const FreelanceEditorView: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+      {isEditingMember && member && (
+        <EditTeamMemberModal
+          member={member}
+          onClose={() => setIsEditingMember(false)}
+          onSave={async updated => {
+            try {
+              await updateTeamMember(member.id, updated);
+            } catch (err) {
+              console.error('Failed to update team member:', err);
+            }
+            setIsEditingMember(false);
+          }}
+        />
       )}
     </div>
   );

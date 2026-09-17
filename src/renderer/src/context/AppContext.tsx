@@ -380,6 +380,14 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       console.log('Freelance job request received:', request);
     };
 
+    const updateTeamMemberWrapper = async (id: number, data: Partial<TeamMember>): Promise<void> => {
+      setTables(old => ({
+        ...old,
+        team: (old.team || []).map((m: any) => (m.id === id ? { ...m, ...data } : m)),
+      }));
+      await updateTeamMember(id, data);
+    };
+
     return {
       currentUser: {
         id: uid,
@@ -415,7 +423,7 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       addFreelanceEditorPayoutRecord,
       deleteFreelanceEditorPayoutRecord,
       addTeamMember: createTeamMember,
-      updateTeamMember,
+      updateTeamMember: updateTeamMemberWrapper,
 
       freelanceJobPayment,
       freelanceJobEditorCost,

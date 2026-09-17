@@ -18,8 +18,11 @@ import {
   AlertCircle,
   UserCheck,
   UserPlus,
+  Edit2,
 } from 'lucide-react';
 import { AddTeamMemberModal } from '../modals/AddTeamMemberModal';
+import { EditTeamMemberModal } from '../modals/EditTeamMemberModal';
+import { TeamMember } from '../../types';
 
 interface PostProductionTeamScreenProps {
   onOpenEditor?: (id: number) => void;
@@ -30,6 +33,7 @@ export function PostProductionTeamScreen({ onOpenEditor }: PostProductionTeamScr
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | 'video' | 'photo' | 'album'>('all');
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
+  const [memberToEdit, setMemberToEdit] = useState<TeamMember | null>(null);
 
   const allDeliverablesMembers = useMemo(() => {
     return studio.team
@@ -267,18 +271,28 @@ export function PostProductionTeamScreen({ onOpenEditor }: PostProductionTeamScr
                       </div>
                     </div>
 
-                    {/* Quick WhatsApp Link */}
-                    {phoneClean && whatsAppLink(member.phone, '91') && (
-                      <a
-                        href={whatsAppLink(member.phone, '91')!}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors cursor-pointer shrink-0"
-                        title={`Chat with ${member.name} on WhatsApp`}
+                    {/* Quick Actions: WhatsApp & Edit */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {phoneClean && whatsAppLink(member.phone, '91') && (
+                        <a
+                          href={whatsAppLink(member.phone, '91')!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors cursor-pointer"
+                          title={`Chat with ${member.name} on WhatsApp`}
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setMemberToEdit(member)}
+                        className="p-2 text-[#6b6660] hover:text-[#7a2e33] bg-[#f9f8f6] hover:bg-[#d4c1a3]/40 rounded-xl border border-[#d4c1a3]/70 transition-colors cursor-pointer"
+                        title={`Edit ${member.name}`}
                       >
-                        <MessageCircle className="w-4 h-4" />
-                      </a>
-                    )}
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Contact Info */}
@@ -360,14 +374,25 @@ export function PostProductionTeamScreen({ onOpenEditor }: PostProductionTeamScr
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleOpenEditor(member.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#f9f8f6] hover:bg-[#7a2e33] hover:text-white border border-[#d4c1a3] text-xs font-bold text-[#111417] transition-all cursor-pointer"
-                  >
-                    <span>View History</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMemberToEdit(member)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white hover:bg-[#f9f8f6] border border-[#d4c1a3] text-xs font-semibold text-[#6b6660] hover:text-[#7a2e33] transition-all cursor-pointer"
+                      title={`Edit ${member.name}`}
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      <span>Edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditor(member.id)}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#f9f8f6] hover:bg-[#7a2e33] hover:text-white border border-[#d4c1a3] text-xs font-bold text-[#111417] transition-all cursor-pointer"
+                    >
+                      <span>View History</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -380,6 +405,21 @@ export function PostProductionTeamScreen({ onOpenEditor }: PostProductionTeamScr
           onClose={() => setIsAddMemberOpen(false)}
           defaultRole="Video Editor"
           defaultCategory="post-production"
+        />
+      )}
+
+      {memberToEdit && (
+        <EditTeamMemberModal
+          member={memberToEdit}
+          onClose={() => setMemberToEdit(null)}
+          onSave={async updated => {
+            try {
+              await studio.updateTeamMember(memberToEdit.id, updated);
+            } catch (err) {
+              console.error('Failed to update team member:', err);
+            }
+            setMemberToEdit(null);
+          }}
         />
       )}
     </div>
