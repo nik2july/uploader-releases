@@ -185,10 +185,11 @@ export const AssignEditorPanel: React.FC<AssignEditorPanelProps> = ({
     try {
       const updates: Partial<FreelanceJob> = {
         assignedType: finalAssignedType,
-        editorMemberId: finalMemberId,
+        editorMemberId: finalMemberId ?? (null as any),
         editorName: finalName,
         editorPhone: finalPhone,
         editorEmail: finalEmail,
+        editorAuthUid: assignmentMode === 'in_house' ? (selectedMember?.authUid || (null as any)) : (null as any),
         rawDataLink: rawDataLink.trim(),
         editingInstructions: editingInstructions.trim(),
       };
