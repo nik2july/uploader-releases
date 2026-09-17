@@ -168,10 +168,16 @@ export async function setupIpcHandlers(): Promise<() => void> {
       owner = subject; engine.setOwner(owner);
     }
     sessionIsOwner = isOwner;
+    try {
+      engine.autoResumeAll();
+    } catch (err) {
+      console.warn('[ipc] Auto-resume failed on authorization:', err);
+    }
     return { uid: owner, isOwner };
   }, false);
   handle('studio:signOut', () => signOut(), false);
   handle('transfers:list', () => store.all(owner));
+  handle('transfers:autoResume', () => engine.autoResumeAll());
   handle('transfers:inspect', (id: string) => { owned(id); return { files: store.problems(id) }; });
   handle('scanner:start', async (options: ScanOptions, target?: WorkTarget) => {
     if (scans.size) throw new Error('Finish or cancel the current scan first.');
@@ -360,6 +366,11 @@ export async function setupIpcHandlers(): Promise<() => void> {
   // is a public release feed. Both are useful before anyone has signed in.
   handle('app:version', () => app.getVersion(), false);
   handle('app:diagnostics', () => recentLog(), false);
+  handle('app:getAutoStart', () => app.getLoginItemSettings().openAtLogin, false);
+  handle('app:setAutoStart', (enable: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enable), openAsHidden: false });
+    return app.getLoginItemSettings().openAtLogin;
+  }, false);
   handle('log:rendererError', (message: string, stack: string) => {
     log('renderer crash', `${String(message).slice(0, 500)}\n${String(stack).slice(0, 2000)}`);
   }, false);

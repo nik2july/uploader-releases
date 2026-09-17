@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { deliveryLinkOf } from '../../utils/freelance';
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
+import { renderWhatsAppMessage } from '../../utils/whatsappTemplates';
 import { FreelanceJob } from '../../types';
 import { addDaysToDate } from '../../utils/formatters';
 import { X, MessageSquare, Clock, Send, CheckCircle2, MessageCircle, AlertCircle } from 'lucide-react';
@@ -11,15 +12,18 @@ interface FreelanceRevisionModalProps {
   isOpen: boolean;
   onClose: () => void;
   job: FreelanceJob;
+  revisionType?: 'client' | 'internal';
 }
 
 export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
   isOpen,
   onClose,
   job,
+  revisionType = 'client',
 }) => {
-  const { addFreelanceRevision } = useApp();
+  const { addFreelanceRevision, advanceFreelanceJobStage, studioSettings } = useApp();
 
+  const isInternal = revisionType === 'internal' || job.stage === 'internal_review' || job.stage === 'internal_changes';
   const todayStr = new Date().toISOString().split('T')[0];
   const nextRoundNumber = (job.revisions || []).length + 1;
   const defaultDueDate = addDaysToDate(todayStr, 2);
@@ -27,34 +31,70 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
   const [feedbackNotes, setFeedbackNotes] = useState('');
   const [timecodes, setTimecodes] = useState('');
   const [sharedImmediately, setSharedImmediately] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!feedbackNotes.trim()) return;
+    if (!feedbackNotes.trim()) {
+      alert('Please enter revision / change notes.');
+      return;
+    }
 
-    addFreelanceRevision(job.id, {
-      feedbackNotes: feedbackNotes.trim(),
-      timecodes: timecodes.trim(),
-      sharedWithEditor: sharedImmediately,
-    });
+    setIsSubmitting(true);
+    try {
+      if (isInternal) {
+        await addFreelanceRevision(job.id, {
+          feedbackNotes: `[Internal Studio Review] ${feedbackNotes.trim()}`,
+          timecodes: timecodes.trim() || undefined,
+          sharedWithEditor: true,
+        });
+        await advanceFreelanceJobStage(job.id, 'internal_changes', `Internal changes requested by studio: ${feedbackNotes.trim().slice(0, 80)}`);
+      } else {
+        await addFreelanceRevision(job.id, {
+          feedbackNotes: feedbackNotes.trim(),
+          timecodes: timecodes.trim() || undefined,
+          sharedWithEditor: sharedImmediately,
+        });
+      }
 
-    onClose();
+      onClose();
+    } catch (err) {
+      console.error('Failed to log revision:', err);
+      alert('Failed to log revision. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // WhatsApp quick launch for editor
   const handleShareWhatsAppToEditor = () => {
     const editorPhone = toWhatsAppNumber(job.editorPhone) || '';
-    const text = (
-      `*Studio OS - Revision Round #${nextRoundNumber}*\n` +
+    const text = isInternal ? (
+      `*Studio OS - Internal Studio Feedback*\n` +
       `Project: *${job.title}* (${job.jobCode})\n` +
-      `Client: ${job.clientName}\n\n` +
-      `*Client Changes & Notes:*\n${feedbackNotes}\n` +
+      (job.clientName ? `Client: ${job.clientName}\n\n` : '\n') +
+      `*Studio Internal Changes & Notes:*\n${feedbackNotes}\n` +
       (timecodes ? `\n*Specific Timecodes:*\n${timecodes}\n` : '') +
-      `\n*Revised Due Date (2 Days Turnaround):* ${defaultDueDate}\n` +
-      (deliveryLinkOf(job) ? `*Current Cut:* ${deliveryLinkOf(job)}\n` : '') +
-      `\nPlease review and deliver the updated version ASAP.`
+      (deliveryLinkOf(job) ? `\n*Current Cut:* ${deliveryLinkOf(job)}\n` : '') +
+      `\nPlease review and update the cut as soon as possible.`
+    ) : (
+      renderWhatsAppMessage(
+        'editor_revisions',
+        {
+          editorName: job.editorName || 'Editor',
+          clientName: job.clientName,
+          projectName: job.title,
+          jobCode: job.jobCode,
+          roundNumber: String(nextRoundNumber),
+          notes: feedbackNotes,
+          timecodes: timecodes || '',
+          dueDate: defaultDueDate,
+          link: deliveryLinkOf(job) || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(editorPhone, text), '_blank');
   };
@@ -63,14 +103,14 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
       <div className="relative w-full max-w-lg bg-[#f9f8f6] border border-[#d4c1a3] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 bg-[#7a2e33] text-white">
+        <div className={`flex items-center justify-between px-5 py-4 text-white ${isInternal ? 'bg-[#5c2a38]' : 'bg-[#7a2e33]'}`}>
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-white/10 flex items-center justify-center border border-white/20">
               <MessageSquare className="w-4 h-4 text-amber-300" />
             </div>
             <div>
               <h3 className="text-sm font-bold tracking-wide">
-                Log Revision Round #{nextRoundNumber}
+                {isInternal ? 'Log Internal Studio Changes (To Editor)' : `Log Revision Round #${nextRoundNumber}`}
               </h3>
               <p className="text-[11px] text-white/80">
                 {job.jobCode} • {job.title}
@@ -79,7 +119,7 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10"
+            className="p-1.5 text-white/70 hover:text-white rounded-lg hover:bg-white/10 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -87,24 +127,37 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Turnaround Badge Notice */}
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5">
-            <Clock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
-            <div className="text-xs text-amber-900 leading-relaxed">
-              <span className="font-bold">Turnaround Schedule:</span> Revisions automatically set the due date to{' '}
-              <span className="font-bold underline">{defaultDueDate}</span> (2 days turnaround from today).
+          {/* Turnaround / Context Notice */}
+          {isInternal ? (
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 flex items-start gap-2.5">
+              <Clock className="w-4 h-4 text-indigo-700 shrink-0 mt-0.5" />
+              <div className="text-xs text-indigo-900 leading-relaxed">
+                <span className="font-bold">Internal Check:</span> The client has not seen this cut yet. Feedback logged here goes directly to the editor for studio QC refinement.
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2.5">
+              <Clock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+              <div className="text-xs text-amber-900 leading-relaxed">
+                <span className="font-bold">Turnaround Schedule:</span> Revisions automatically set the due date to{' '}
+                <span className="font-bold underline">{defaultDueDate}</span> (2 days turnaround from today).
+              </div>
+            </div>
+          )}
 
           {/* Feedback Notes */}
           <div>
             <label className="block text-xs font-semibold text-[#111417] mb-1">
-              Client Feedback & Changes Required *
+              {isInternal ? 'Studio Owner Feedback & Corrections Needed *' : 'Client Feedback & Changes Required *'}
             </label>
             <textarea
               required
               rows={4}
-              placeholder="e.g. 1. Replace the first romantic track with a slow instrumental. 2. Remove blurry slow-mo clip. 3. Adjust skin tones in reception lighting."
+              placeholder={
+                isInternal
+                  ? 'e.g. 1. Music transition into bridal entry is too sharp. 2. Color grading at 02:15 is underexposed. 3. Trim awkward silence at 04:10.'
+                  : 'e.g. 1. Replace the first romantic track with a slow instrumental. 2. Remove blurry slow-mo clip. 3. Adjust skin tones in reception lighting.'
+              }
               value={feedbackNotes}
               onChange={e => setFeedbackNotes(e.target.value)}
               className="w-full px-3.5 py-2.5 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
@@ -125,21 +178,23 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
             />
           </div>
 
-          {/* Option to advance stage */}
-          <label className="flex items-center gap-2.5 p-3 bg-white rounded-xl border border-[#d4c1a3] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={sharedImmediately}
-              onChange={e => setSharedImmediately(e.target.checked)}
-              className="rounded text-[#7a2e33] focus:ring-[#7a2e33] w-4 h-4 accent-[#7a2e33]"
-            />
-            <div className="text-xs text-[#111417]">
-              <span className="font-bold">Mark as Shared with Editor</span>
-              <p className="text-[11px] text-[#6b6660]">
-                Advances workflow to "Changes Shared with Editor" stage immediately
-              </p>
-            </div>
-          </label>
+          {/* Option to advance stage (only for client revisions) */}
+          {!isInternal && (
+            <label className="flex items-center gap-2.5 p-3 bg-white rounded-xl border border-[#d4c1a3] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sharedImmediately}
+                onChange={e => setSharedImmediately(e.target.checked)}
+                className="rounded text-[#7a2e33] focus:ring-[#7a2e33] w-4 h-4 accent-[#7a2e33]"
+              />
+              <div className="text-xs text-[#111417]">
+                <span className="font-bold">Mark as Shared with Editor</span>
+                <p className="text-[11px] text-[#6b6660]">
+                  Advances workflow to "Changes with Editor" stage immediately
+                </p>
+              </div>
+            </label>
+          )}
 
           {/* Actions */}
           <div className="pt-2 flex items-center justify-between">
@@ -151,7 +206,7 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
                 className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-all cursor-pointer shadow-xs"
               >
                 <MessageCircle className="w-3.5 h-3.5" />
-                <span>Send on WhatsApp</span>
+                <span>Send to Editor on WhatsApp</span>
               </button>
             ) : <div />}
 
@@ -159,7 +214,7 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-semibold text-[#6b6660] hover:bg-[#d4c1a3]/40 rounded-xl"
+                className="px-4 py-2 text-xs font-semibold text-[#6b6660] hover:bg-[#d4c1a3]/40 rounded-xl cursor-pointer"
               >
                 Cancel
               </button>
@@ -168,7 +223,7 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
                 className="flex items-center gap-1.5 px-5 py-2 bg-[#7a2e33] hover:bg-[#5a2226] text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>Save Revision</span>
+                <span>{isInternal ? 'Save Internal Notes' : 'Save Revision'}</span>
               </button>
             </div>
           </div>

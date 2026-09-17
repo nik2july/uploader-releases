@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, Briefcase, HardDrive, Settings, Upload, Users } from 'lucide-react';
+import { Archive, ArrowUpDown, BarChart3, Briefcase, Building2, Settings, SlidersHorizontal, Upload, Users } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -8,27 +8,28 @@ import { useTransfers } from '../hooks/useTransfers';
 import { ACTIVE_STATUSES } from '../utils/uploadFormat';
 import { attachVerifiedTransfer } from '../lib/studioRepository';
 import { UploadsScreen } from './screens/UploadsScreen';
-import { WorkScreen } from './screens/WorkScreen';
 import { TransferDetail } from './screens/TransferDetail';
 import { UploaderSettings } from './UploaderSettings';
 import { UpdateBanner } from './UpdateBanner';
 import { EditorDashboard } from './EditorDashboard';
-import { CloudArchivalModal } from './CloudArchivalModal';
+import { CloudArchivalScreen } from './screens/CloudArchivalScreen';
 import { PostProductionPaymentsScreen } from './screens/PostProductionPaymentsScreen';
 import { PostProductionTeamScreen } from './screens/PostProductionTeamScreen';
+import { PostProductionClientsScreen } from './screens/PostProductionClientsScreen';
+import { PostProductionServicesScreen } from './screens/PostProductionServicesScreen';
 import { PartnerStudiosScreen } from './screens/PartnerStudiosScreen';
 import { FreelanceDepartmentView } from './freelance/FreelanceDepartmentView';
 import { FreelanceStudioView } from './freelance/FreelanceStudioView';
 import { FreelanceEditorView } from './freelance/FreelanceEditorView';
+import { FreelanceStatsScreen } from './screens/FreelanceStatsScreen';
 
-type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'settings' | 'scanner';
+type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
   const { transfers, drive, error, loading, refresh } = useTransfers();
   const [view, setView] = useState<View>('uploads');
   const [openId, setOpenId] = useState<string | null>(null);
-  const [showArchivalModal, setShowArchivalModal] = useState(false);
   const rawLinkSyncAttempts = useRef(new Set<string>());
 
   // The keep-awake preference is stored with the studio's shared settings but
@@ -38,9 +39,25 @@ export function OwnerDashboard(): React.JSX.Element {
 
   // Same for the upload destination: stored with the studio, enforced by the queue.
   const destination = studio.studioSettings?.uploader?.destination;
+  const autoResumedRef = useRef(false);
+
   useEffect(() => {
-    void window.api.setUploadDestination(destination === 'drive' ? 'drive' : 'b2');
-  }, [destination]);
+    if (loading) return;
+    const targetDest: 'drive' | 'b2' = destination === 'drive'
+      ? 'drive'
+      : destination === 'b2'
+      ? 'b2'
+      : (drive?.connected ? 'drive' : 'b2');
+
+    void window.api.setUploadDestination(targetDest).then(() => {
+      if (!autoResumedRef.current) {
+        autoResumedRef.current = true;
+        void window.api.autoResumeTransfers?.().catch(err =>
+          console.warn('[Dashboard] autoResumeTransfers error:', err)
+        );
+      }
+    });
+  }, [destination, drive?.connected, loading]);
 
   /**
    * Record every verified transfer against its work so the assigned editor can
@@ -105,20 +122,29 @@ export function OwnerDashboard(): React.JSX.Element {
       <nav className="sidebar">
         <div className="wordmark"><img src={longLogo} alt="Baawaray" /></div>
         <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
-          <Briefcase size={16} /> Freelance Department
+          <Briefcase size={16} /> Active Jobs
         </button>
         <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
-          <Upload size={16} /> Upload Queue
+          <ArrowUpDown size={16} /> Up Down Queue
           {active + attention > 0 && <span className="count">{active + attention}</span>}
-        </button>
-        <button className="nav-item" aria-current={view === 'scanner'} onClick={() => go('scanner')}>
-          <HardDrive size={16} /> Raw Folder Scanner
         </button>
         <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
           <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments
         </button>
-        <button className="nav-item" onClick={() => setShowArchivalModal(true)}>
+        <button className="nav-item" aria-current={view === 'stats'} onClick={() => go('stats')}>
+          <BarChart3 size={16} /> Stats
+        </button>
+        <button className="nav-item" aria-current={view === 'archival'} onClick={() => go('archival')}>
           <Archive size={16} /> Cloud Archival
+        </button>
+        <button className="nav-item" aria-current={view === 'team'} onClick={() => { studio.setSelectedFreelanceEditorId(null); go('team'); }}>
+          <Users size={16} /> Team
+        </button>
+        <button className="nav-item" aria-current={view === 'clients' || view === 'partners'} onClick={() => { studio.setSelectedFreelanceClientId(null); go('clients'); }}>
+          <Building2 size={16} /> Clients
+        </button>
+        <button className="nav-item" aria-current={view === 'services'} onClick={() => go('services')}>
+          <SlidersHorizontal size={16} /> Services
         </button>
         <div className="spacer" />
         <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
@@ -157,12 +183,40 @@ export function OwnerDashboard(): React.JSX.Element {
               />
             )}
           </div>
-        ) : view === 'scanner' ? (
-          <WorkScreen kind="freelance" transfers={transfers} drive={drive} onScanStarted={opened} onSettings={() => go('settings')} onOpen={setOpenId} />
+        ) : view === 'stats' ? (
+          <div className="board-area">
+            <FreelanceStatsScreen />
+          </div>
+        ) : view === 'archival' ? (
+          <div className="board-area">
+            <CloudArchivalScreen
+              jobs={studio.freelanceJobs}
+              onRefresh={refresh}
+            />
+          </div>
         ) : view === 'team' ? (
-          <PostProductionTeamScreen />
-        ) : view === 'partners' ? (
-          <PartnerStudiosScreen />
+          <div className="board-area">
+            {studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
+              <FreelanceEditorView />
+            ) : (
+              <PostProductionTeamScreen onOpenEditor={(id) => {
+                studio.setSelectedFreelanceEditorId(id);
+                studio.setActiveView('freelanceEditor');
+              }} />
+            )}
+          </div>
+        ) : view === 'clients' || view === 'partners' ? (
+          <div className="board-area">
+            {studio.activeView === 'freelanceStudio' && studio.selectedFreelanceClientId ? (
+              <FreelanceStudioView />
+            ) : (
+              <PostProductionClientsScreen />
+            )}
+          </div>
+        ) : view === 'services' ? (
+          <div className="board-area">
+            <PostProductionServicesScreen />
+          </div>
         ) : view === 'payments' ? (
           <PostProductionPaymentsScreen />
         ) : (
@@ -173,13 +227,6 @@ export function OwnerDashboard(): React.JSX.Element {
           </div>
         )}
       </main>
-
-      {showArchivalModal && (
-        <CloudArchivalModal
-          jobs={studio.freelanceJobs}
-          onClose={() => setShowArchivalModal(false)}
-        />
-      )}
     </div>
   );
 }

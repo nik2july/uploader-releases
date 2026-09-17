@@ -114,6 +114,9 @@ export interface DesktopAPI {
   savePdf(bytes: Uint8Array, filename: string): Promise<boolean>;
   openExternal(url: string): Promise<void>;
   setKeepAwake(on: boolean): Promise<void>;
+  autoResumeTransfers(): Promise<number>;
+  getAutoStart(): Promise<boolean>;
+  setAutoStart(enable: boolean): Promise<boolean>;
   checkForUpdate(): Promise<UpdateInfo | null>;
   appVersion(): Promise<string>;
   diagnostics(): Promise<string>;

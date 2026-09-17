@@ -18,9 +18,12 @@ import {
   deleteFreelanceAccountPayment,
   addFreelanceEditorPayoutRecord,
   deleteFreelanceEditorPayoutRecord,
+  createTeamMember,
+  updateTeamMember,
 } from '../lib/studioRepository';
 import { cloudErrorMessage } from '../utils/cloudErrors';
 import { buildStudioAccount, buildEditorAccount, StudioAccount, EditorAccount } from '../utils/freelanceAccount';
+import { detectDialCode, DEFAULT_DIAL_CODE } from '../utils/phone';
 import type {
   Client,
   FreelanceClient,
@@ -93,6 +96,10 @@ export interface AppContextType {
     payout: Omit<FreelanceEditorPayout, 'id' | 'createdAt'>
   ) => Promise<void>;
   deleteFreelanceEditorPayoutRecord: (memberId: number | string, payoutId: string) => Promise<void>;
+
+  // Team member mutations
+  addTeamMember: (data: Omit<TeamMember, 'id'>) => Promise<TeamMember>;
+  updateTeamMember: (id: number, data: Partial<TeamMember>) => Promise<void>;
 
   // Accounting helpers
   freelanceJobPayment: (job: FreelanceJob) => { paid: number; balance: number };
@@ -285,7 +292,10 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
     const mergedJobs: FreelanceJob[] = merge(tables.freelance_jobs || [], [tables.billing || [], tables.editor || []]);
     const mergedTeam: TeamMember[] = merge(tables.team || [], [tables.private || []]);
     const clientsList: Client[] = tables.clients || [];
-    const freelanceClientsList: FreelanceClient[] = tables.freelance_clients || [];
+    const freelanceClientsList: FreelanceClient[] = (tables.freelance_clients || []).map(c => {
+      const det = detectDialCode(c.phone, c.dialCode);
+      return { ...c, dialCode: det.dialCode || c.dialCode || DEFAULT_DIAL_CODE, phone: det.nationalNumber || c.phone };
+    });
     const projectsList: ProjectEvent[] = tables.projects || [];
 
     const isReady = isOwner
@@ -404,6 +414,8 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       deleteFreelanceAccountPayment,
       addFreelanceEditorPayoutRecord,
       deleteFreelanceEditorPayoutRecord,
+      addTeamMember: createTeamMember,
+      updateTeamMember,
 
       freelanceJobPayment,
       freelanceJobEditorCost,

@@ -60,6 +60,9 @@ const api: DesktopAPI = {
   savePdf: (bytes, filename) => ipcRenderer.invoke('invoice:pdf', bytes, filename),
   openExternal: url => ipcRenderer.invoke('external:open', url),
   setKeepAwake: on => ipcRenderer.invoke('power:keepAwake', on),
+  autoResumeTransfers: () => ipcRenderer.invoke('transfers:autoResume'),
+  getAutoStart: () => ipcRenderer.invoke('app:getAutoStart'),
+  setAutoStart: enable => ipcRenderer.invoke('app:setAutoStart', enable),
   checkForUpdate: () => ipcRenderer.invoke('updates:check'), appVersion: () => ipcRenderer.invoke('app:version'), diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
   onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; }
 };

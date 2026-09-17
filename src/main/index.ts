@@ -59,6 +59,19 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.baawaray.studio-uploader')
   if (process.platform === 'darwin') app.dock?.setIcon(icon)
 
+  // Configure autostart on desktop startup
+  try {
+    const loginSettings = app.getLoginItemSettings()
+    if (!loginSettings.openAtLogin) {
+      app.setLoginItemSettings({
+        openAtLogin: true,
+        openAsHidden: false
+      })
+    }
+  } catch (err) {
+    console.error('Failed to configure login item settings:', err)
+  }
+
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.
   // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils

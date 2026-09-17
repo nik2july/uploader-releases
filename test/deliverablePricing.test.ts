@@ -64,4 +64,11 @@ describe('pricing a deliverable for post production', () => {
     assert.equal(pricing?.basis, 'per_output_minute');
     assert.equal(pricing?.billableUnits, 5);
   });
+
+  test('measured hours and trailing minutes are both billed accurately', () => {
+    // 2 hours 30 mins = 2.5 hours
+    const pricing = pricingForDeliverable('Long Form', 1000, { rawDurationHours: 2, rawDurationMinutes: 30 });
+    assert.equal(pricing?.billableUnits, 2.5);
+    assert.equal(chargeForDeliverable('Long Form', 1000, { rawDurationHours: 2, rawDurationMinutes: 30 }), 2500);
+  });
 });

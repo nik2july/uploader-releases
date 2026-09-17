@@ -797,9 +797,10 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
         nextLabel: 'Draft In Review',
         description: 'Editor has been notified and is working on the project.',
       };
+    case 'internal_review':
     case 'draft_received':
       return {
-        label: 'Final Output Received',
+        label: 'Studio Review',
         step: 4,
         color: 'indigo',
         badgeBg: 'bg-indigo-50 border-indigo-200 text-indigo-900',
@@ -807,8 +808,21 @@ export function getFreelanceStageMeta(stage: import('../types').FreelanceJobStag
         badgeText: 'text-indigo-800',
         dotColor: 'bg-indigo-500',
         nextStage: 'sent_to_client' as const,
-        nextLabel: 'Share with Client',
-        description: 'Editor shared the final output link. Review it, then share it with the client.',
+        nextLabel: 'Send to Client',
+        description: 'Cut received. Review the video internally before sharing with the client.',
+      };
+    case 'internal_changes':
+      return {
+        label: 'Internal Changes',
+        step: 4,
+        color: 'amber',
+        badgeBg: 'bg-amber-50 border-amber-200 text-amber-900',
+        badgeClass: 'bg-amber-100 text-amber-800 border border-amber-300',
+        badgeText: 'text-amber-800',
+        dotColor: 'bg-amber-500',
+        nextStage: 'internal_review' as const,
+        nextLabel: 'Back to Review',
+        description: 'Internal changes requested by Studio Owner. Editor is revising cut.',
       };
     case 'sent_to_client':
       return {

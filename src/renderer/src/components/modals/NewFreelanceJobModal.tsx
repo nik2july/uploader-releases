@@ -120,21 +120,33 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   // Commercials — a unit rate and how much of that unit this job carries. The total
   // is derived from the two and never typed, so it can always be checked back.
   const [rate, setRate] = useState<number | ''>(
-    initialJob?.pricing?.rate !== undefined ? initialJob.pricing.rate : ''
+    initialJob?.pricing?.rate !== undefined && initialJob.pricing.rate > 0 ? initialJob.pricing.rate : ''
   );
   /** Whether the rate in the box is the studio's default rather than one typed here. */
   const [rateCameFromCard, setRateCameFromCard] = useState(false);
   const [outputMinutes, setOutputMinutes] = useState<number | ''>(
-    initialJob?.pricing?.durationMinutes !== undefined ? initialJob.pricing.durationMinutes : ''
+    initialJob?.pricing?.durationMinutes !== undefined
+      ? initialJob.pricing.durationMinutes
+      : initialJob?.rawDurationMinutes !== undefined
+      ? initialJob.rawDurationMinutes
+      : ''
   );
   const [outputSeconds, setOutputSeconds] = useState<number | ''>(
     initialJob?.pricing?.durationSeconds !== undefined ? initialJob.pricing.durationSeconds : ''
   );
   const [rawHours, setRawHours] = useState<number | ''>(
-    initialJob?.pricing?.durationHours !== undefined ? initialJob.pricing.durationHours : ''
+    initialJob?.pricing?.durationHours !== undefined
+      ? initialJob.pricing.durationHours
+      : initialJob?.rawDurationHours !== undefined
+      ? initialJob.rawDurationHours
+      : ''
   );
   const [quantity, setQuantity] = useState<number | ''>(
-    initialJob?.pricing?.quantity !== undefined ? initialJob.pricing.quantity : ''
+    initialJob?.pricing?.quantity !== undefined
+      ? initialJob.pricing.quantity
+      : initialJob?.rawPhotoCount !== undefined
+      ? initialJob.rawPhotoCount
+      : ''
   );
   /**
    * The charge on a job logged under one of the old free-text categories, which has
@@ -162,14 +174,14 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   const [dataReceivedDate, setDataReceivedDate] = useState(
     initialJob?.dataReceivedDate || todayStr
   );
-  const [dueDate, setDueDate] = useState(initialJob?.dueDate || addDaysToDate(todayStr, 7));
+  const [dueDate, setDueDate] = useState(initialJob?.dueDate || '');
   /**
    * Whether the studio has overridden the forecast date.
    *
    * A job already has a date it promised someone, so editing one never quietly moves
    * it; a new one follows the editor's queue until somebody types over it.
    */
-  const [dueDateOverridden, setDueDateOverridden] = useState(Boolean(initialJob));
+  const [dueDateOverridden, setDueDateOverridden] = useState(Boolean(initialJob?.dueDate));
 
   // Links — only the raw data, which is what exists at this point. Where the edit
   // will be watched is not known until the editor has something to show.
@@ -243,11 +255,10 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   }, [schedules, scheduleJobs, editorMemberId, effortHours, scheduleJobId]);
 
   /**
-   * The date to promise: what the editor's queue says, and a plain week out until
-   * there is enough on the job to forecast from.
+   * The date to promise: what the editor's queue says when an editor is assigned.
+   * If unassigned, left empty to be set once the editor is scheduled.
    */
-  const suggestedDueDate =
-    projection?.finishDate || addDaysToDate(dataReceivedDate || todayStr, 7);
+  const suggestedDueDate = projection?.finishDate || '';
 
   useEffect(() => {
     if (!dueDateOverridden && suggestedDueDate) setDueDate(suggestedDueDate);
@@ -264,7 +275,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
    */
   const cardRate = selectedStudio?.rateCard?.[String(serviceType)];
   useEffect(() => {
-    if (rate !== '' && !rateCameFromCard) return;
+    if (rate !== '' && Number(rate) > 0 && !rateCameFromCard) return;
     if (typeof cardRate === 'number' && cardRate > 0) {
       setRate(cardRate);
       setRateCameFromCard(true);
@@ -537,8 +548,11 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
       editorPay: costIsCoveredBySalary ? 0 : initialJob?.editorPay ?? 0,
       estimatedEffortHours: effortHours,
       dataReceivedDate: dataReceivedDate || todayStr,
-      dueDate: dueDate || suggestedDueDate,
+      dueDate: dueDate || suggestedDueDate || '',
       rawDataLink: rawDataLink.trim(),
+      rawDurationHours: typeof rawHours === 'number' ? rawHours : initialJob?.rawDurationHours,
+      rawDurationMinutes: (service?.basis === 'per_raw_hour' && typeof outputMinutes === 'number') ? outputMinutes : initialJob?.rawDurationMinutes,
+      rawPhotoCount: typeof quantity === 'number' ? quantity : initialJob?.rawPhotoCount,
       // Carried through untouched: these are filled in later in the job's life, and
       // this form has no business blanking them.
       deliveryLink: initialJob?.deliveryLink,

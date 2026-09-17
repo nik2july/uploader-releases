@@ -4,6 +4,7 @@ import { FreelanceJob, FreelanceJobStage } from '../../types';
 import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
+import { renderWhatsAppMessage } from '../../utils/whatsappTemplates';
 import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits } from '../../utils/formatters';
 import {
   X,
@@ -39,12 +40,14 @@ interface FreelanceJobDetailModalProps {
   onClose: () => void;
   jobId: string | null;
   onEditJob: (job: FreelanceJob) => void;
+  onAssignEditor?: (job: FreelanceJob) => void;
 }
 
 const STAGES_ORDER: FreelanceJobStage[] = [
   'data_received',
   'sent_to_editor',
-  'draft_received',
+  'internal_review',
+  'internal_changes',
   'sent_to_client',
   'changes_received',
   'changes_sent_to_editor',
@@ -57,6 +60,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
   onClose,
   jobId,
   onEditJob,
+  onAssignEditor,
 }) => {
   const {
     freelanceJobs,
@@ -69,10 +73,12 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
     setSelectedFreelanceClientId,
     setSelectedFreelanceEditorId,
     setActiveView,
+    studioSettings,
   } = useApp();
 
   const [paymentModalType, setPaymentModalType] = useState<'client' | 'editor' | null>(null);
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
+  const [linkModalConfig, setLinkModalConfig] = useState<{ type: 'raw' | 'draft' | 'final'; url: string } | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'financials' | 'revisions' | 'links' | 'logs'>('overview');
 
   const job = freelanceJobs.find(j => j.id === jobId);
@@ -130,59 +136,131 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
   const netCollectedProfit = clientPaid - editorCost;
 
   // WhatsApp helpers
-  const handleShareDataWithEditor = () => {
+  const handleShareDataWithEditor = (overrideUrl?: string) => {
+    const activeUrl = overrideUrl !== undefined ? overrideUrl : (job.rawDataLink || '');
+    if (!activeUrl && overrideUrl === undefined) {
+      setLinkModalConfig({ type: 'raw', url: '' });
+      return;
+    }
     const phone = toWhatsAppNumber(job.editorPhone) || '';
     const text = encodeURIComponent(
-      `*Studio OS - New Freelance Editing Project*\n` +
-      `Project: *${job.title}* (${job.jobCode})\n` +
-      `Service: ${job.serviceType}\n` +
-      `*Due Date:* ${job.dueDate}\n` +
-      `\n*Raw Footage:* Available directly in Desktop App\n` +
-      (job.referenceLink ? `*Reference Moodboard:* ${job.referenceLink}\n` : '') +
-      (job.editingInstructions ? `\n*Brief:* ${job.editingInstructions}\n` : '') +
-      `\nPlease log in to your Studio OS Desktop App to download the raw footage bundle.`
+      renderWhatsAppMessage(
+        'editor_assign',
+        {
+          editorName: job.editorName || 'Editor',
+          projectName: job.title,
+          jobCode: job.jobCode,
+          serviceType: job.serviceType,
+          dueDate: job.dueDate || '',
+          link: activeUrl,
+          referenceLink: job.referenceLink || '',
+          instructions: job.editingInstructions || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
-    advanceFreelanceJobStage(job.id, 'sent_to_editor', 'Notified editor via WhatsApp to download from Desktop App');
+    advanceFreelanceJobStage(job.id, 'sent_to_editor', 'Shared raw data link with editor via WhatsApp');
   };
 
-  const handleShareDraftWithClient = () => {
+  const handleShareDraftWithClient = (overrideUrl?: string) => {
+    const activeUrl = overrideUrl !== undefined ? overrideUrl : deliveryLink;
+    if (!activeUrl && overrideUrl === undefined) {
+      setLinkModalConfig({ type: 'draft', url: '' });
+      return;
+    }
     const phone = clientWhatsAppNumber(job);
-    const text = (
-      `*Studio OS - Draft Video for Review*\n` +
-      `Hello ${job.clientName},\n` +
-      `Your edit for *${job.title}* is ready for first review!\n\n` +
-      (deliveryLink ? `*Preview Link:* ${deliveryLink}\n\n` : '') +
-      `Please watch and let us know if any feedback or changes are needed.\nThank you!`
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_draft',
+        {
+          clientName: job.clientName,
+          projectName: job.title,
+          jobCode: job.jobCode,
+          serviceType: job.serviceType,
+          link: activeUrl || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
     advanceFreelanceJobStage(job.id, 'sent_to_client', 'Shared draft link with client for review via WhatsApp');
   };
 
-  const handleShareFinalWithClient = () => {
+  const handleSendFollowUpWithClient = async () => {
     const phone = clientWhatsAppNumber(job);
-    const text = (
-      `*Studio OS - Final Master Delivery*\n` +
-      `Hello ${job.clientName},\n` +
-      `The final master video for *${job.title}* is completely ready in full quality!\n\n` +
-      (deliveryLink ? `*Master Download Link:* ${deliveryLink}\n\n` : '') +
-      (clientBalance > 0 ? `*Pending Balance Due:* ₹${clientBalance.toLocaleString('en-IN')}\n\n` : '') +
-      `It was a pleasure working on this project! ✨`
+    const activeUrl = deliveryLink || '';
+    const today = new Date().toISOString().slice(0, 10);
+    const nextCount = (job.followUpCount || 0) + 1;
+
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_followup',
+        {
+          clientName: job.clientName,
+          projectName: job.title,
+          jobCode: job.jobCode,
+          link: activeUrl,
+          sentDate: job.sentToClientDate || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
-    advanceFreelanceJobStage(job.id, 'final_delivered', 'Delivered final link to client via WhatsApp');
+
+    try {
+      await updateFreelanceJob(
+        job.id,
+        {
+          lastFollowUpDate: today,
+          followUpCount: nextCount,
+        },
+        `Sent review follow-up to client via WhatsApp (#${nextCount})`
+      );
+    } catch (err) {
+      console.error('Failed to log follow-up on job:', err);
+    }
+  };
+
+  const handleShareFinalWithClient = (overrideUrl?: string) => {
+    const activeUrl = overrideUrl !== undefined ? overrideUrl : deliveryLink;
+    if (!activeUrl && overrideUrl === undefined) {
+      setLinkModalConfig({ type: 'final', url: '' });
+      return;
+    }
+    const phone = clientWhatsAppNumber(job);
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_final',
+        {
+          clientName: job.clientName,
+          projectName: job.title,
+          jobCode: job.jobCode,
+          link: activeUrl || '',
+          balance: clientBalance > 0 ? inrDigits(clientBalance) : '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
+    );
+    window.open(getWhatsAppUrl(phone, text), '_blank');
+    advanceFreelanceJobStage(job.id, 'completed', 'Delivered final master link to client via WhatsApp and marked completed');
   };
 
   const handleSendPaymentReminder = () => {
     const phone = clientWhatsAppNumber(job);
-    const text = (
-      `*Studio OS - Payment Reminder*\n` +
-      `Hello ${job.clientName},\n` +
-      `This is a gentle reminder regarding the outstanding balance for *${job.title}* (${job.jobCode}).\n\n` +
-      `*Total Project Fee:* ₹${inrDigits(job.clientCharge)}\n` +
-      `*Amount Received:* ₹${clientPaid.toLocaleString('en-IN')}\n` +
-      `*Balance Due:* ₹${clientBalance.toLocaleString('en-IN')}\n\n` +
-      `Kindly arrange the transfer at your convenience. Thank you!`
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_payment_reminder',
+        {
+          clientName: job.clientName,
+          projectName: job.title,
+          jobCode: job.jobCode,
+          totalFee: inrDigits(job.clientCharge),
+          paidAmount: inrDigits(clientPaid),
+          balance: inrDigits(clientBalance),
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
   };
@@ -276,19 +354,24 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
             ))}
           </select>
 
-          <div className="flex items-center gap-2 flex-1 min-w-[160px]">
-            <div className="h-1.5 flex-1 rounded-full bg-[#f9f8f6] overflow-hidden border border-[#d4c1a3]/60">
-              <div
-                className="h-full bg-[#7a2e33]"
-                style={{
-                  width: `${((STAGES_ORDER.indexOf(job.stage) + 1) / STAGES_ORDER.length) * 100}%`,
-                }}
-              />
-            </div>
-            <span className="text-[10px] font-semibold text-[#6b6660] shrink-0">
-              Step {STAGES_ORDER.indexOf(job.stage) + 1} of {STAGES_ORDER.length}
-            </span>
-          </div>
+          {(() => {
+            const currentIdx = Math.max(0, STAGES_ORDER.indexOf(job.stage === 'draft_received' ? 'internal_review' : job.stage));
+            return (
+              <div className="flex items-center gap-2 flex-1 min-w-[160px]">
+                <div className="h-1.5 flex-1 rounded-full bg-[#f9f8f6] overflow-hidden border border-[#d4c1a3]/60">
+                  <div
+                    className="h-full bg-[#7a2e33]"
+                    style={{
+                      width: `${((currentIdx + 1) / STAGES_ORDER.length) * 100}%`,
+                    }}
+                  />
+                </div>
+                <span className="text-[10px] font-semibold text-[#6b6660] shrink-0">
+                  Step {currentIdx + 1} of {STAGES_ORDER.length}
+                </span>
+              </div>
+            );
+          })()}
 
           <span className="text-[11px] text-[#6b6660] italic basis-full sm:basis-auto">
             {stageMeta.description}
@@ -359,14 +442,41 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                       <p className="text-[11px] text-emerald-800/80 mt-1 line-clamp-2">
                         Sends raw footage link, moodboard, due date ({job.dueDate})
                       </p>
+
+                      {job.rawDataLink ? (
+                        <div className="mt-2 flex items-center justify-between text-[11px] bg-emerald-100/70 border border-emerald-200/80 rounded-lg px-2 py-1">
+                          <span className="truncate max-w-[140px] text-emerald-950 font-mono text-[10px]" title={job.rawDataLink}>
+                            {job.rawDataLink}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'raw', url: job.rawDataLink || '' })}
+                            className="text-emerald-700 hover:text-emerald-900 text-[10px] font-bold underline ml-1 cursor-pointer shrink-0"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex items-center justify-between text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200/60 rounded-lg px-2 py-1">
+                          <span className="truncate">⚠️ No raw link attached</span>
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'raw', url: '' })}
+                            className="text-emerald-700 hover:text-emerald-950 font-bold underline cursor-pointer shrink-0 ml-1"
+                          >
+                            + Attach
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <button
-                      onClick={handleShareDataWithEditor}
+                      onClick={() => handleShareDataWithEditor()}
                       disabled={!job.editorPhone}
+                      title={!job.editorPhone ? 'Editor WhatsApp phone number missing' : undefined}
                       className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-2xs"
                     >
                       <MessageCircle className="w-3.5 h-3.5" />
-                      <span>Send to Editor</span>
+                      <span>{job.rawDataLink ? 'Send to Editor' : 'Attach & Send to Editor'}</span>
                     </button>
                   </div>
 
@@ -377,25 +487,72 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                         <span className="text-[10px] uppercase font-bold text-sky-800">
                           2. To Client
                         </span>
-                        {job.sentToClientDate && (
-                          <span className="text-[10px] text-sky-700 font-medium">
-                            Sent {job.sentToClientDate}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {job.sentToClientDate && (
+                            <span className="text-[10px] text-sky-700 font-medium">
+                              Sent {job.sentToClientDate}
+                            </span>
+                          )}
+                          {job.lastFollowUpDate && (
+                            <span className="text-[10px] text-amber-800 font-bold bg-amber-100 px-1.5 py-0.5 rounded">
+                              Followed {job.lastFollowUpDate}{job.followUpCount && job.followUpCount > 1 ? ` (x${job.followUpCount})` : ''}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <h4 className="text-xs font-bold text-sky-950">Share Draft for Review</h4>
                       <p className="text-[11px] text-sky-800/80 mt-1 line-clamp-2">
                         Sends preview link for client feedback
                       </p>
+
+                      {deliveryLink ? (
+                        <div className="mt-2 flex items-center justify-between text-[11px] bg-sky-100/70 border border-sky-200/80 rounded-lg px-2 py-1">
+                          <span className="truncate max-w-[140px] text-sky-950 font-mono text-[10px]" title={deliveryLink}>
+                            {deliveryLink}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'draft', url: deliveryLink })}
+                            className="text-sky-700 hover:text-sky-900 text-[10px] font-bold underline ml-1 cursor-pointer shrink-0"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex items-center justify-between text-[10px] text-sky-800 bg-sky-50 border border-sky-200/60 rounded-lg px-2 py-1">
+                          <span className="truncate">⚠️ No link attached</span>
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'draft', url: '' })}
+                            className="text-sky-700 hover:text-sky-950 font-bold underline cursor-pointer shrink-0 ml-1"
+                          >
+                            + Attach
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <button
-                      onClick={handleShareDraftWithClient}
-                      disabled={!job.clientPhone || !deliveryLink}
-                      className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-2xs"
-                    >
-                      <MessageCircle className="w-3.5 h-3.5" />
-                      <span>Send Draft Link</span>
-                    </button>
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleShareDraftWithClient()}
+                        disabled={!job.clientPhone}
+                        title={!job.clientPhone ? 'Client WhatsApp phone number missing' : undefined}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-2xs"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" />
+                        <span>{deliveryLink ? 'Send Draft' : 'Attach & Send'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSendFollowUpWithClient}
+                        disabled={!job.clientPhone}
+                        title={!job.clientPhone ? 'Client WhatsApp phone number missing' : 'Send WhatsApp follow-up nudge to client'}
+                        className="flex items-center justify-center gap-1 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Follow Up</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Action 3: Log & Send Changes */}
@@ -440,14 +597,41 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                       <p className="text-[11px] text-purple-800/80 mt-1 line-clamp-2">
                         Sends final 4K master delivery & balance note
                       </p>
+
+                      {deliveryLink ? (
+                        <div className="mt-2 flex items-center justify-between text-[11px] bg-purple-100/70 border border-purple-200/80 rounded-lg px-2 py-1">
+                          <span className="truncate max-w-[140px] text-purple-950 font-mono text-[10px]" title={deliveryLink}>
+                            {deliveryLink}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'final', url: deliveryLink })}
+                            className="text-purple-700 hover:text-purple-900 text-[10px] font-bold underline ml-1 cursor-pointer shrink-0"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex items-center justify-between text-[10px] text-purple-800 bg-purple-50 border border-purple-200/60 rounded-lg px-2 py-1">
+                          <span className="truncate">⚠️ No link attached</span>
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'final', url: '' })}
+                            className="text-purple-700 hover:text-purple-950 font-bold underline cursor-pointer shrink-0 ml-1"
+                          >
+                            + Attach
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <button
-                      onClick={handleShareFinalWithClient}
-                      disabled={!job.clientPhone || !deliveryLink}
+                      onClick={() => handleShareFinalWithClient()}
+                      disabled={!job.clientPhone}
+                      title={!job.clientPhone ? 'Client WhatsApp phone number missing' : undefined}
                       className="mt-3 w-full flex items-center justify-center gap-1.5 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 text-white text-xs font-semibold rounded-lg transition-all cursor-pointer shadow-2xs"
                     >
                       <MessageCircle className="w-3.5 h-3.5" />
-                      <span>Deliver Master</span>
+                      <span>{deliveryLink ? 'Deliver Master' : 'Attach & Deliver Master'}</span>
                     </button>
                   </div>
                 </div>
@@ -490,17 +674,31 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                 <div className="bg-white rounded-xl p-5 border border-[#d4c1a3] shadow-2xs space-y-4">
                   <div className="flex items-center justify-between pb-2 border-b border-[#d4c1a3]/40">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-[#7a2e33]">
-                      Assigned Editor ({job.assignedType === 'in_house' ? 'In-House' : 'Freelancer'})
+                      Assigned Editor {job.editorName ? `(${job.assignedType === 'in_house' ? 'In-House' : 'Freelancer'})` : ''}
                     </h3>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        job.assignedType === 'in_house'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {job.assignedType === 'in_house' ? 'In-House Crew' : 'External Freelancer'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {job.editorName && (
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            job.assignedType === 'in_house'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {job.assignedType === 'in_house' ? 'In-House Crew' : 'External Freelancer'}
+                        </span>
+                      )}
+                      {onAssignEditor && (
+                        <button
+                          type="button"
+                          onClick={() => onAssignEditor(job)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg shadow-2xs transition-all cursor-pointer"
+                        >
+                          <User className="w-3 h-3" />
+                          <span>{job.editorName ? 'Change Editor' : 'Assign Editor'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="space-y-2.5 text-xs">
@@ -858,18 +1056,40 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                           : "Upload the project folder directly via the Desktop App to stream files into cloud storage."}
                       </p>
                     </div>
-                    {job.rawDataLink && job.rawDataLink.startsWith('http') && (
-                      <div className="mt-3 pt-2 border-t border-[#d4c1a3]/40 flex items-center justify-between">
-                        <span className="text-[10px] text-[#6b6660] font-mono truncate max-w-[200px]">{job.rawDataLink}</span>
-                        <a
-                          href={job.rawDataLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="p-1 text-[#7a2e33] hover:underline text-[11px] flex items-center gap-1"
+                    {job.rawDataLink ? (
+                      <div className="mt-3 pt-2 border-t border-[#d4c1a3]/40 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-[#6b6660] font-mono truncate max-w-[180px]">{job.rawDataLink}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'raw', url: job.rawDataLink || '' })}
+                            className="text-[11px] text-[#7a2e33] hover:underline font-bold cursor-pointer"
+                          >
+                            Change
+                          </button>
+                          {job.rawDataLink.startsWith('http') && (
+                            <a
+                              href={job.rawDataLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#7a2e33] text-white text-[11px] font-semibold rounded-lg hover:bg-[#5a2226] transition-colors"
+                            >
+                              <span>Open</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 pt-2 border-t border-[#d4c1a3]/40 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setLinkModalConfig({ type: 'raw', url: '' })}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#7a2e33] text-white text-xs font-bold rounded-lg hover:bg-[#5a2226] transition-colors cursor-pointer shadow-2xs"
                         >
-                          <span>Open</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Attach Raw Footage Link</span>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -882,7 +1102,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                         {deliveryLink ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
                             <CheckCircle2 className="w-3 h-3" />
-                            Stored in Dropbox
+                            Link Attached
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#6b6660] bg-gray-100 px-2 py-0.5 rounded-full border border-gray-200">
@@ -893,23 +1113,43 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                       </div>
                       <p className="text-[11px] text-[#6b6660] mt-1.5 leading-snug">
                         {deliveryLink
-                          ? "Editor uploaded the cut directly to Studio Dropbox via the Desktop App."
-                          : "Editor uploads cuts directly from their Desktop App without manual link sharing."}
+                          ? "Deliverable cut ready to preview or share with client."
+                          : "Upload cut via Desktop App or attach an external link (Google Drive, Dropbox, Frame.io, YouTube)."}
                       </p>
                     </div>
-                    {deliveryLink && (
-                      <div className="mt-3 pt-2 border-t border-[#d4c1a3]/40 flex items-center justify-between">
-                        <span className="text-[10px] text-[#6b6660] truncate max-w-[180px]">Cloud Deliverable</span>
-                        <a
-                          href={deliveryLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#7a2e33] text-white text-[11px] font-semibold rounded-lg hover:bg-[#5a2226] transition-colors"
+                    {deliveryLink ? (
+                      <div className="mt-3 pt-2 border-t border-[#d4c1a3]/40 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-[#6b6660] truncate max-w-[180px] font-mono">{deliveryLink}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setLinkModalConfig({ type: 'draft', url: deliveryLink })}
+                            className="text-[11px] text-[#7a2e33] hover:underline font-bold cursor-pointer"
+                          >
+                            Change
+                          </button>
+                          <a
+                            href={deliveryLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#7a2e33] text-white text-[11px] font-semibold rounded-lg hover:bg-[#5a2226] transition-colors"
+                          >
+                            <Film className="w-3.5 h-3.5" />
+                            <span>Preview</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3 pt-2 border-t border-[#d4c1a3]/40 flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setLinkModalConfig({ type: 'draft', url: '' })}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#7a2e33] text-white text-xs font-bold rounded-lg hover:bg-[#5a2226] transition-colors cursor-pointer shadow-2xs"
                         >
-                          <Film className="w-3.5 h-3.5" />
-                          <span>Preview Cut</span>
-                          <ExternalLink className="w-3 h-3" />
-                        </a>
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Attach Deliverable Link</span>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -1006,6 +1246,132 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
         onClose={() => setIsRevisionModalOpen(false)}
         job={job}
       />
+
+      {/* Link Attachment / WhatsApp Prompt Modal */}
+      {linkModalConfig && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white border border-[#d4c1a3] rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#d4c1a3] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#7a2e33]/10 text-[#7a2e33] flex items-center justify-center font-bold">
+                  <LinkIcon className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold font-serif text-[#111417]">
+                    {linkModalConfig.type === 'raw'
+                      ? 'Share Raw Data & Brief'
+                      : linkModalConfig.type === 'draft'
+                      ? 'Share Draft for Review'
+                      : 'Send Final Master Delivery'}
+                  </h3>
+                  <p className="text-xs text-[#6b6660]">
+                    {linkModalConfig.type === 'raw'
+                      ? 'Attach raw footage folder (Google Drive, Dropbox, B2) for editor'
+                      : linkModalConfig.type === 'draft'
+                      ? 'Attach preview cut link to send to client'
+                      : 'Attach final master cut link to deliver to client'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLinkModalConfig(null)}
+                className="text-[#6b6660] hover:text-[#111417] p-1.5 rounded-lg hover:bg-gray-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#111417] mb-1.5">
+                {linkModalConfig.type === 'raw'
+                  ? 'Raw Footage / Project Link'
+                  : linkModalConfig.type === 'draft'
+                  ? 'Draft / Preview Video Link'
+                  : 'Final Master Download Link'}
+              </label>
+              <input
+                type="url"
+                autoFocus
+                value={linkModalConfig.url}
+                onChange={e => setLinkModalConfig({ ...linkModalConfig, url: e.target.value })}
+                placeholder="https://drive.google.com/... or dropbox.com/..."
+                className="w-full px-3 py-2 text-xs border border-[#d4c1a3] rounded-xl focus:outline-none focus:border-[#7a2e33] font-mono bg-[#f9f8f6]/50"
+              />
+              <p className="text-[11px] text-[#6b6660] mt-1.5">
+                Supports Google Drive, Dropbox, Backblaze B2, Frame.io, Vimeo, YouTube, or any web URL.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between pt-3 border-t border-[#d4c1a3] gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const type = linkModalConfig.type;
+                  setLinkModalConfig(null);
+                  if (type === 'raw') {
+                    handleShareDataWithEditor('');
+                  } else if (type === 'draft') {
+                    handleShareDraftWithClient('');
+                  } else {
+                    handleShareFinalWithClient('');
+                  }
+                }}
+                className="px-3 py-1.5 text-xs text-[#6b6660] hover:text-[#111417] font-medium cursor-pointer"
+                title="Send notification on WhatsApp without a link"
+              >
+                Send Without Link
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const url = linkModalConfig.url.trim();
+                    if (url) {
+                      if (linkModalConfig.type === 'raw') {
+                        await updateFreelanceJob(job.id, { rawDataLink: url }, 'Attached raw footage link');
+                      } else {
+                        await updateFreelanceJob(job.id, { deliveryLink: url }, 'Attached deliverable link');
+                      }
+                    }
+                    setLinkModalConfig(null);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-[#111417] bg-[#f9f8f6] hover:bg-[#d4c1a3]/30 border border-[#d4c1a3] rounded-xl transition-all cursor-pointer"
+                >
+                  Save Link Only
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const url = linkModalConfig.url.trim();
+                    if (url) {
+                      if (linkModalConfig.type === 'raw') {
+                        await updateFreelanceJob(job.id, { rawDataLink: url }, 'Attached raw footage link');
+                      } else {
+                        await updateFreelanceJob(job.id, { deliveryLink: url }, 'Attached deliverable link');
+                      }
+                    }
+                    const type = linkModalConfig.type;
+                    setLinkModalConfig(null);
+                    if (type === 'raw') {
+                      handleShareDataWithEditor(url);
+                    } else if (type === 'draft') {
+                      handleShareDraftWithClient(url);
+                    } else {
+                      handleShareFinalWithClient(url);
+                    }
+                  }}
+                  className="px-4 py-1.5 text-xs font-bold text-white bg-[#7a2e33] hover:bg-[#632529] rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>Save & Open WhatsApp</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

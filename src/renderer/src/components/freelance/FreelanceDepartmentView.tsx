@@ -7,10 +7,12 @@ import { getUniqueReusableDeliverables, isPostProductionService } from '../../ut
 import { resolvePostProductionServices } from '../../utils/postProductionServices';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
 import { useApp } from '../../context/AppContext';
-import { FreelanceJob, FreelanceJobStage } from '../../types';
+import { FreelanceJob, FreelanceJobStage, FreelanceExtraData, FreelanceDoubt } from '../../types';
 import { deliveryLinkOf, freelanceDueDate } from '../../utils/freelance';
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
+import { WhatsAppTemplatesDrawer } from './WhatsAppTemplatesDrawer';
+import { renderWhatsAppMessage } from '../../utils/whatsappTemplates';
 import { pricingFromRequest } from '../../utils/mediaPricing';
 import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits, isClientPostProductionEligible } from '../../utils/formatters';
 import {
@@ -19,6 +21,8 @@ import {
   Upload,
   Search,
   Filter,
+  ArrowUpDown,
+  X,
   IndianRupee,
   Calendar,
   Clock,
@@ -39,11 +43,14 @@ import {
   MessageSquare,
   Eye,
   Edit3,
+  SlidersHorizontal,
+  HardDrive,
+  HelpCircle,
+  Send,
+  Check,
+  Trash2,
 } from 'lucide-react';
-import { FreelanceClientsPanel } from './FreelanceClientsPanel';
-import { FreelanceEditorsPanel } from './FreelanceEditorsPanel';
-import { EditorSchedulePanel } from './EditorSchedulePanel';
-import { CapacityRadarPanel } from './CapacityRadarPanel';
+import { AssignEditorPanel } from './AssignEditorPanel';
 import { NewFreelanceJobModal } from '../modals/NewFreelanceJobModal';
 import { FreelanceJobDetailModal } from '../modals/FreelanceJobDetailModal';
 import { FreelancePaymentModal } from '../modals/FreelancePaymentModal';
@@ -90,57 +97,74 @@ export const FreelanceDepartmentView: React.FC<{
     setActiveView,
     addFreelanceJob,
     pushFreelanceJobRequest,
-    
-
+    updateFreelanceJob,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStageTab, setSelectedStageTab] = useState<string>('all');
-  const [paymentFilter, setPaymentFilter] = useState<'all' | 'client_due' | 'editor_due' | 'overdue'>('all');
+  const [filter, setFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<string>('due_asc');
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'kanban'>('grid');
   const [attachingId, setAttachingId] = useState<string | null>(null);
-  /**
-   * Which of the department's three faces is showing.
-   *
-   * Remembered across visits because a partner studio's page is a separate view: coming
-   * back from one would otherwise land on Jobs, several clicks from the roster you were
-   * just looking at.
-   */
-  const [section, setSection] = useState<'jobs' | 'clients' | 'editors' | 'schedule' | 'radar'>(() => {
-    try {
-      const saved = localStorage.getItem('baawaray_freelance_section');
-      // A section saved by an older build that no longer exists falls back to jobs.
-      if (saved === 'jobs' || saved === 'clients' || saved === 'editors' || saved === 'schedule' || saved === 'radar')
-        return saved;
-    } catch {
-      /* private browsing, or storage disabled — the default is fine */
-    }
-    return 'jobs';
-  });
-
   // The studio's own work belongs on the roster whether or not a deliverable has
   // been filed yet, so the board guarantees it rather than waiting for the first
   // send to create it.
   useEffect(() => { void ensureBaawarayFilmsStudio().catch(() => { /* offline: the send path still creates it */ }); }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('baawaray_freelance_section', section);
-    } catch {
-      /* nothing to do: this is a convenience, not state the app depends on */
-    }
-  }, [section]);
-
   // Modals state
   const [isNewJobModalOpen, setIsNewJobModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<FreelanceJob | null>(null);
+  const [assigningJob, setAssigningJob] = useState<FreelanceJob | null>(null);
   const [selectedDetailJobId, setSelectedDetailJobId] = useState<string | null>(null);
   const [paymentModalState, setPaymentModalState] = useState<{
     isOpen: boolean;
     job: FreelanceJob | null;
     type: 'client' | 'editor';
   }>({ isOpen: false, job: null, type: 'client' });
-  const [revisionModalJob, setRevisionModalJob] = useState<FreelanceJob | null>(null);
+  const [revisionModalState, setRevisionModalState] = useState<{
+    isOpen: boolean;
+    job: FreelanceJob | null;
+    revisionType: 'client' | 'internal';
+  }>({ isOpen: false, job: null, revisionType: 'client' });
+
+  // Raw footage & hard drive data modal state
+  const [rawLinkPromptJob, setRawLinkPromptJob] = useState<FreelanceJob | null>(null);
+  const [rawSourceType, setRawSourceType] = useState<'partner_upload' | 'studio_upload' | 'hard_drive'>('partner_upload');
+  const [rawLinkInput, setRawLinkInput] = useState('');
+  const [rawHddStatus, setRawHddStatus] = useState<'received_by_studio' | 'sent_to_editor'>('received_by_studio');
+  const [rawHddNotes, setRawHddNotes] = useState('');
+  const [isSavingRawLink, setIsSavingRawLink] = useState(false);
+
+  // Extra data / footage modal state (appends data at any time)
+  const [extraDataPromptJob, setExtraDataPromptJob] = useState<FreelanceJob | null>(null);
+  const [extraDataTitle, setExtraDataTitle] = useState('');
+  const [extraDataSourceType, setExtraDataSourceType] = useState<'cloud_upload' | 'hard_drive'>('cloud_upload');
+  const [extraDataUrl, setExtraDataUrl] = useState('');
+  const [extraDataNotes, setExtraDataNotes] = useState('');
+  const [extraDataNotifyWhatsApp, setExtraDataNotifyWhatsApp] = useState(true);
+  const [isSavingExtraData, setIsSavingExtraData] = useState(false);
+
+  // Receive cut / updated cut modal state (the single delivery link)
+  const [receiveCutPromptJob, setReceiveCutPromptJob] = useState<FreelanceJob | null>(null);
+  const [receiveCutLinkInput, setReceiveCutLinkInput] = useState('');
+  const [receiveCutEditorNotes, setReceiveCutEditorNotes] = useState('');
+  const [isSavingCut, setIsSavingCut] = useState(false);
+
+  const [deliverableLinkPromptJob, setDeliverableLinkPromptJob] = useState<{
+    job: FreelanceJob;
+    type: 'draft' | 'final';
+  } | null>(null);
+  const [deliverableLinkInput, setDeliverableLinkInput] = useState('');
+  const [isSavingDeliverableLink, setIsSavingDeliverableLink] = useState(false);
+
+  // Editor Doubts / Clarifications Modal State
+  const [doubtModalJob, setDoubtModalJob] = useState<FreelanceJob | null>(null);
+  const [newDoubtQuestion, setNewDoubtQuestion] = useState('');
+  const [newDoubtCategory, setNewDoubtCategory] = useState<'song_music' | 'footage_clip' | 'revision_feedback' | 'audio_sync' | 'general'>('general');
+  const [newDoubtAskedBy, setNewDoubtAskedBy] = useState('');
+  const [isSavingDoubt, setIsSavingDoubt] = useState(false);
+  const [resolvingDoubtId, setResolvingDoubtId] = useState<string | null>(null);
+  const [doubtResolutionNote, setDoubtResolutionNote] = useState('');
+  const [isWhatsAppTemplatesOpen, setIsWhatsAppTemplatesOpen] = useState(false);
 
   // Overall calculations
 
@@ -238,10 +262,6 @@ export const FreelanceDepartmentView: React.FC<{
       return 'BAAWARAY FILMS';
     }
     if (job.freelanceClientId === BAAWARAY_FILMS_STUDIO_ID || job.sourceCompany === 'baawaray-films') {
-      if (job.sourceClientId) {
-        const c = clients?.find(cl => String(cl.id) === String(job.sourceClientId));
-        if (c?.name || c?.couple) return `${c.couple || c.name} · BAAWARAY FILMS`;
-      }
       return 'BAAWARAY FILMS';
     }
     return job.clientName;
@@ -250,7 +270,7 @@ export const FreelanceDepartmentView: React.FC<{
   const filteredJobs = useMemo(() => {
     // The studio's own pending work sits first: it is the work that cannot start
     // until someone does something about it.
-    return [...pendingDeliverables, ...freelanceJobs].filter(job => {
+    const result = [...pendingDeliverables, ...freelanceJobs].filter(job => {
       // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -270,37 +290,119 @@ export const FreelanceDepartmentView: React.FC<{
         }
       }
 
-      // Stage tab
-      if (selectedStageTab !== 'all') {
-        if (selectedStageTab === 'active' && job.stage === 'completed') return false;
-        if (selectedStageTab === 'revisions' && job.stage !== 'changes_received' && job.stage !== 'changes_sent_to_editor') return false;
-        if (selectedStageTab !== 'active' && selectedStageTab !== 'revisions' && job.stage !== selectedStageTab) return false;
+      // Filter: Unassigned
+      if (filter === 'unassigned') {
+        return !job.editorName || job.editorName.trim() === '';
       }
 
-      // A deliverable with no footage has no payment or due-date history to filter
-      // on, so any filter beyond "all" is asking about jobs and it steps aside.
-      if ((job as PendingRow).pendingDeliverable) {
-        return selectedStageTab === 'all' && paymentFilter === 'all';
+      // If pending deliverable (awaiting footage):
+      const isPending = !!(job as PendingRow).pendingDeliverable;
+      if (isPending) {
+        if (filter === 'all' || filter === 'active') return true;
+        if (filter === 'overdue') {
+          const targetDue = job.dueDate;
+          if (!targetDue) return false;
+          const dueStatus = getDueDateStatus(targetDue);
+          return dueStatus.isOverdue || dueStatus.daysRemaining <= 1;
+        }
+        return false;
       }
 
-      // Payment / Alert filter
-      if (paymentFilter === 'client_due' && job.clientPaymentStatus === 'paid') return false;
-      if (paymentFilter === 'editor_due' && job.editorPaymentStatus === 'paid') return false;
-      if (paymentFilter === 'overdue') {
+      // Filter: Stages
+      if (filter === 'active') {
+        return job.stage !== 'completed';
+      }
+      if (filter === 'revisions') {
+        return job.stage === 'changes_received' || job.stage === 'changes_sent_to_editor';
+      }
+      if (['data_received', 'sent_to_editor', 'draft_received', 'sent_to_client', 'final_delivered', 'completed'].includes(filter)) {
+        return job.stage === filter;
+      }
+
+      // Filter: Payment / Alert
+      if (filter === 'client_due') {
+        return job.clientPaymentStatus !== 'paid';
+      }
+      if (filter === 'editor_due') {
+        return job.editorPaymentStatus !== 'paid' && freelanceJobEditorCost(job) > 0;
+      }
+      if (filter === 'overdue') {
         const targetDue = freelanceDueDate(job);
         const dueStatus = getDueDateStatus(targetDue);
-        if (!dueStatus.isOverdue && dueStatus.daysRemaining > 1) return false;
+        return dueStatus.isOverdue || dueStatus.daysRemaining <= 1;
       }
 
       return true;
     });
-  }, [pendingDeliverables, freelanceJobs, searchQuery, selectedStageTab, paymentFilter, clients]);
 
-  // Stage counts
+    result.sort((a, b) => {
+      if (sortBy === 'due_asc' || sortBy === 'due_desc') {
+        const dueA = freelanceDueDate(a) || a.dueDate || '';
+        const dueB = freelanceDueDate(b) || b.dueDate || '';
+        if (!dueA && !dueB) return 0;
+        if (!dueA) return 1;
+        if (!dueB) return -1;
+        const comp = dueA.localeCompare(dueB);
+        return sortBy === 'due_asc' ? comp : -comp;
+      }
+      if (sortBy === 'created_desc') {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      }
+      if (sortBy === 'created_asc') {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeA - timeB;
+      }
+      if (sortBy === 'title_asc') {
+        const titleA = getJobDisplayTitle(a) || '';
+        const titleB = getJobDisplayTitle(b) || '';
+        return titleA.localeCompare(titleB);
+      }
+      if (sortBy === 'client_asc') {
+        const clientA = getJobDisplayClient(a) || '';
+        const clientB = getJobDisplayClient(b) || '';
+        return clientA.localeCompare(clientB);
+      }
+      if (sortBy === 'editor_asc') {
+        const edA = a.editorName || '';
+        const edB = b.editorName || '';
+        if (!edA && !edB) return 0;
+        if (!edA) return 1;
+        if (!edB) return -1;
+        return edA.localeCompare(edB);
+      }
+      if (sortBy === 'amount_desc') {
+        return (b.clientCharge || 0) - (a.clientCharge || 0);
+      }
+      if (sortBy === 'amount_asc') {
+        return (a.clientCharge || 0) - (b.clientCharge || 0);
+      }
+      return 0;
+    });
+
+    return result;
+  }, [pendingDeliverables, freelanceJobs, searchQuery, filter, sortBy, clients, freelanceJobEditorCost]);
+
+  // Stage & filter counts
   const stageCounts = useMemo(() => {
+    const unassignedPending = pendingDeliverables.length;
+    const unassignedReal = freelanceJobs.filter(j => !j.editorName || j.editorName.trim() === '').length;
+    const overduePending = pendingDeliverables.filter(p => {
+      if (!p.dueDate) return false;
+      const s = getDueDateStatus(p.dueDate);
+      return s.isOverdue || s.daysRemaining <= 1;
+    }).length;
+    const overdueReal = freelanceJobs.filter(j => {
+      const s = getDueDateStatus(freelanceDueDate(j));
+      return s.isOverdue || s.daysRemaining <= 1;
+    }).length;
+
     return {
-      all: freelanceJobs.length,
-      active: freelanceJobs.filter(j => j.stage !== 'completed').length,
+      all: freelanceJobs.length + pendingDeliverables.length,
+      unassigned: unassignedReal + unassignedPending,
+      active: freelanceJobs.filter(j => j.stage !== 'completed').length + pendingDeliverables.length,
       data_received: freelanceJobs.filter(j => j.stage === 'data_received').length,
       sent_to_editor: freelanceJobs.filter(j => j.stage === 'sent_to_editor').length,
       draft_received: freelanceJobs.filter(j => j.stage === 'draft_received').length,
@@ -308,8 +410,11 @@ export const FreelanceDepartmentView: React.FC<{
       revisions: freelanceJobs.filter(j => j.stage === 'changes_received' || j.stage === 'changes_sent_to_editor').length,
       final_delivered: freelanceJobs.filter(j => j.stage === 'final_delivered').length,
       completed: freelanceJobs.filter(j => j.stage === 'completed').length,
+      client_due: freelanceJobs.filter(j => j.clientPaymentStatus !== 'paid').length,
+      editor_due: freelanceJobs.filter(j => j.editorPaymentStatus !== 'paid' && freelanceJobEditorCost(j) > 0).length,
+      overdue: overdueReal + overduePending,
     };
-  }, [freelanceJobs]);
+  }, [freelanceJobs, pendingDeliverables, freelanceJobEditorCost]);
 
   /** See the note in FreelanceJobDetailModal: the country lives on the studio. */
   const clientWhatsAppNumber = (job: FreelanceJob): string => {
@@ -320,48 +425,577 @@ export const FreelanceDepartmentView: React.FC<{
   };
 
   // Fast WhatsApp handlers
-  const handleShareDataWhatsApp = (job: FreelanceJob) => {
+  const dispatchShareDataWhatsApp = (job: FreelanceJob, overrideRawLink?: string) => {
+    const rawLink = overrideRawLink !== undefined ? overrideRawLink : (job.rawDataLink || '');
     const phone = toWhatsAppNumber(job.editorPhone) || '';
     const text = encodeURIComponent(
-      `*Studio OS - New Freelance Editing Project*\n` +
-      `Project: *${job.title}* (${job.jobCode})\n` +
-      `Service: ${job.serviceType}\n` +
-      `*Target Due Date:* ${job.dueDate}\n` +
-      (job.rawDataLink ? `*Raw Footage Link:* ${job.rawDataLink}\n` : '') +
-      (job.referenceLink ? `*Reference Moodboard:* ${job.referenceLink}\n` : '') +
-      (job.editingInstructions ? `*Editing Notes:* ${job.editingInstructions}\n` : '') +
-      `\nPlease download data and confirm start.`
+      renderWhatsAppMessage(
+        'editor_assign',
+        {
+          editorName: job.editorName || 'Editor',
+          projectName: getJobDisplayTitle(job),
+          jobCode: job.jobCode,
+          serviceType: job.serviceType,
+          dueDate: job.dueDate || '',
+          link: rawLink,
+          referenceLink: job.referenceLink || '',
+          instructions: job.editingInstructions || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
     advanceFreelanceJobStage(job.id, 'sent_to_editor', 'Shared raw data link with editor via WhatsApp');
   };
 
-  const handleShareDraftWhatsApp = (job: FreelanceJob) => {
+  const handleShareDataWhatsApp = (job: FreelanceJob) => {
+    if (!job.rawDataLink || !job.rawDataLink.trim()) {
+      setRawLinkPromptJob(job);
+      setRawLinkInput('');
+      return;
+    }
+    dispatchShareDataWhatsApp(job);
+  };
+
+  const handleSaveRawData = async (sendWhatsApp: boolean = false) => {
+    if (!rawLinkPromptJob) return;
+    setIsSavingRawLink(true);
+    try {
+      const updates: Partial<FreelanceJob> = {};
+      if (rawSourceType === 'hard_drive') {
+        updates.rawDataSource = 'hard_drive';
+        updates.hddStatus = rawHddStatus;
+        updates.hardDriveNotes = rawHddNotes.trim() || undefined;
+      } else {
+        const link = rawLinkInput.trim();
+        updates.rawDataSource = rawSourceType === 'partner_upload' ? 'link' : 'upload';
+        updates.rawDataLink = link || undefined;
+      }
+
+      await updateFreelanceJob(rawLinkPromptJob.id, updates, 'Updated raw data info');
+
+      if (sendWhatsApp) {
+        dispatchShareDataWhatsApp(rawLinkPromptJob, updates.rawDataLink || '');
+      }
+
+      setRawLinkPromptJob(null);
+      setRawLinkInput('');
+      setRawHddNotes('');
+    } catch (err: any) {
+      console.error('Failed to save raw data:', err);
+      alert('Failed to save raw data. Please try again.');
+    } finally {
+      setIsSavingRawLink(false);
+    }
+  };
+
+  const handleSaveExtraData = async () => {
+    if (!extraDataPromptJob) return;
+    const title = extraDataTitle.trim();
+    if (!title) {
+      alert('Please enter a description or label for the extra data.');
+      return;
+    }
+    const url = extraDataUrl.trim();
+    setIsSavingExtraData(true);
+    try {
+      const newExtra: FreelanceExtraData = {
+        id: `extra-${Date.now()}`,
+        title,
+        url: url || undefined,
+        sourceType: extraDataSourceType,
+        notes: extraDataNotes.trim() || undefined,
+        addedAt: new Date().toISOString().slice(0, 10),
+      };
+      const updatedList = [...(extraDataPromptJob.additionalDataLinks || []), newExtra];
+      await updateFreelanceJob(extraDataPromptJob.id, { additionalDataLinks: updatedList }, `Added additional footage: ${title}`);
+
+      if (extraDataNotifyWhatsApp && extraDataPromptJob.editorPhone) {
+        const phone = toWhatsAppNumber(extraDataPromptJob.editorPhone) || '';
+        const text = encodeURIComponent(
+          renderWhatsAppMessage(
+            'editor_extra_data',
+            {
+              editorName: extraDataPromptJob.editorName || 'Editor',
+              projectName: getJobDisplayTitle(extraDataPromptJob),
+              jobCode: extraDataPromptJob.jobCode,
+              title,
+              link: url,
+              notes: extraDataNotes.trim(),
+            },
+            studioSettings?.studioName || 'Baawaray Films'
+          )
+        );
+        window.open(getWhatsAppUrl(phone, text), '_blank');
+      }
+
+      setExtraDataPromptJob(null);
+      setExtraDataTitle('');
+      setExtraDataUrl('');
+      setExtraDataNotes('');
+    } catch (err: any) {
+      console.error('Failed to save additional data:', err);
+      alert('Failed to save additional data. Please try again.');
+    } finally {
+      setIsSavingExtraData(false);
+    }
+  };
+
+  const handleSaveCut = async () => {
+    if (!receiveCutPromptJob) return;
+    const link = receiveCutLinkInput.trim();
+    if (!link) {
+      alert('Please enter a review / cut delivery link.');
+      return;
+    }
+    setIsSavingCut(true);
+    try {
+      const updates: Partial<FreelanceJob> = { deliveryLink: link };
+      const notes = receiveCutEditorNotes.trim();
+
+      if (notes && receiveCutPromptJob.revisions && receiveCutPromptJob.revisions.length > 0) {
+        const revs = [...receiveCutPromptJob.revisions];
+        const lastIdx = revs.length - 1;
+        revs[lastIdx] = {
+          ...revs[lastIdx],
+          editorNotes: notes,
+          editorFeedbackDate: new Date().toISOString().slice(0, 10),
+          status: 'resolved',
+        };
+        updates.revisions = revs;
+      }
+
+      await updateFreelanceJob(
+        receiveCutPromptJob.id,
+        updates,
+        notes ? `Attached cut link and logged editor feedback: ${notes.slice(0, 60)}` : 'Attached/updated review cut link'
+      );
+      await advanceFreelanceJobStage(receiveCutPromptJob.id, 'internal_review', 'Cut received from editor. Moved to Studio Review.');
+
+      setReceiveCutPromptJob(null);
+      setReceiveCutLinkInput('');
+      setReceiveCutEditorNotes('');
+    } catch (err: any) {
+      console.error('Failed to save cut link:', err);
+      alert('Failed to save review cut. Please try again.');
+    } finally {
+      setIsSavingCut(false);
+    }
+  };
+
+  const dispatchShareDraftWhatsApp = (job: FreelanceJob, overrideLink?: string) => {
+    const draftLink = overrideLink !== undefined ? overrideLink : deliveryLinkOf(job);
     const phone = clientWhatsAppNumber(job);
-    const text = (
-      `*Studio OS - Draft Video for Review*\n` +
-      `Hello ${job.clientName},\n` +
-      `Your edit for *${job.title}* is ready for first review!\n\n` +
-      (deliveryLinkOf(job) ? `*Preview Link:* ${deliveryLinkOf(job)}\n\n` : '') +
-      `Please check and share your thoughts or revision notes.`
+    const clientName = getJobDisplayClient(job);
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_draft',
+        {
+          clientName,
+          projectName: getJobDisplayTitle(job),
+          jobCode: job.jobCode,
+          serviceType: job.serviceType,
+          link: draftLink || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
     advanceFreelanceJobStage(job.id, 'sent_to_client', 'Shared draft link with client for review via WhatsApp');
   };
 
-  const handleShareFinalWhatsApp = (job: FreelanceJob) => {
+  const handleShareDraftWhatsApp = (job: FreelanceJob) => {
+    const currentLink = deliveryLinkOf(job);
+    if (!currentLink || !currentLink.trim()) {
+      setDeliverableLinkPromptJob({ job, type: 'draft' });
+      setDeliverableLinkInput('');
+      return;
+    }
+    dispatchShareDraftWhatsApp(job);
+  };
+
+  const dispatchShareFinalWhatsApp = (job: FreelanceJob, overrideLink?: string) => {
+    const finalLink = overrideLink !== undefined ? overrideLink : deliveryLinkOf(job);
     const phone = clientWhatsAppNumber(job);
     const clientBal = freelanceJobPayment(job).balance;
-    const text = (
-      `*Studio OS - Final Master Delivery*\n` +
-      `Hello ${job.clientName},\n` +
-      `The master 4K delivery for *${job.title}* is ready!\n\n` +
-      (deliveryLinkOf(job) ? `*Master Link:* ${deliveryLinkOf(job)}\n\n` : '') +
-      (clientBal > 0 ? `*Pending Balance:* ₹${inrDigits(clientBal)}\n\n` : '') +
-      `Thank you for trusting us with your project!`
+    const clientName = getJobDisplayClient(job);
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_final',
+        {
+          clientName,
+          projectName: getJobDisplayTitle(job),
+          jobCode: job.jobCode,
+          link: finalLink || '',
+          balance: clientBal > 0 ? inrDigits(clientBal) : '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
     );
     window.open(getWhatsAppUrl(phone, text), '_blank');
-    advanceFreelanceJobStage(job.id, 'final_delivered', 'Delivered final master link to client via WhatsApp');
+    advanceFreelanceJobStage(job.id, 'completed', 'Delivered final master link to client via WhatsApp and marked completed');
+  };
+
+  const handleShareFinalWhatsApp = (job: FreelanceJob) => {
+    const currentLink = deliveryLinkOf(job);
+    if (!currentLink || !currentLink.trim()) {
+      setDeliverableLinkPromptJob({ job, type: 'final' });
+      setDeliverableLinkInput('');
+      return;
+    }
+    dispatchShareFinalWhatsApp(job);
+  };
+
+  const handleSendFollowUpWhatsApp = async (job: FreelanceJob) => {
+    const phone = clientWhatsAppNumber(job);
+    const clientName = getJobDisplayClient(job);
+    const previewLink = deliveryLinkOf(job) || '';
+    const today = new Date().toISOString().slice(0, 10);
+    const nextCount = (job.followUpCount || 0) + 1;
+
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_followup',
+        {
+          clientName,
+          projectName: getJobDisplayTitle(job),
+          jobCode: job.jobCode,
+          link: previewLink,
+          sentDate: job.sentToClientDate || '',
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
+    );
+    window.open(getWhatsAppUrl(phone, text), '_blank');
+
+    try {
+      await updateFreelanceJob(
+        job.id,
+        {
+          lastFollowUpDate: today,
+          followUpCount: nextCount,
+        },
+        `Sent review follow-up to client via WhatsApp (#${nextCount})`
+      );
+    } catch (err) {
+      console.error('Failed to log follow-up on job:', err);
+    }
+  };
+
+  const handleSaveAndSendDeliverableLink = async () => {
+    if (!deliverableLinkPromptJob) return;
+    const { job, type } = deliverableLinkPromptJob;
+    const link = deliverableLinkInput.trim();
+    if (!link) {
+      alert('Please enter a valid deliverable download link or click "Deliver without link".');
+      return;
+    }
+    setIsSavingDeliverableLink(true);
+    try {
+      await updateFreelanceJob(job.id, { deliveryLink: link }, `Attached ${type === 'final' ? 'master' : 'draft'} delivery link`);
+      if (type === 'final') {
+        dispatchShareFinalWhatsApp(job, link);
+      } else {
+        dispatchShareDraftWhatsApp(job, link);
+      }
+      setDeliverableLinkPromptJob(null);
+      setDeliverableLinkInput('');
+    } catch (err: any) {
+      console.error('Failed to save deliverable link:', err);
+      alert('Failed to save deliverable link. Please try again.');
+    } finally {
+      setIsSavingDeliverableLink(false);
+    }
+  };
+
+  const handleSendWithoutDeliverableLink = () => {
+    if (!deliverableLinkPromptJob) return;
+    const { job, type } = deliverableLinkPromptJob;
+    if (type === 'final') {
+      dispatchShareFinalWhatsApp(job, '');
+    } else {
+      dispatchShareDraftWhatsApp(job, '');
+    }
+    setDeliverableLinkPromptJob(null);
+    setDeliverableLinkInput('');
+  };
+
+  // Stage-Adaptive Date and Milestone Helper
+  const getJobStageDateInfo = (job: FreelanceJob, targetDueDate: string, dueStatus: { label: string; color: string }) => {
+    switch (job.stage) {
+      case 'pending_assignment':
+        return {
+          icon: Calendar,
+          label: 'Created:',
+          dateStr: job.createdAt || 'Pending',
+          badgeText: 'Awaiting Assignment',
+          badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+        };
+      case 'data_received':
+        return {
+          icon: HardDrive,
+          label: 'Data In:',
+          dateStr: job.dataReceivedDate || job.createdAt || 'Logged',
+          badgeText: job.editorName ? 'Editor Assigned' : 'Ready for Editor',
+          badgeClass: 'bg-sky-50 text-sky-800 border-sky-200',
+        };
+      case 'editor_assigned':
+      case 'sent_to_editor':
+        return {
+          icon: Clock,
+          label: 'Due:',
+          dateStr: targetDueDate || (job.sentToEditorDate ? `Sent ${job.sentToEditorDate}` : 'Unscheduled'),
+          badgeText: targetDueDate ? dueStatus.label : 'In Progress',
+          badgeClass: `${dueStatus.color} font-bold`,
+        };
+      case 'draft_received':
+      case 'internal_review':
+        return {
+          icon: Film,
+          label: 'Draft In:',
+          dateStr: job.draftReceivedDate || 'Recent',
+          badgeText: 'Needs Studio Review',
+          badgeClass: 'bg-purple-50 text-purple-800 border-purple-200 font-bold',
+        };
+      case 'internal_changes':
+        return {
+          icon: AlertCircle,
+          label: 'Changes Sent:',
+          dateStr: job.changesSentToEditorDate || 'Recent',
+          badgeText: 'Revising with Editor',
+          badgeClass: 'bg-amber-50 text-amber-800 border-amber-200 font-bold',
+        };
+      case 'sent_to_client': {
+        let reviewBadge = 'Client Review';
+        if (job.sentToClientDate) {
+          const todayMs = new Date().setHours(0, 0, 0, 0);
+          const sentMs = new Date(job.sentToClientDate).setHours(0, 0, 0, 0);
+          const diffDays = Math.max(0, Math.floor((todayMs - sentMs) / 86400000));
+          if (diffDays === 0) reviewBadge = 'Sent Today (Day 1 of 2)';
+          else if (diffDays === 1) reviewBadge = 'Day 2 of 2';
+          else reviewBadge = `${diffDays}d in review`;
+        }
+        if (job.lastFollowUpDate) {
+          const todayStr = new Date().toISOString().slice(0, 10);
+          const followStr = job.lastFollowUpDate === todayStr ? 'Followed up today' : `Followed up ${job.lastFollowUpDate}`;
+          reviewBadge += ` • ${followStr}${job.followUpCount && job.followUpCount > 1 ? ` (x${job.followUpCount})` : ''}`;
+        }
+        return {
+          icon: MessageCircle,
+          label: 'Sent to Client:',
+          dateStr: job.sentToClientDate || 'Under Review',
+          badgeText: reviewBadge,
+          badgeClass: 'bg-indigo-50 text-indigo-800 border-indigo-200 font-bold',
+        };
+      }
+      case 'changes_received':
+      case 'changes_sent_to_editor':
+        return {
+          icon: MessageSquare,
+          label: 'Changes In:',
+          dateStr: job.changesReceivedDate || (job.changesDueDate ? `Due: ${job.changesDueDate}` : 'Recent'),
+          badgeText: job.changesDueDate ? dueStatus.label : 'Revision Underway',
+          badgeClass: 'bg-rose-50 text-rose-800 border-rose-200 font-bold',
+        };
+      case 'final_delivered':
+        return {
+          icon: CheckCircle2,
+          label: 'Approved:',
+          dateStr: job.finalDeliveredDate || 'Client Approved',
+          badgeText: 'Ready to Deliver Master',
+          badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 font-bold',
+        };
+      case 'completed':
+        return {
+          icon: CheckCircle2,
+          label: 'Completed:',
+          dateStr: job.completedDate || job.finalDeliveredDate || 'Done',
+          badgeText: 'Project Delivered',
+          badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200 font-bold',
+        };
+      default:
+        return {
+          icon: Clock,
+          label: 'Due:',
+          dateStr: targetDueDate || 'Unscheduled',
+          badgeText: targetDueDate ? dueStatus.label : 'Active',
+          badgeClass: `${dueStatus.color} font-bold`,
+        };
+    }
+  };
+
+  // Recent Activity Helper
+  const getJobRecentActivity = (job: FreelanceJob): { text: string; time: string } | null => {
+    if (job.activityLogs && job.activityLogs.length > 0) {
+      const last = job.activityLogs[job.activityLogs.length - 1];
+      let time = '';
+      try {
+        const d = new Date(last.timestamp);
+        time = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      } catch {
+        time = '';
+      }
+      return { text: last.action || last.details || 'Activity updated', time };
+    }
+    if (job.doubts && job.doubts.length > 0) {
+      const lastDoubt = job.doubts[job.doubts.length - 1];
+      return {
+        text: `Editor Query: ${lastDoubt.question.slice(0, 32)}${lastDoubt.question.length > 32 ? '...' : ''}`,
+        time: lastDoubt.askedAt || '',
+      };
+    }
+    if (job.revisions && job.revisions.length > 0) {
+      const lastRev = job.revisions[job.revisions.length - 1];
+      return {
+        text: `Round ${lastRev.roundNumber} revision logged`,
+        time: lastRev.receivedDate || '',
+      };
+    }
+    if (job.stage === 'completed' && (job.completedDate || job.finalDeliveredDate)) {
+      return { text: 'Project marked completed', time: job.completedDate || job.finalDeliveredDate || '' };
+    }
+    if (job.stage === 'final_delivered' && job.finalDeliveredDate) {
+      return { text: 'Client approved the draft cut', time: job.finalDeliveredDate };
+    }
+    if (job.stage === 'sent_to_client' && job.sentToClientDate) {
+      return { text: 'Draft cut shared with client for review', time: job.sentToClientDate };
+    }
+    if (job.draftReceivedDate) {
+      return { text: 'Draft cut received from editor', time: job.draftReceivedDate };
+    }
+    if (job.sentToEditorDate) {
+      return { text: `Raw data sent to editor ${job.editorName || ''}`.trim(), time: job.sentToEditorDate };
+    }
+    if (job.dataReceivedDate) {
+      return { text: 'Raw data uploaded & verified', time: job.dataReceivedDate };
+    }
+    if (job.createdAt) {
+      return { text: 'Job created', time: job.createdAt };
+    }
+    return null;
+  };
+
+  // Editor Doubts / Clarification Handlers
+  const handleOpenDoubtsModal = (job: FreelanceJob) => {
+    setDoubtModalJob(job);
+    setNewDoubtQuestion('');
+    setNewDoubtCategory('general');
+    setNewDoubtAskedBy(job.editorName || 'Editor');
+    setResolvingDoubtId(null);
+    setDoubtResolutionNote('');
+  };
+
+  const handleAddDoubt = async () => {
+    if (!doubtModalJob) return;
+    const q = newDoubtQuestion.trim();
+    if (!q) {
+      alert('Please enter the query / doubt details.');
+      return;
+    }
+    setIsSavingDoubt(true);
+    try {
+      const newDoubt: FreelanceDoubt = {
+        id: `doubt-${Date.now()}`,
+        question: q,
+        category: newDoubtCategory,
+        askedBy: newDoubtAskedBy.trim() || doubtModalJob.editorName || 'Editor',
+        askedAt: new Date().toISOString().slice(0, 10),
+        status: 'open',
+      };
+      const updatedDoubts = [...(doubtModalJob.doubts || []), newDoubt];
+      await updateFreelanceJob(
+        doubtModalJob.id,
+        { doubts: updatedDoubts },
+        `Editor query logged: ${q.slice(0, 40)}`
+      );
+      setDoubtModalJob({ ...doubtModalJob, doubts: updatedDoubts });
+      setNewDoubtQuestion('');
+      setNewDoubtCategory('general');
+    } catch (err) {
+      console.error('Failed to log doubt:', err);
+      alert('Failed to log query. Please try again.');
+    } finally {
+      setIsSavingDoubt(false);
+    }
+  };
+
+  const handleShareDoubtWhatsApp = async (job: FreelanceJob, doubt: FreelanceDoubt) => {
+    const phone = clientWhatsAppNumber(job);
+    const clientName = getJobDisplayClient(job);
+    const categoryLabels: Record<string, string> = {
+      song_music: '🎵 Song / Music Selection',
+      footage_clip: '📹 Footage / Missing Clip',
+      revision_feedback: '⚠️ Revision Feasibility / Feedback',
+      audio_sync: '🔊 Audio / Sync Clarification',
+      general: '💬 Editor Query',
+    };
+    const categoryStr = categoryLabels[doubt.category || 'general'] || 'Editor Query';
+    const text = encodeURIComponent(
+      renderWhatsAppMessage(
+        'client_doubt',
+        {
+          clientName,
+          projectName: getJobDisplayTitle(job),
+          jobCode: job.jobCode,
+          editorName: doubt.askedBy || job.editorName || 'Editor',
+          query: doubt.question,
+          category: categoryStr,
+        },
+        studioSettings?.studioName || 'Baawaray Films'
+      )
+    );
+    window.open(getWhatsAppUrl(phone, text), '_blank');
+
+    const currentDoubts = job.doubts || [];
+    const updated = currentDoubts.map(d => (d.id === doubt.id ? { ...d, status: 'shared_with_client' as const } : d));
+    try {
+      await updateFreelanceJob(job.id, { doubts: updated }, `Shared editor query with client via WhatsApp`);
+      if (doubtModalJob && doubtModalJob.id === job.id) {
+        setDoubtModalJob({ ...doubtModalJob, doubts: updated });
+      }
+    } catch (err) {
+      console.error('Failed to update doubt status:', err);
+    }
+  };
+
+  const handleResolveDoubt = async (job: FreelanceJob, doubtId: string, resolutionNote?: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const currentDoubts = job.doubts || [];
+    const updated = currentDoubts.map(d =>
+      d.id === doubtId
+        ? {
+            ...d,
+            status: 'resolved' as const,
+            clientResponse: resolutionNote || 'Resolved by studio/client',
+            resolvedAt: today,
+          }
+        : d
+    );
+    try {
+      await updateFreelanceJob(job.id, { doubts: updated }, `Resolved editor query (${doubtId})`);
+      if (doubtModalJob && doubtModalJob.id === job.id) {
+        setDoubtModalJob({ ...doubtModalJob, doubts: updated });
+      }
+      setResolvingDoubtId(null);
+      setDoubtResolutionNote('');
+    } catch (err) {
+      console.error('Failed to resolve doubt:', err);
+      alert('Failed to resolve query.');
+    }
+  };
+
+  const handleDeleteDoubt = async (job: FreelanceJob, doubtId: string) => {
+    if (!confirm('Are you sure you want to delete this query?')) return;
+    const currentDoubts = job.doubts || [];
+    const updated = currentDoubts.filter(d => d.id !== doubtId);
+    try {
+      await updateFreelanceJob(job.id, { doubts: updated }, `Deleted editor query`);
+      if (doubtModalJob && doubtModalJob.id === job.id) {
+        setDoubtModalJob({ ...doubtModalJob, doubts: updated });
+      }
+    } catch (err) {
+      console.error('Failed to delete doubt:', err);
+    }
   };
 
   return (
@@ -375,7 +1009,7 @@ export const FreelanceDepartmentView: React.FC<{
             </div>
             <div>
               <h1 className="text-xl md:text-2xl font-bold font-serif text-[#111417] tracking-tight">
-                Freelance Department
+                Active Jobs
               </h1>
               <p className="text-xs text-[#6b6660]">
                 Track external editing jobs, client billings, freelance editor payouts, links, and revisions
@@ -417,6 +1051,16 @@ export const FreelanceDepartmentView: React.FC<{
           </div>
 
           <button
+            type="button"
+            onClick={() => setIsWhatsAppTemplatesOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 bg-white hover:bg-emerald-50 text-emerald-800 border border-[#d4c1a3] hover:border-emerald-500 font-bold text-xs rounded-xl shadow-2xs transition-all cursor-pointer"
+            title="Customize WhatsApp message formats for client & editor"
+          >
+            <MessageSquare className="w-4 h-4 text-emerald-600" />
+            <span>WhatsApp Formats</span>
+          </button>
+
+          <button
             id="btn-new-freelance-job"
             onClick={() => {
               setEditingJob(null);
@@ -430,109 +1074,102 @@ export const FreelanceDepartmentView: React.FC<{
         </div>
       </div>
 
-      {/* Jobs vs Partner Studios */}
-      <div className="flex items-center bg-[#f9f8f6] p-1 rounded-xl border border-[#d4c1a3] w-fit">
-        {([
-          { id: 'jobs', label: 'All Work' },
-          { id: 'clients', label: 'Partner Studios' },
-          { id: 'editors', label: 'Editor Payouts' },
-          { id: 'schedule', label: 'Editor Schedule' },
-          { id: 'radar', label: '⚡ Capacity Radar' },
-        ] as const).map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setSection(tab.id)}
-            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              section === tab.id ? 'bg-[#7a2e33] text-white shadow-xs' : 'text-[#6b6660] hover:text-[#111417]'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {section === 'clients' ? (
-        <FreelanceClientsPanel />
-      ) : section === 'editors' ? (
-        <FreelanceEditorsPanel />
-      ) : section === 'schedule' ? (
-        <EditorSchedulePanel />
-      ) : section === 'radar' ? (
-        <CapacityRadarPanel />
-      ) : (
-        <>
-      {/* Filter & Search Bar */}
-      <div className="bg-white rounded-xl p-4 border border-[#d4c1a3] shadow-2xs space-y-3">
-        {/* Search & Quick Action Filters */}
-        <div className="flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="relative w-full md:w-80">
+      {/* Search, Filter & Sort Toolbar */}
+      <div className="bg-white rounded-xl p-3.5 border border-[#d4c1a3] shadow-2xs">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          {/* Search Bar */}
+          <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-[#6b6660]" />
             <input
               type="text"
-              placeholder="Search by client, editor, job code, or work title..."
+              placeholder="Search client, editor, job code, or title..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-3.5 py-2 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-xs font-medium text-[#111417] focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all"
+              className="w-full pl-10 pr-9 py-2 bg-[#f9f8f6]/70 border border-[#d4c1a3] rounded-xl text-xs font-medium text-[#111417] placeholder:text-[#6b6660]/70 focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2.5 p-0.5 text-[#6b6660] hover:text-[#111417] rounded-md transition-colors cursor-pointer"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
-            {[
-              { id: 'all', label: 'All Payments' },
-              { id: 'client_due', label: 'Client Payment Due' },
-              { id: 'editor_due', label: 'Editor Payout Pending' },
-              { id: 'overdue', label: 'Urgent / Due Soon' },
-            ].map(f => (
-              <button
-                key={f.id}
-                onClick={() => setPaymentFilter(f.id as any)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                  paymentFilter === f.id
-                    ? 'bg-[#7a2e33] text-white shadow-2xs'
-                    : 'bg-[#f9f8f6] border border-[#d4c1a3] text-[#6b6660] hover:text-[#111417]'
-                }`}
+          {/* Filter & Sort Controls */}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Filter Dropdown */}
+            <div className="flex items-center gap-1.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl px-2.5 py-1">
+              <Filter className="w-3.5 h-3.5 text-[#7a2e33] shrink-0" />
+              <span className="text-[11px] font-bold text-[#6b6660] uppercase tracking-wider shrink-0">Filter:</span>
+              <select
+                value={filter}
+                onChange={e => setFilter(e.target.value)}
+                className="bg-transparent text-xs font-bold text-[#111417] focus:outline-none cursor-pointer py-1 pr-1"
               >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
+                <option value="all">All Jobs ({stageCounts.all})</option>
+                <option value="unassigned">⚠️ Unassigned ({stageCounts.unassigned})</option>
+                <option disabled className="text-gray-400 font-normal">── Stages ──</option>
+                <option value="active">In Progress ({stageCounts.active})</option>
+                <option value="data_received">Data Received ({stageCounts.data_received})</option>
+                <option value="sent_to_editor">With Editor ({stageCounts.sent_to_editor})</option>
+                <option value="draft_received">Draft Received ({stageCounts.draft_received})</option>
+                <option value="sent_to_client">Client Review ({stageCounts.sent_to_client})</option>
+                <option value="revisions">Revisions ({stageCounts.revisions})</option>
+                <option value="final_delivered">Final Master ({stageCounts.final_delivered})</option>
+                <option value="completed">Completed ({stageCounts.completed})</option>
+                <option disabled className="text-gray-400 font-normal">── Financial & Alerts ──</option>
+                <option value="client_due">Client Payment Due ({stageCounts.client_due})</option>
+                <option value="editor_due">Editor Payout Pending ({stageCounts.editor_due})</option>
+                <option value="overdue">Urgent / Due Soon ({stageCounts.overdue})</option>
+              </select>
+            </div>
 
-        {/* Stage Filter Tabs */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-[#d4c1a3]/40">
-          {[
-            { id: 'all', label: 'All Jobs', count: stageCounts.all },
-            { id: 'active', label: 'In Progress', count: stageCounts.active },
-            { id: 'data_received', label: 'Data Received', count: stageCounts.data_received },
-            { id: 'sent_to_editor', label: 'With Editor', count: stageCounts.sent_to_editor },
-            { id: 'sent_to_client', label: 'Client Review', count: stageCounts.sent_to_client },
-            { id: 'revisions', label: 'Revisions', count: stageCounts.revisions },
-            { id: 'final_delivered', label: 'Final Master', count: stageCounts.final_delivered },
-            { id: 'completed', label: 'Completed', count: stageCounts.completed },
-          ].map(tab => {
-            const isActive = selectedStageTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setSelectedStageTab(tab.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                  isActive
-                    ? 'bg-[#7a2e33] text-white shadow-2xs'
-                    : 'bg-[#f9f8f6] text-[#6b6660] hover:bg-[#d4c1a3]/40 hover:text-[#111417]'
-                }`}
+            {/* Sort Dropdown */}
+            <div className="flex items-center gap-1.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl px-2.5 py-1">
+              <ArrowUpDown className="w-3.5 h-3.5 text-[#7a2e33] shrink-0" />
+              <span className="text-[11px] font-bold text-[#6b6660] uppercase tracking-wider shrink-0">Sort:</span>
+              <select
+                value={sortBy}
+                onChange={e => setSortBy(e.target.value)}
+                className="bg-transparent text-xs font-bold text-[#111417] focus:outline-none cursor-pointer py-1 pr-1"
               >
-                <span>{tab.label}</span>
-                <span
-                  className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                    isActive ? 'bg-white/20 text-white' : 'bg-[#d4c1a3] text-[#7a2e33]'
-                  }`}
-                >
-                  {tab.count}
-                </span>
+                <option value="due_asc">Due Date (Soonest first)</option>
+                <option value="due_desc">Due Date (Furthest first)</option>
+                <option value="created_desc">Recently Created</option>
+                <option value="created_asc">Oldest Created</option>
+                <option value="title_asc">Work Title (A → Z)</option>
+                <option value="client_asc">Partner Studio / Client (A → Z)</option>
+                <option value="editor_asc">Editor Name (A → Z)</option>
+                <option value="amount_desc">Highest Value (₹)</option>
+                <option value="amount_asc">Lowest Value (₹)</option>
+              </select>
+            </div>
+
+            {/* Reset button when active */}
+            {(filter !== 'all' || searchQuery.trim() !== '') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilter('all');
+                  setSearchQuery('');
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-[#7a2e33]/10 hover:bg-[#7a2e33]/20 text-[#7a2e33] text-xs font-bold rounded-xl transition-all cursor-pointer"
+                title="Reset all filters"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Reset</span>
               </button>
-            );
-          })}
+            )}
+
+            {/* Showing count indicator */}
+            <span className="text-xs font-semibold text-[#6b6660] ml-auto hidden sm:inline-block">
+              {filteredJobs.length} {filteredJobs.length === 1 ? 'project' : 'projects'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -545,7 +1182,7 @@ export const FreelanceDepartmentView: React.FC<{
           <div>
             <h3 className="text-base font-bold text-[#111417]">No freelance projects found</h3>
             <p className="text-xs text-[#6b6660] max-w-md mx-auto mt-1">
-              {searchQuery || selectedStageTab !== 'all' || paymentFilter !== 'all'
+              {searchQuery || filter !== 'all'
                 ? 'Try adjusting your filters or search keywords.'
                 : 'Start tracking external editing projects, client charges, and freelance editor payouts.'}
             </p>
@@ -629,7 +1266,7 @@ export const FreelanceDepartmentView: React.FC<{
                             }}
                             className="w-full text-left px-2 py-1.5 bg-white hover:bg-emerald-50 border border-[#d4c1a3]/60 hover:border-emerald-300 rounded-lg text-[11px] text-[#111417] font-medium transition-colors flex items-center justify-between cursor-pointer disabled:opacity-60"
                           >
-                            <span className="truncate">Use data from {reuse.reusedFromTitle || reuse.title}</span>
+                            <span className="truncate">{reuse.reusedFromTitle || reuse.title}</span>
                             <span className="shrink-0 text-[10px] text-emerald-700 font-bold ml-1">
                               {attachingId === pending.target.id ? 'Attaching... ⚡' : 'Attach ⚡'}
                             </span>
@@ -664,14 +1301,28 @@ export const FreelanceDepartmentView: React.FC<{
               >
                 {/* Card Top */}
                 <div className="p-5 space-y-3.5">
-                  {/* Job Code & Stage Badge */}
+                  {/* Job Code & Stage Badge + Edit Button */}
                   <div className="flex items-center justify-between">
                     <span className="font-mono font-bold text-xs text-[#7a2e33] bg-[#f9f8f6] px-2 py-0.5 rounded border border-[#d4c1a3]">
                       {job.jobCode}
                     </span>
-                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${stageMeta.badgeClass}`}>
-                      {stageMeta.label}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${stageMeta.badgeClass}`}>
+                        {stageMeta.label}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingJob(job);
+                          setIsNewJobModalOpen(true);
+                        }}
+                        className="p-1 text-[#6b6660] hover:text-[#7a2e33] hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
+                        title="Edit Job"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
 
                   {/* Work Title */}
@@ -697,140 +1348,471 @@ export const FreelanceDepartmentView: React.FC<{
                       <div className="text-[10px] text-[#6b6660] font-mono truncate">{job.clientPhone}</div>
                     </div>
                     <div>
-                      <span className="text-[10px] text-[#6b6660] uppercase font-bold">Editor</span>
-                      <div className="font-semibold text-[#111417] truncate">{job.editorName}</div>
-                      <div className="text-[10px] text-[#6b6660] font-mono truncate">{job.editorPhone || 'In-House'}</div>
-                    </div>
-                  </div>
-
-                  {/* Due Date & Turnaround status */}
-                  <div className="flex items-center justify-between p-2 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3]/60 text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3.5 h-3.5 text-[#6b6660]" />
-                      <span className="text-[11px] text-[#6b6660]">Due: {targetDueDate}</span>
-                    </div>
-                    <span className={`text-[11px] font-bold ${dueStatus.color}`}>
-                      {dueStatus.label}
-                    </span>
-                  </div>
-
-                  {/* Financials pill bar */}
-                  <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                    <div className="p-2 bg-emerald-50/60 border border-emerald-100 rounded-lg">
-                      <div className="text-[10px] uppercase font-bold text-emerald-800">Client Revenue</div>
-                      <div className="font-bold text-[#111417]">₹{inrDigits(job.clientCharge)}</div>
-                      <div className="text-[10px] text-emerald-700">
-                        {clientBal === 0 ? 'Fully Paid' : `Due: ₹${inrDigits(clientBal)}`}
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-[#6b6660] uppercase font-bold">Editor</span>
+                        <button
+                          type="button"
+                          onClick={() => setAssigningJob(job)}
+                          className="text-[10px] font-bold text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
+                        >
+                          {job.editorName ? 'Change' : 'Assign'}
+                        </button>
                       </div>
-                    </div>
-                    <div className="p-2 bg-amber-50/60 border border-amber-100 rounded-lg">
-                      <div className="text-[10px] uppercase font-bold text-amber-800">Editor Payout</div>
-                      <div className="font-bold text-[#111417]">₹{inrDigits(editorCost)}</div>
-                      <div className="text-[10px] text-amber-800">
-                        {job.assignedType === 'in_house'
-                          ? 'Covered by salary'
-                          : editorCost > 0
-                          ? 'Paid'
-                          : 'Not paid yet'}
+                      <div className="font-semibold text-[#111417] truncate">
+                        {job.editorName ? (
+                          job.editorName
+                        ) : (
+                          <span className="text-amber-700 font-semibold">Unassigned</span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-[#6b6660] font-mono truncate">
+                        {job.editorName ? (job.editorPhone || (job.assignedType === 'in_house' ? 'In-House' : 'Freelance')) : '—'}
                       </div>
                     </div>
                   </div>
 
-                  {/* Revision tag indicator if any */}
-                  {job.revisions && job.revisions.length > 0 && (
-                    <div className="flex items-center justify-between text-[11px] px-2 py-1 bg-amber-100/60 text-amber-900 rounded-lg font-semibold">
-                      <span>Revisions: {job.revisions.length} Round(s)</span>
-                      <span>2-Day Turnaround</span>
+                  {/* Stage-Adaptive Date & Turnaround Status with Recent Activity */}
+                  {(() => {
+                    const stageDate = getJobStageDateInfo(job, targetDueDate, dueStatus);
+                    const recentAct = getJobRecentActivity(job);
+                    const StageIcon = stageDate.icon;
+                    return (
+                      <div className="p-2.5 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3]/60 text-xs space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <StageIcon className="w-3.5 h-3.5 text-[#7a2e33] shrink-0" />
+                            <span className="text-[11px] text-[#6b6660] truncate">
+                              {stageDate.label}{' '}
+                              <strong className="text-[#111417] font-semibold">{stageDate.dateStr}</strong>
+                            </span>
+                          </div>
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 border ${stageDate.badgeClass}`}>
+                            {stageDate.badgeText}
+                          </span>
+                        </div>
+                        {recentAct && (
+                          <div className="flex items-center justify-between text-[10px] text-[#8c827a] pt-1 border-t border-[#d4c1a3]/30">
+                            <span className="truncate max-w-[210px]" title={recentAct.text}>
+                              Recent: {recentAct.text}
+                            </span>
+                            {recentAct.time && (
+                              <span className="shrink-0 font-mono text-[9px] text-[#6b6660]">
+                                {recentAct.time}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Data Intake & Logistics Section */}
+                  <div className="p-2.5 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3]/70 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                        {job.rawDataSource === 'hard_drive' ? (
+                          <>
+                            <HardDrive className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                            <span className="text-[11px] font-bold text-amber-900 truncate">
+                              HDD: {job.hddStatus === 'sent_to_editor' ? 'With Editor 🚚' : 'At Studio 💽'}
+                            </span>
+                          </>
+                        ) : job.rawDataLink ? (
+                          <>
+                            <LinkIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <a
+                              href={job.rawDataLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[11px] text-blue-700 font-semibold hover:underline truncate"
+                              title={job.rawDataLink}
+                            >
+                              ☁️ Raw Footage Attached
+                            </a>
+                          </>
+                        ) : (
+                          <>
+                            <LinkIcon className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span className="text-[11px] text-amber-700 font-medium truncate">
+                              ⚠️ No raw data logged
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRawLinkPromptJob(job);
+                            setRawSourceType(job.rawDataSource === 'hard_drive' ? 'hard_drive' : 'partner_upload');
+                            setRawLinkInput(job.rawDataLink || '');
+                            setRawHddStatus(job.hddStatus === 'sent_to_editor' ? 'sent_to_editor' : 'received_by_studio');
+                            setRawHddNotes(job.hardDriveNotes || '');
+                          }}
+                          className="text-[10px] font-bold text-amber-800 hover:text-amber-900 hover:underline cursor-pointer"
+                        >
+                          {job.rawDataLink || job.rawDataSource === 'hard_drive' ? 'Edit' : '+ Add'}
+                        </button>
+                        <span className="text-[#d4c1a3]">|</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExtraDataPromptJob(job);
+                            setExtraDataTitle('');
+                            setExtraDataUrl('');
+                            setExtraDataNotes('');
+                            setExtraDataSourceType('cloud_upload');
+                          }}
+                          className="text-[10px] font-bold text-[#7a2e33] hover:underline cursor-pointer"
+                          title="Append additional footage or data clips anytime"
+                        >
+                          + Add Data
+                        </button>
+                      </div>
                     </div>
-                  )}
+
+                    {/* Appended / Extra Data list if any */}
+                    {job.additionalDataLinks && job.additionalDataLinks.length > 0 && (
+                      <div className="pt-1.5 border-t border-[#d4c1a3]/50 space-y-1">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-[#6b6660]">
+                          Additional Data ({job.additionalDataLinks.length}):
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {job.additionalDataLinks.map((extra) => (
+                            <span
+                              key={extra.id}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-[#d4c1a3] rounded-md text-[10px] text-[#111417]"
+                            >
+                              <span className="font-semibold truncate max-w-[120px]" title={extra.title}>
+                                {extra.title}
+                              </span>
+                              {extra.url && (
+                                <a
+                                  href={extra.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-blue-600 hover:underline"
+                                  title="Open footage link"
+                                >
+                                  ↗
+                                </a>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Project Delivery Cut (The Single Link Rule) */}
+                  <div className="flex items-center justify-between p-2.5 bg-white rounded-xl border border-[#d4c1a3] text-xs shadow-2xs">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
+                      <Film className={`w-3.5 h-3.5 shrink-0 ${deliveryLinkOf(job) ? 'text-purple-600' : 'text-stone-400'}`} />
+                      {deliveryLinkOf(job) ? (
+                        <a
+                          href={deliveryLinkOf(job)}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-[11px] text-purple-700 font-bold hover:underline truncate"
+                          title={deliveryLinkOf(job)}
+                        >
+                          🎬 Review Cut Attached (Open ↗)
+                        </a>
+                      ) : (
+                        <span className="text-[11px] text-stone-500 font-medium truncate">
+                          No cut link attached yet
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReceiveCutPromptJob(job);
+                        setReceiveCutLinkInput(deliveryLinkOf(job) || '');
+                        setReceiveCutEditorNotes('');
+                      }}
+                      className="text-[10px] font-bold text-amber-800 hover:text-amber-900 hover:underline cursor-pointer shrink-0"
+                    >
+                      {deliveryLinkOf(job) ? 'Edit ✎' : '+ Attach Cut'}
+                    </button>
+                  </div>
+
+                  {/* Revisions & Editor Notes Highlight */}
+                  {job.revisions && job.revisions.length > 0 && (() => {
+                    const latestRev = job.revisions[job.revisions.length - 1];
+                    return (
+                      <div className="p-2 bg-amber-50/80 border border-amber-200 rounded-xl space-y-1 text-xs">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
+                          <span>Revision Round #{latestRev.roundNumber} ({job.revisions.length} total)</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-amber-200/80 text-amber-950 rounded font-semibold">2-Day Turnaround</span>
+                        </div>
+                        {latestRev.feedbackNotes && (
+                          <p className="text-[11px] text-amber-900/80 line-clamp-1">
+                            <span className="font-semibold">Notes:</span> {latestRev.feedbackNotes}
+                          </p>
+                        )}
+                        {latestRev.editorNotes && (
+                          <div className="mt-1 p-1.5 bg-white/90 border border-amber-300 rounded-lg text-[11px] text-[#7a2e33]">
+                            <span className="font-bold">📝 Editor Response:</span> {latestRev.editorNotes}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Editor Doubts / Clarifications Banner */}
+                  {(() => {
+                    const doubts = job.doubts || [];
+                    const openDoubts = doubts.filter(d => d.status !== 'resolved');
+                    const latestOpenDoubt = openDoubts[openDoubts.length - 1];
+
+                    if (openDoubts.length > 0 && latestOpenDoubt) {
+                      return (
+                        <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-2.5 space-y-1.5 shadow-2xs">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start gap-1.5 min-w-0">
+                              <HelpCircle className="w-3.5 h-3.5 text-amber-700 shrink-0 mt-0.5" />
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-[10px] font-extrabold text-amber-950 uppercase tracking-wider">
+                                    Editor Query ({openDoubts.length})
+                                  </span>
+                                  <span className="text-[9px] px-1.5 py-0.2 bg-amber-200/80 text-amber-900 rounded font-semibold">
+                                    {latestOpenDoubt.category === 'song_music'
+                                      ? '🎵 Song Choice'
+                                      : latestOpenDoubt.category === 'revision_feedback'
+                                      ? '⚠️ Revision Feedback'
+                                      : latestOpenDoubt.category === 'footage_clip'
+                                      ? '📹 Clip Query'
+                                      : latestOpenDoubt.category === 'audio_sync'
+                                      ? '🔊 Audio Sync'
+                                      : '💬 Query'}
+                                  </span>
+                                  {latestOpenDoubt.status === 'shared_with_client' && (
+                                    <span className="text-[9px] px-1.5 py-0.2 bg-sky-100 text-sky-800 rounded font-semibold">
+                                      Sent to Client
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-stone-800 font-medium line-clamp-1 mt-0.5" title={latestOpenDoubt.question}>
+                                  "{latestOpenDoubt.question}"
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleShareDoubtWhatsApp(job, latestOpenDoubt);
+                                }}
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded-lg flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                                title="Share query with client on WhatsApp"
+                              >
+                                <MessageCircle className="w-3 h-3" />
+                                <span>{latestOpenDoubt.status === 'shared_with_client' ? 'Re-send' : 'Ask Client'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenDoubtsModal(job);
+                                }}
+                                className="p-1 text-stone-600 hover:text-stone-900 hover:bg-amber-200/50 rounded-lg cursor-pointer"
+                                title="Manage all queries"
+                              >
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3]/50">
+                        <span className="text-stone-500 flex items-center gap-1">
+                          <HelpCircle className="w-3.5 h-3.5 text-stone-400" />
+                          <span>Editor Doubts / Feedback:</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenDoubtsModal(job);
+                          }}
+                          className="text-[10px] font-bold text-amber-800 hover:text-amber-900 hover:underline cursor-pointer flex items-center gap-0.5"
+                        >
+                          <span>{doubts.length > 0 ? `${doubts.length} Logged` : '+ Log Query'}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                {/* Card Bottom / Fast WhatsApp & Action buttons */}
+                {/* Card Bottom / Fast WhatsApp & Action buttons (NO PAYMENTS) */}
                 <div className="p-3 bg-[#f9f8f6] border-t border-[#d4c1a3] flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1">
-                    {/* Fast WhatsApp action depending on stage */}
-                    {job.stage === 'data_received' ? (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {!job.editorName ? (
+                      <button
+                        onClick={() => setAssigningJob(job)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="Assign an Editor to this project"
+                      >
+                        <User className="w-3.5 h-3.5" />
+                        <span>Assign Editor</span>
+                      </button>
+                    ) : job.stage === 'data_received' || job.stage === 'pending_assignment' ? (
                       <button
                         onClick={() => handleShareDataWhatsApp(job)}
-                        className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
-                        title="Send Data Link to Editor on WhatsApp"
+                        className="flex items-center gap-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title={job.rawDataLink || job.rawDataSource === 'hard_drive' ? "Send Data & Brief to Editor on WhatsApp" : "Log Data & Send to Editor"}
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Send to Editor</span>
+                        <span>{job.rawDataLink || job.rawDataSource === 'hard_drive' ? 'Send to Editor' : 'Log Data & Send'}</span>
                       </button>
-                    ) : job.stage === 'sent_to_editor' || job.stage === 'draft_received' ? (
+                    ) : job.stage === 'sent_to_editor' ? (
+                      <button
+                        onClick={() => {
+                          setReceiveCutPromptJob(job);
+                          setReceiveCutLinkInput(deliveryLinkOf(job) || '');
+                          setReceiveCutEditorNotes('');
+                        }}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="Receive or Attach Cut from Editor"
+                      >
+                        <Film className="w-3.5 h-3.5" />
+                        <span>{deliveryLinkOf(job) ? 'Receive Cut' : 'Attach Cut'}</span>
+                      </button>
+                    ) : job.stage === 'internal_review' || job.stage === 'draft_received' ? (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setRevisionModalState({ isOpen: true, job, revisionType: 'internal' })}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Request Internal Changes from Editor"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          <span>Request Changes</span>
+                        </button>
+                        <button
+                          onClick={() => handleShareDraftWhatsApp(job)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Approved internally. Share Review Link with Client on WhatsApp"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Send to Client</span>
+                        </button>
+                      </div>
+                    ) : job.stage === 'internal_changes' ? (
+                      <button
+                        onClick={() => {
+                          setReceiveCutPromptJob(job);
+                          setReceiveCutLinkInput(deliveryLinkOf(job) || '');
+                          setReceiveCutEditorNotes('');
+                        }}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="Receive revised cut from editor"
+                      >
+                        <Film className="w-3.5 h-3.5" />
+                        <span>Receive Updated Cut</span>
+                      </button>
+                    ) : job.stage === 'sent_to_client' ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleSendFollowUpWhatsApp(job)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Send WhatsApp Follow-up to Client to request feedback / finalize faster"
+                        >
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Follow Up</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRevisionModalState({ isOpen: true, job, revisionType: 'client' })}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Log Client Changes (2-Day Turnaround)"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span>Log Changes</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => advanceFreelanceJobStage(job.id, 'final_delivered', 'Client approved the draft cut')}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Mark Client Approved"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Client Approved</span>
+                        </button>
+                      </div>
+                    ) : job.stage === 'changes_sent_to_editor' || job.stage === 'changes_received' ? (
+                      <button
+                        onClick={() => {
+                          setReceiveCutPromptJob(job);
+                          setReceiveCutLinkInput(deliveryLinkOf(job) || '');
+                          setReceiveCutEditorNotes('');
+                        }}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                        title="Log Updated Cut from Editor"
+                      >
+                        <Film className="w-3.5 h-3.5" />
+                        <span>Receive Updated Cut</span>
+                      </button>
+                    ) : job.stage === 'final_delivered' ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleShareFinalWhatsApp(job)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Deliver Master Link to Client on WhatsApp"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                          <span>Deliver Master</span>
+                        </button>
+                        <button
+                          onClick={() => advanceFreelanceJobStage(job.id, 'completed', 'Marked project completed')}
+                          className="flex items-center gap-1 px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
+                          title="Mark project fully completed"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Complete</span>
+                        </button>
+                      </div>
+                    ) : job.stage === 'completed' ? (
+                      <div className="flex items-center gap-1">
+                        <span className="flex items-center gap-1 px-2 py-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-bold rounded-lg">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Done</span>
+                        </span>
+                        <button
+                          onClick={() => handleShareFinalWhatsApp(job)}
+                          className="p-1.5 bg-white border border-[#d4c1a3] hover:border-[#7a2e33] text-purple-700 rounded-lg cursor-pointer"
+                          title="Re-send Master Delivery Link on WhatsApp"
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
                       <button
                         onClick={() => handleShareDraftWhatsApp(job)}
                         className="flex items-center gap-1 px-2.5 py-1.5 bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
-                        title="Send Draft Link to Client on WhatsApp"
                       >
                         <MessageCircle className="w-3.5 h-3.5" />
                         <span>Send Draft</span>
                       </button>
-                    ) : job.stage === 'sent_to_client' || job.stage === 'changes_received' ? (
-                      <button
-                        onClick={() => setRevisionModalJob(job)}
-                        className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
-                        title="Log & Share Client Changes"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Log Changes</span>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleShareFinalWhatsApp(job)}
-                        className="flex items-center gap-1 px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-2xs"
-                        title="Deliver Master Link on WhatsApp"
-                      >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Deliver Master</span>
-                      </button>
                     )}
-
-                    {/*
-                      Money in goes to the studio's account, not to this job: one
-                      transfer usually covers several. Money out to the editor is still
-                      per job, since that is what a payout is against.
-                    */}
-                    <button
-                      onClick={() => {
-                        if (clientBal > 0 && job.freelanceClientId) {
-                          setSelectedFreelanceClientId(job.freelanceClientId);
-                          setActiveView('freelanceStudio');
-                          return;
-                        }
-                        setPaymentModalState({
-                          isOpen: true,
-                          job,
-                          type: clientBal > 0 ? 'client' : 'editor',
-                        });
-                      }}
-                      className="flex items-center gap-1 px-2 py-1.5 bg-white border border-[#d4c1a3] hover:border-[#7a2e33] text-[#111417] text-[11px] font-semibold rounded-lg transition-all cursor-pointer"
-                      title={
-                        clientBal > 0 && job.freelanceClientId
-                          ? 'Record what the studio paid, on their account'
-                          : 'Record Payment / Payout'
-                      }
-                    >
-                      <IndianRupee className="w-3.5 h-3.5 text-[#7a2e33]" />
-                      <span>{clientBal > 0 ? 'Recv' : 'Pay'}</span>
-                    </button>
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => {
-                        setEditingJob(job);
-                        setIsNewJobModalOpen(true);
-                      }}
-                      className="p-1.5 text-[#6b6660] hover:text-[#7a2e33] hover:bg-white rounded-lg transition-colors"
-                      title="Edit Job"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
+                  <div className="flex items-center">
                     <button
                       onClick={() => setSelectedDetailJobId(job.id)}
-                      className="p-1.5 text-[#7a2e33] hover:bg-white rounded-lg font-semibold text-xs transition-colors flex items-center gap-1"
+                      className="p-1.5 text-[#7a2e33] hover:bg-white rounded-lg font-semibold text-xs transition-colors flex items-center gap-1 cursor-pointer"
                     >
                       <span>View</span>
                       <ChevronRight className="w-3.5 h-3.5" />
@@ -916,7 +1898,7 @@ export const FreelanceDepartmentView: React.FC<{
                                   }
                                 }}
                                 className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer disabled:opacity-60"
-                                title={`Use data from ${pendingRow.reusableDeliverables[0].reusedFromTitle || pendingRow.reusableDeliverables[0].title}`}
+                                title={`Attach raw data from ${pendingRow.reusableDeliverables[0].reusedFromTitle || pendingRow.reusableDeliverables[0].title}`}
                               >
                                 <LinkIcon className="w-3 h-3" />
                                 {attachingId === pendingRow.target.id ? 'Attaching... ⚡' : 'Reuse client data'}
@@ -960,10 +1942,34 @@ export const FreelanceDepartmentView: React.FC<{
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-[#111417]">{job.editorName}</div>
-                        <div className="text-[10px] text-[#6b6660]">
-                          {job.assignedType === 'in_house' ? 'In-House' : 'Freelancer'}
-                        </div>
+                        {job.editorName ? (
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <div className="font-semibold text-[#111417]">{job.editorName}</div>
+                              <div className="text-[10px] text-[#6b6660]">
+                                {job.assignedType === 'in_house' ? 'In-House' : 'Freelancer'}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setAssigningJob(job)}
+                              className="text-[10px] font-bold text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
+                              title="Change Editor"
+                            >
+                              Change
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setAssigningJob(job)}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold rounded-md shadow-2xs cursor-pointer"
+                            title="Assign Editor"
+                          >
+                            <User className="w-3 h-3" />
+                            <span>Assign</span>
+                          </button>
+                        )}
                       </td>
                       <td className="py-3 px-4">
                         <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${stageMeta.badgeClass}`}>
@@ -994,6 +2000,15 @@ export const FreelanceDepartmentView: React.FC<{
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {(job.stage === 'data_received' || job.stage === 'pending_assignment') && job.editorName && (
+                            <button
+                              onClick={() => handleShareDataWhatsApp(job)}
+                              className="p-1.5 bg-emerald-50 border border-emerald-300 hover:bg-emerald-100 text-emerald-700 rounded-lg cursor-pointer"
+                              title={job.rawDataLink ? "Send Data Link to Editor on WhatsApp" : "Attach Raw Link & Send to Editor"}
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => setSelectedDetailJobId(job.id)}
                             className="p-1.5 bg-[#f9f8f6] border border-[#d4c1a3] hover:border-[#7a2e33] text-[#7a2e33] rounded-lg cursor-pointer"
@@ -1022,20 +2037,23 @@ export const FreelanceDepartmentView: React.FC<{
         </div>
       ) : (
         /* KANBAN STAGE PIPELINE VIEW */
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 overflow-x-auto pb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-7 gap-4 overflow-x-auto pb-4">
           {[
             { stageKey: 'data_received', label: '1. Data Received', color: 'border-amber-300 bg-amber-50/30' },
             { stageKey: 'sent_to_editor', label: '2. With Editor', color: 'border-blue-300 bg-blue-50/30' },
-            { stageKey: 'sent_to_client', label: '3. Client Review', color: 'border-sky-300 bg-sky-50/30' },
-            { stageKey: 'changes_received', label: '4. Revisions', color: 'border-orange-300 bg-orange-50/30' },
-            { stageKey: 'final_delivered', label: '5. Final Master', color: 'border-purple-300 bg-purple-50/30' },
-            { stageKey: 'completed', label: '6. Completed', color: 'border-emerald-300 bg-emerald-50/30' },
+            { stageKey: 'internal_review', label: '3. Studio Review', color: 'border-indigo-300 bg-indigo-50/30' },
+            { stageKey: 'sent_to_client', label: '4. Client Review', color: 'border-sky-300 bg-sky-50/30' },
+            { stageKey: 'changes_received', label: '5. Revisions', color: 'border-orange-300 bg-orange-50/30' },
+            { stageKey: 'final_delivered', label: '6. Final Master', color: 'border-purple-300 bg-purple-50/30' },
+            { stageKey: 'completed', label: '7. Completed', color: 'border-emerald-300 bg-emerald-50/30' },
           ].map(col => {
             // Kanban files work by the stage it has reached. A deliverable with no
             // footage has reached none, so it is not on this board — it is on the
             // other two, where it can still be acted on.
             const colJobs = filteredJobs.filter(j => !(j as PendingRow).pendingDeliverable).filter(j =>
-              col.stageKey === 'changes_received'
+              col.stageKey === 'internal_review'
+                ? j.stage === 'internal_review' || j.stage === 'internal_changes' || j.stage === 'draft_received'
+                : col.stageKey === 'changes_received'
                 ? j.stage === 'changes_received' || j.stage === 'changes_sent_to_editor'
                 : j.stage === col.stageKey
             );
@@ -1068,6 +2086,25 @@ export const FreelanceDepartmentView: React.FC<{
                         <span>{getJobDisplayClient(j)}</span>
                         <span className="font-bold text-emerald-700">₹{inrDigits(j.clientCharge)}</span>
                       </div>
+                      {col.stageKey === 'sent_to_client' && (
+                        <div className="pt-2 border-t border-[#d4c1a3]/50 flex items-center justify-between gap-1">
+                          <span className="text-[9.5px] font-semibold text-[#6b6660]">
+                            {j.lastFollowUpDate ? `Followed: ${j.lastFollowUpDate}` : 'No follow-up yet'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSendFollowUpWhatsApp(j);
+                            }}
+                            className="flex items-center gap-1 px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer shadow-2xs"
+                            title="Send WhatsApp follow-up nudge to client"
+                          >
+                            <Clock className="w-3 h-3" />
+                            <span>Follow Up</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1075,9 +2112,6 @@ export const FreelanceDepartmentView: React.FC<{
             );
           })}
         </div>
-      )}
-
-        </>
       )}
 
       
@@ -1202,6 +2236,10 @@ export const FreelanceDepartmentView: React.FC<{
           setEditingJob(job);
           setIsNewJobModalOpen(true);
         }}
+        onAssignEditor={job => {
+          setSelectedDetailJobId(null);
+          setAssigningJob(job);
+        }}
       />
 
       {/* Payment Modal */}
@@ -1215,13 +2253,745 @@ export const FreelanceDepartmentView: React.FC<{
       )}
 
       {/* Revision Modal */}
-      {revisionModalJob && (
+      {revisionModalState.isOpen && revisionModalState.job && (
         <FreelanceRevisionModal
           isOpen={true}
-          onClose={() => setRevisionModalJob(null)}
-          job={revisionModalJob}
+          onClose={() => setRevisionModalState({ isOpen: false, job: null, revisionType: 'client' })}
+          job={revisionModalState.job}
+          revisionType={revisionModalState.revisionType}
         />
       )}
+
+      {/* Assign Editor Panel */}
+      <AssignEditorPanel
+        isOpen={Boolean(assigningJob)}
+        job={assigningJob}
+        onClose={() => setAssigningJob(null)}
+      />
+
+      {/* Attach / Log Raw Data Modal (Cloud or Physical Hard Drive) */}
+      {rawLinkPromptJob && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white w-full max-w-lg rounded-2xl border border-[#d4c1a3] shadow-2xl overflow-hidden animate-scale-in">
+            <div className="p-5 border-b border-[#d4c1a3] flex items-center justify-between bg-[#f9f8f6]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center">
+                  <LinkIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#111417] text-base">Raw Data Intake & Logistics</h3>
+                  <p className="text-xs text-[#6b6660]">
+                    {rawLinkPromptJob.title} ({rawLinkPromptJob.jobCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setRawLinkPromptJob(null);
+                  setRawLinkInput('');
+                  setRawHddNotes('');
+                }}
+                className="p-1.5 rounded-lg text-[#6b6660] hover:text-[#111417] hover:bg-black/5 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Intake Source Selector */}
+              <div>
+                <label className="block text-xs font-bold text-[#111417] uppercase tracking-wider mb-2">
+                  Data Intake Source
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'partner_upload', label: 'Partner Studio Link', desc: 'GDrive / WeTransfer' },
+                    { id: 'studio_upload', label: 'Studio Upload', desc: 'Uploaded by us' },
+                    { id: 'hard_drive', label: 'Physical Hard Drive', desc: 'Courier / In-Hand' },
+                  ].map((src) => (
+                    <button
+                      key={src.id}
+                      type="button"
+                      onClick={() => setRawSourceType(src.id as any)}
+                      className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                        rawSourceType === src.id
+                          ? 'border-[#7a2e33] bg-[#7a2e33]/5 text-[#7a2e33] shadow-2xs'
+                          : 'border-[#d4c1a3] bg-[#f9f8f6] text-[#6b6660] hover:text-[#111417]'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{src.label}</div>
+                      <div className="text-[10px] text-[#6b6660]">{src.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {rawSourceType === 'hard_drive' ? (
+                <div className="space-y-3 p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl">
+                  <div>
+                    <label className="block text-xs font-bold text-[#111417] mb-1">
+                      Hard Drive Current Location
+                    </label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRawHddStatus('received_by_studio')}
+                        className={`flex-1 py-1.5 px-3 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
+                          rawHddStatus === 'received_by_studio'
+                            ? 'bg-[#7a2e33] text-white border-[#7a2e33]'
+                            : 'bg-white text-[#111417] border-[#d4c1a3]'
+                        }`}
+                      >
+                        💽 At Studio
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRawHddStatus('sent_to_editor')}
+                        className={`flex-1 py-1.5 px-3 rounded-lg border text-xs font-bold cursor-pointer transition-all ${
+                          rawHddStatus === 'sent_to_editor'
+                            ? 'bg-amber-600 text-white border-amber-600'
+                            : 'bg-white text-[#111417] border-[#d4c1a3]'
+                        }`}
+                      >
+                        🚚 Sent to Editor
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-[#111417] mb-1">
+                      Drive / Courier / Tracking Details
+                    </label>
+                    <input
+                      type="text"
+                      value={rawHddNotes}
+                      onChange={(e) => setRawHddNotes(e.target.value)}
+                      placeholder="e.g. SanDisk 2TB SSD, sent via DTDC tracking #D12345678"
+                      className="w-full px-3.5 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-[#111417] uppercase tracking-wider">
+                    Footage Download Link
+                  </label>
+                  <input
+                    type="url"
+                    value={rawLinkInput}
+                    onChange={(e) => setRawLinkInput(e.target.value)}
+                    placeholder="https://drive.google.com/... or https://wetransfer.com/..."
+                    className="w-full px-3.5 py-2.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl text-sm text-[#111417] placeholder:text-[#6b6660]/60 focus:outline-none focus:border-[#7a2e33]"
+                    autoFocus
+                  />
+                  <p className="text-[11px] text-[#6b6660]">
+                    Paste the link shared by the partner studio or your upload.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-[#f9f8f6] border-t border-[#d4c1a3] flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setRawLinkPromptJob(null);
+                  setRawLinkInput('');
+                  setRawHddNotes('');
+                }}
+                className="px-4 py-2 text-xs font-bold text-[#6b6660] hover:text-[#111417] bg-white border border-[#d4c1a3] rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isSavingRawLink}
+                  onClick={() => handleSaveRawData(false)}
+                  className="px-4 py-2 text-xs font-bold text-[#7a2e33] bg-white border border-[#d4c1a3] hover:border-[#7a2e33] rounded-xl cursor-pointer"
+                >
+                  Save Only
+                </button>
+                {rawLinkPromptJob.editorPhone && (
+                  <button
+                    type="button"
+                    disabled={isSavingRawLink}
+                    onClick={() => handleSaveRawData(true)}
+                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>Save & WhatsApp Editor</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Extra Data / Footage Modal (Append Anytime) */}
+      {extraDataPromptJob && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white w-full max-w-lg rounded-2xl border border-[#d4c1a3] shadow-2xl overflow-hidden animate-scale-in">
+            <div className="p-5 border-b border-[#d4c1a3] flex items-center justify-between bg-[#f9f8f6]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-sky-100 text-sky-900 flex items-center justify-center">
+                  <Plus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#111417] text-base">Add More Footage / Data</h3>
+                  <p className="text-xs text-[#6b6660]">
+                    {extraDataPromptJob.title} ({extraDataPromptJob.jobCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExtraDataPromptJob(null)}
+                className="p-1.5 rounded-lg text-[#6b6660] hover:text-[#111417] hover:bg-black/5 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-[#111417] mb-1">
+                  Data Description / Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={extraDataTitle}
+                  onChange={(e) => setExtraDataTitle(e.target.value)}
+                  placeholder="e.g. Reception Drone Footage, Bride Entry Audio WAV, Haldi Ceremony Extra"
+                  className="w-full px-3.5 py-2.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#111417] mb-1">
+                  Footage Download Link (Drive, Dropbox, WeTransfer)
+                </label>
+                <input
+                  type="url"
+                  value={extraDataUrl}
+                  onChange={(e) => setExtraDataUrl(e.target.value)}
+                  placeholder="https://drive.google.com/..."
+                  className="w-full px-3.5 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#111417] mb-1">
+                  Notes / Instructions for Editor (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={extraDataNotes}
+                  onChange={(e) => setExtraDataNotes(e.target.value)}
+                  placeholder="e.g. Please sync this audio with card 2 footage."
+                  className="w-full px-3.5 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                />
+              </div>
+
+              {extraDataPromptJob.editorPhone && (
+                <label className="flex items-center gap-2.5 p-3 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={extraDataNotifyWhatsApp}
+                    onChange={(e) => setExtraDataNotifyWhatsApp(e.target.checked)}
+                    className="rounded text-[#7a2e33] focus:ring-[#7a2e33] w-4 h-4 accent-[#7a2e33]"
+                  />
+                  <div className="text-xs text-[#111417]">
+                    <span className="font-bold">Notify Editor on WhatsApp immediately</span>
+                    <p className="text-[11px] text-[#6b6660]">
+                      Sends project title and the new footage link directly to {extraDataPromptJob.editorName}
+                    </p>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            <div className="p-4 bg-[#f9f8f6] border-t border-[#d4c1a3] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setExtraDataPromptJob(null)}
+                className="px-4 py-2 text-xs font-bold text-[#6b6660] hover:text-[#111417] bg-white border border-[#d4c1a3] rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingExtraData || !extraDataTitle.trim()}
+                onClick={handleSaveExtraData}
+                className="px-5 py-2 text-xs font-bold text-white bg-[#7a2e33] hover:bg-[#5a2226] disabled:opacity-50 rounded-xl shadow-xs cursor-pointer"
+              >
+                {isSavingExtraData ? 'Saving...' : 'Save & Add Footage'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Receive / Attach Cut Modal (The Single Delivery Link Rule) */}
+      {receiveCutPromptJob && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white w-full max-w-lg rounded-2xl border border-[#d4c1a3] shadow-2xl overflow-hidden animate-scale-in">
+            <div className="p-5 border-b border-[#d4c1a3] flex items-center justify-between bg-[#f9f8f6]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-900 flex items-center justify-center">
+                  <Film className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#111417] text-base">Receive / Attach Project Cut</h3>
+                  <p className="text-xs text-[#6b6660]">
+                    {receiveCutPromptJob.title} ({receiveCutPromptJob.jobCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setReceiveCutPromptJob(null);
+                  setReceiveCutLinkInput('');
+                  setReceiveCutEditorNotes('');
+                }}
+                className="p-1.5 rounded-lg text-[#6b6660] hover:text-[#111417] hover:bg-black/5 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-900 leading-relaxed">
+                <p className="font-bold mb-1">One Delivery Link Rule</p>
+                <p>
+                  Paste the review link (Frame.io, Google Drive, Vimeo, YouTube unlisted) shared by editor{' '}
+                  <span className="font-bold">{receiveCutPromptJob.editorName || 'assigned to this project'}</span>.
+                  Once saved, the project moves to <span className="font-bold underline">Studio Review</span> for internal check before sharing with the client.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#111417] uppercase tracking-wider mb-1">
+                  Cut / Preview Link *
+                </label>
+                <input
+                  type="url"
+                  required
+                  value={receiveCutLinkInput}
+                  onChange={(e) => setReceiveCutLinkInput(e.target.value)}
+                  placeholder="https://frame.io/... or https://drive.google.com/..."
+                  className="w-full px-3.5 py-2.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl text-sm text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                  autoFocus
+                />
+              </div>
+
+              {/* If job has active revisions, show requested notes and editor response field */}
+              {receiveCutPromptJob.revisions && receiveCutPromptJob.revisions.length > 0 && (() => {
+                const latestRev = receiveCutPromptJob.revisions[receiveCutPromptJob.revisions.length - 1];
+                return (
+                  <div className="space-y-3 p-3.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl">
+                    <div className="text-xs">
+                      <span className="font-bold text-[#7a2e33]">Revision Round #{latestRev.roundNumber} Feedback:</span>
+                      <p className="text-[#6b6660] mt-0.5">{latestRev.feedbackNotes}</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-[#111417] mb-1">
+                        Editor Notes / Unaddressed Changes (Optional)
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={receiveCutEditorNotes}
+                        onChange={(e) => setReceiveCutEditorNotes(e.target.value)}
+                        placeholder="e.g. Completed music and color changes. Night footage grain at 02:15 could not be reduced further without facial blur."
+                        className="w-full px-3 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                      />
+                      <p className="text-[10px] text-[#6b6660] mt-0.5">
+                        These notes will be displayed on the job card so you have context during Studio Review.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="p-4 bg-[#f9f8f6] border-t border-[#d4c1a3] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setReceiveCutPromptJob(null);
+                  setReceiveCutLinkInput('');
+                  setReceiveCutEditorNotes('');
+                }}
+                className="px-4 py-2 text-xs font-bold text-[#6b6660] hover:text-[#111417] bg-white border border-[#d4c1a3] rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSavingCut || !receiveCutLinkInput.trim()}
+                onClick={handleSaveCut}
+                className="px-5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 rounded-xl shadow-xs cursor-pointer"
+              >
+                {isSavingCut ? 'Saving...' : 'Save Cut & Move to Review'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Attach Deliverable / Master Link Modal */}
+      {deliverableLinkPromptJob && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white w-full max-w-lg rounded-2xl border border-[#d4c1a3] shadow-2xl overflow-hidden animate-scale-in">
+            <div className="p-5 border-b border-[#d4c1a3] flex items-center justify-between bg-[#f9f8f6]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-900 flex items-center justify-center">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#111417] text-base">
+                    Attach {deliverableLinkPromptJob.type === 'final' ? 'Master Delivery' : 'Draft Preview'} Link
+                  </h3>
+                  <p className="text-xs text-[#6b6660]">
+                    {deliverableLinkPromptJob.job.title} ({deliverableLinkPromptJob.job.jobCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeliverableLinkPromptJob(null);
+                  setDeliverableLinkInput('');
+                }}
+                className="p-1.5 rounded-lg text-[#6b6660] hover:text-[#111417] hover:bg-black/5 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-xs text-purple-950 leading-relaxed">
+                <p className="font-bold mb-1">
+                  {deliverableLinkPromptJob.type === 'final' ? 'Final Master Delivery Link' : 'Draft Preview Link'}
+                </p>
+                <p>
+                  You are sending the {deliverableLinkPromptJob.type === 'final' ? 'final 4K master delivery' : 'draft video preview'} to client{' '}
+                  <span className="font-bold">{getJobDisplayClient(deliverableLinkPromptJob.job)}</span>.
+                  Paste the Google Drive, Dropbox, YouTube, Vimeo, or Frame.io download link so the client can review or download it immediately.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#111417] uppercase tracking-wider">
+                  {deliverableLinkPromptJob.type === 'final' ? 'Master Download Link' : 'Draft Preview Link'}
+                </label>
+                <div className="relative">
+                  <input
+                    type="url"
+                    value={deliverableLinkInput}
+                    onChange={(e) => setDeliverableLinkInput(e.target.value)}
+                    placeholder="https://drive.google.com/... or https://vimeo.com/..."
+                    className="w-full px-3.5 py-2.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl text-sm text-[#111417] placeholder:text-[#6b6660]/60 focus:outline-none focus:border-[#7a2e33] focus:ring-1 focus:ring-[#7a2e33]"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[11px] text-[#6b6660]">
+                  This link will be saved to the project and formatted into the WhatsApp message.
+                </p>
+              </div>
+
+              {deliverableLinkPromptJob.job.clientPhone && (
+                <div className="text-xs text-[#6b6660] flex items-center gap-1.5">
+                  <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>
+                    WhatsApp will open for <b>{getJobDisplayClient(deliverableLinkPromptJob.job)}</b> ({clientWhatsAppNumber(deliverableLinkPromptJob.job)})
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 bg-[#f9f8f6] border-t border-[#d4c1a3] flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleSendWithoutDeliverableLink}
+                className="text-xs text-[#6b6660] hover:text-[#111417] underline font-medium cursor-pointer"
+              >
+                Deliver without link
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeliverableLinkPromptJob(null);
+                    setDeliverableLinkInput('');
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-[#6b6660] hover:text-[#111417] bg-white border border-[#d4c1a3] rounded-xl hover:bg-stone-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingDeliverableLink || !deliverableLinkInput.trim()}
+                  onClick={handleSaveAndSendDeliverableLink}
+                  className="px-4 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span>{isSavingDeliverableLink ? 'Saving...' : 'Save & Open WhatsApp'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Editor Doubts & Clarifications Modal */}
+      {doubtModalJob && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl border border-[#d4c1a3] shadow-2xl max-w-xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-8">
+            <div className="p-5 border-b border-[#d4c1a3] flex items-center justify-between bg-[#f9f8f6]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-2xs">
+                  <HelpCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-[#111417] text-base">Editor Queries & Clarifications</h3>
+                  <p className="text-xs text-[#6b6660]">
+                    {getJobDisplayTitle(doubtModalJob)} ({doubtModalJob.jobCode})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDoubtModalJob(null);
+                  setResolvingDoubtId(null);
+                }}
+                className="p-2 text-[#6b6660] hover:text-[#111417] rounded-xl hover:bg-stone-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto">
+              {/* Form: Add New Query / Doubt */}
+              <div className="p-4 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#111417] uppercase tracking-wider flex items-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5 text-amber-700" />
+                    Log New Doubt / Query
+                  </span>
+                  <span className="text-[10px] text-[#6b6660]">Ask before final render</span>
+                </div>
+
+                <textarea
+                  value={newDoubtQuestion}
+                  onChange={(e) => setNewDoubtQuestion(e.target.value)}
+                  placeholder="e.g. Song choice clarification, missing clip in folder, or why requested change is technically not possible..."
+                  rows={3}
+                  className="w-full px-3 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] placeholder:text-[#6b6660]/60 focus:outline-none focus:border-[#7a2e33]"
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#6b6660] mb-1">
+                      Category
+                    </label>
+                    <select
+                      value={newDoubtCategory}
+                      onChange={(e: any) => setNewDoubtCategory(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                    >
+                      <option value="general">💬 General Query</option>
+                      <option value="song_music">🎵 Song / Music Selection</option>
+                      <option value="revision_feedback">⚠️ Revision Feasibility / Feedback</option>
+                      <option value="footage_clip">📹 Footage / Missing Clip</option>
+                      <option value="audio_sync">🔊 Audio / Sync Clarification</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#6b6660] mb-1">
+                      Asked By
+                    </label>
+                    <input
+                      type="text"
+                      value={newDoubtAskedBy}
+                      onChange={(e) => setNewDoubtAskedBy(e.target.value)}
+                      placeholder="Editor name or Studio"
+                      className="w-full px-3 py-1.5 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    disabled={isSavingDoubt || !newDoubtQuestion.trim()}
+                    onClick={handleAddDoubt}
+                    className="px-4 py-1.5 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-2xs flex items-center gap-1.5 cursor-pointer transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isSavingDoubt ? 'Saving...' : 'Add Query'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* List of Logged Queries */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-[#111417] uppercase tracking-wider">
+                    Logged Queries ({(doubtModalJob.doubts || []).length})
+                  </h4>
+                  <span className="text-[11px] text-[#6b6660]">
+                    Client WhatsApp: <b>{clientWhatsAppNumber(doubtModalJob)}</b>
+                  </span>
+                </div>
+
+                {(!doubtModalJob.doubts || doubtModalJob.doubts.length === 0) ? (
+                  <div className="p-6 text-center text-xs text-[#6b6660] bg-[#f9f8f6] rounded-xl border border-dashed border-[#d4c1a3]">
+                    No editor queries logged yet. Use the form above to log any questions or song feedback.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5">
+                    {doubtModalJob.doubts.map((d) => {
+                      const isResolved = d.status === 'resolved';
+                      const isShared = d.status === 'shared_with_client';
+                      return (
+                        <div
+                          key={d.id}
+                          className={`p-3 rounded-xl border transition-all ${
+                            isResolved
+                              ? 'bg-emerald-50/40 border-emerald-200'
+                              : isShared
+                              ? 'bg-sky-50/50 border-sky-200'
+                              : 'bg-amber-50/60 border-amber-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="space-y-1 min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  isResolved
+                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                    : isShared
+                                    ? 'bg-sky-100 text-sky-800 border-sky-300'
+                                    : 'bg-amber-100 text-amber-800 border-amber-300'
+                                }`}>
+                                  {isResolved ? '✅ Resolved' : isShared ? '📤 Sent via WhatsApp' : '🟡 Pending Input'}
+                                </span>
+                                <span className="text-[10px] text-[#6b6660] bg-white px-1.5 py-0.5 rounded border border-[#d4c1a3]/60">
+                                  {d.category === 'song_music'
+                                    ? '🎵 Song Choice'
+                                    : d.category === 'revision_feedback'
+                                    ? '⚠️ Revision Feedback'
+                                    : d.category === 'footage_clip'
+                                    ? '📹 Clip Query'
+                                    : d.category === 'audio_sync'
+                                    ? '🔊 Audio Sync'
+                                    : '💬 General Query'}
+                                </span>
+                                <span className="text-[10px] text-[#6b6660]">
+                                  by <b>{d.askedBy || 'Editor'}</b> on {d.askedAt}
+                                </span>
+                              </div>
+
+                              <p className="text-xs text-[#111417] font-medium whitespace-pre-wrap pt-0.5">
+                                "{d.question}"
+                              </p>
+
+                              {d.clientResponse && (
+                                <div className="text-[11px] text-emerald-900 bg-white p-2 rounded-lg border border-emerald-200 mt-1">
+                                  <b>Resolution / Client Input:</b> {d.clientResponse}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              {!isResolved && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleShareDoubtWhatsApp(doubtModalJob, d)}
+                                    className="p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors cursor-pointer shadow-2xs"
+                                    title="Send to client on WhatsApp"
+                                  >
+                                    <MessageCircle className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setResolvingDoubtId(resolvingDoubtId === d.id ? null : d.id)}
+                                    className="p-1.5 bg-white border border-[#d4c1a3] hover:border-emerald-600 text-emerald-700 rounded-lg transition-colors cursor-pointer"
+                                    title="Mark as resolved"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteDoubt(doubtModalJob, d.id)}
+                                className="p-1.5 text-stone-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                                title="Delete query"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Inline resolution input */}
+                          {resolvingDoubtId === d.id && (
+                            <div className="mt-2.5 pt-2 border-t border-stone-200/60 flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={doubtResolutionNote}
+                                onChange={(e) => setDoubtResolutionNote(e.target.value)}
+                                placeholder="Note client decision / response (e.g. Song confirmed)..."
+                                className="flex-1 px-2.5 py-1 text-xs bg-white border border-[#d4c1a3] rounded-lg focus:outline-none focus:border-emerald-600"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleResolveDoubt(doubtModalJob, d.id, doubtResolutionNote)}
+                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+                              >
+                                Confirm Resolved
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 bg-[#f9f8f6] border-t border-[#d4c1a3] flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setDoubtModalJob(null);
+                  setResolvingDoubtId(null);
+                }}
+                className="px-4 py-2 text-xs font-bold text-[#6b6660] hover:text-[#111417] bg-white border border-[#d4c1a3] rounded-xl hover:bg-stone-50 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WhatsApp Message Formats Customizable Drawer */}
+      <WhatsAppTemplatesDrawer
+        isOpen={isWhatsAppTemplatesOpen}
+        onClose={() => setIsWhatsAppTemplatesOpen(false)}
+      />
     </div>
   );
 };

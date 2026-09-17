@@ -149,7 +149,7 @@ export function UploadsScreen({ transfers, loading, error, drive, onOpen, onSett
       <header>
         <div>
           <span className="eyebrow">TRANSFERS</span>
-          <h2>Uploads</h2>
+          <h2>Up Down Queue</h2>
           <p>Everything in flight. Transfers keep running with this window closed, and pick up
             where they stopped after a quit, a crash, or a dropped connection.</p>
         </div>

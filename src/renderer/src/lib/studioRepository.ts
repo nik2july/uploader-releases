@@ -15,6 +15,7 @@ import type {
   FreelanceLedgerPayment,
   FreelanceEditorPayout,
   FreelanceActivityLog,
+  CrewRoleConfig,
 } from '../types';
 import type { InvoiceSnapshot, Transfer, WorkTarget } from '../../../shared/contracts';
 
@@ -124,7 +125,7 @@ export async function sendBaawarayDeliverableToPostProduction(
       rawDurationMinutes: deliverable.rawDurationMinutes, rawPhotoCount: deliverable.rawPhotoCount,
       clientCharge, pricing,
       sourceCompany: 'baawaray-films', sourceClientId: String(clientId), sourceDeliverableId: deliverable.id,
-      editorName: '', editorPhone: '', dueDate: deliverable.dueDate || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+      editorName: '', editorPhone: '', dueDate: deliverable.dueDate || '',
     }));
   }
   await runTransaction(db, async tx => {
@@ -308,9 +309,28 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
     const ref = target.kind === 'freelance' ? doc(db, 'freelance_jobs', target.id) : doc(db, 'clients', target.clientId!);
     const snap = await tx.get(ref); if (!snap.exists()) throw new Error('The linked work no longer exists.');
     const record = snap.data();
+    const scan = job.scan;
+    const totalSec = scan?.totalDurationSeconds || 0;
+    const rawDurationHours = Math.floor(totalSec / 3600);
+    const rawDurationMinutes = Math.floor((totalSec % 3600) / 60);
+    const rawPhotoCount = scan?.billablePhotos || scan?.totalPhotos || 0;
+
     if (target.kind === 'freelance') {
       const field = target.purpose === 'raw' ? 'rawDataLink' : 'deliveryLink';
-      tx.update(ref, { desktopTransfers: { ...(record.desktopTransfers || {}), [job.id]: entry }, ...(!record[field] ? { [field]: job.link } : {}) });
+      const updates: any = {
+        desktopTransfers: { ...(record.desktopTransfers || {}), [job.id]: entry },
+        ...(!record[field] ? { [field]: job.link } : {}),
+      };
+      if (target.purpose === 'raw' && scan) {
+        if (rawDurationHours > 0 || rawDurationMinutes > 0) {
+          updates.rawDurationHours = rawDurationHours;
+          updates.rawDurationMinutes = rawDurationMinutes;
+        }
+        if (rawPhotoCount > 0) {
+          updates.rawPhotoCount = rawPhotoCount;
+        }
+      }
+      tx.update(ref, updates);
     } else {
       const items = record.deliverables || [];
       const deliverable = items.find((d: ClientDeliverable) => d.id === target.id);
@@ -320,8 +340,20 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
       // keeps it to deliverables filed from now on: nothing existing is touched.
       fileIntoPostProduction = shouldFileIntoPostProduction(target, deliverable, configuredServices);
       const field = target.purpose === 'raw' ? 'rawDataLink' : 'link';
-      tx.update(ref, { deliverables: items.map((d: any) => d.id === target.id ? { ...d,
-        desktopTransfers: { ...(d.desktopTransfers || {}), [job.id]: entry }, ...(!d[field] ? { [field]: job.link } : {}) } : d) });
+      const deliverableUpdates: any = {
+        desktopTransfers: { ...(deliverable.desktopTransfers || {}), [job.id]: entry },
+        ...(!deliverable[field] ? { [field]: job.link } : {}),
+      };
+      if (target.purpose === 'raw' && scan) {
+        if (rawDurationHours > 0 || rawDurationMinutes > 0) {
+          deliverableUpdates.rawDurationHours = rawDurationHours;
+          deliverableUpdates.rawDurationMinutes = rawDurationMinutes;
+        }
+        if (rawPhotoCount > 0) {
+          deliverableUpdates.rawPhotoCount = rawPhotoCount;
+        }
+      }
+      tx.update(ref, { deliverables: items.map((d: any) => d.id === target.id ? { ...d, ...deliverableUpdates } : d) });
     }
   });
 
@@ -329,9 +361,18 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
     // Its own step, after the transfer is safely recorded: a studio that has the
     // footage and no linked job can file it by hand, but a job that exists for
     // footage nothing recorded would be a job pointing at nothing.
+    const scan = job.scan;
+    const totalSec = scan?.totalDurationSeconds || 0;
+    const rawDurationHours = Math.floor(totalSec / 3600);
+    const rawDurationMinutes = Math.floor((totalSec % 3600) / 60);
+    const rawPhotoCount = scan?.billablePhotos || scan?.totalPhotos || 0;
+
     await sendBaawarayDeliverableToPostProduction(target.clientId!, {
       id: target.id, title: target.title, category: target.serviceType,
-      status: 'pending', rawDataLink: job.link, dueDate: target.dueDate,
+      status: 'pending', rawDataLink: job.link, dueDate: target.dueDate || '',
+      rawDurationHours: rawDurationHours > 0 ? rawDurationHours : undefined,
+      rawDurationMinutes: rawDurationMinutes > 0 ? rawDurationMinutes : undefined,
+      rawPhotoCount: rawPhotoCount > 0 ? rawPhotoCount : undefined,
     } as ClientDeliverable, [target.serviceType]);
   }
 }
@@ -343,6 +384,10 @@ export async function saveUploaderSettings(settings: { keepPercentDefault: numbe
 
 export async function saveDropboxSettings(config: { appKey?: string; appSecret?: string; refreshToken?: string }): Promise<void> {
   await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.dropbox': config });
+}
+
+export async function saveCrewRolesSettings(crewRoles: CrewRoleConfig[]): Promise<void> {
+  await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.crewRoles': clean(crewRoles) });
 }
 
 export interface B2Config {
@@ -448,11 +493,16 @@ export async function advanceStage(jobId: string, stage: string, detail: string)
       data_received: { dataReceivedDate: date },
       sent_to_editor: { sentToEditorDate: date },
       draft_received: { draftReceivedDate: date },
+      internal_review: { draftReceivedDate: date },
+      internal_changes: { changesSentToEditorDate: date },
       sent_to_client: { sentToClientDate: date },
       changes_received: { changesReceivedDate: date },
       changes_sent_to_editor: { changesSentToEditorDate: date },
       final_delivered: { finalDeliveredDate: date },
-      completed: { completedDate: date },
+      completed: {
+        completedDate: date,
+        ...(snap.data().finalDeliveredDate ? {} : { finalDeliveredDate: date }),
+      },
     };
     tx.update(ref, { stage, ...(stageDates[stage] || {}) });
     // The log belongs in the billing half. Entries elsewhere in the app carry
@@ -1056,4 +1106,70 @@ export async function logScannedRawData(job: Transfer, notes?: string): Promise<
       dueDate: target.dueDate, ...measurements,
     } as ClientDeliverable, [target.serviceType]);
   }
+}
+
+export async function createTeamMember(data: Omit<TeamMember, 'id'>): Promise<TeamMember> {
+  if (!data.name?.trim()) throw new Error('Enter the team member name.');
+  const id = Date.now();
+  const docId = String(id);
+  const ref = doc(db, 'team', docId);
+  const newMember: TeamMember = {
+    ...data,
+    id,
+    name: data.name.trim(),
+    role: data.role || 'Video Editor',
+    phone: data.phone ? data.phone.trim() : '',
+    email: data.email ? data.email.trim() : '',
+    password: data.password ? data.password.trim() : `TM${Math.floor(1000 + Math.random() * 9000)}`,
+    mustChangePassword: data.mustChangePassword ?? true,
+    active: data.active ?? true,
+    bio: data.bio ? data.bio.trim() : '',
+  };
+
+  const publicHalf: Record<string, any> = {};
+  const privateHalf: Record<string, any> = {};
+  const privateFields = [
+    'password', 'mustChangePassword', 'ratePerDay', 'rateCard',
+    'rolePayoutRates', 'itemPayoutRates', 'hourlyRawDataCostRate',
+    'albumDesignCostPerSheet', 'monthlySalary', 'freelancePayouts',
+  ];
+
+  for (const [k, v] of Object.entries(newMember)) {
+    if (v === undefined) continue;
+    if (privateFields.includes(k)) privateHalf[k] = v;
+    else publicHalf[k] = v;
+  }
+  privateHalf.id = id;
+  if (newMember.authUid) privateHalf.authUid = newMember.authUid;
+
+  const batch = writeBatch(db);
+  batch.set(ref, clean(publicHalf));
+  batch.set(doc(ref, 'private', 'main'), clean(privateHalf));
+  await batch.commit();
+  return newMember;
+}
+
+export async function updateTeamMember(id: number, data: Partial<TeamMember>): Promise<void> {
+  const docId = String(id);
+  const ref = doc(db, 'team', docId);
+  const privateFields = [
+    'password', 'mustChangePassword', 'ratePerDay', 'rateCard',
+    'rolePayoutRates', 'itemPayoutRates', 'hourlyRawDataCostRate',
+    'albumDesignCostPerSheet', 'monthlySalary', 'freelancePayouts',
+  ];
+  const publicUpdates: Record<string, any> = {};
+  const privateUpdates: Record<string, any> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v === undefined) continue;
+    if (privateFields.includes(k)) privateUpdates[k] = v;
+    else publicUpdates[k] = v;
+  }
+  const batch = writeBatch(db);
+  if (Object.keys(publicUpdates).length > 0) {
+    batch.set(ref, clean(publicUpdates), { merge: true });
+  }
+  if (Object.keys(privateUpdates).length > 0) {
+    batch.set(doc(ref, 'private', 'main'), clean(privateUpdates), { merge: true });
+  }
+  await batch.commit();
 }

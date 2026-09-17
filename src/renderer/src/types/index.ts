@@ -640,6 +640,10 @@ export interface CrewRoleConfig {
    */
   estimatedEffortHours?: number;
   /**
+   * Effort in working hours per measurement unit (e.g. per hour of raw video, per finished minute, per sheet, per 100 photos).
+   */
+  editingEffortHoursPerUnit?: number;
+  /**
    * How Post Production measures this service, when it is one they sell.
    *
    * Setting it is what makes a deliverable service into work Post Production

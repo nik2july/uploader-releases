@@ -131,6 +131,27 @@ export function EditorDashboard(): React.JSX.Element {
 
   const myJobs = studio.freelanceJobs;
 
+  // Auto-resume active download on app open
+  const autoResumedDownloadRef = useRef(false);
+  useEffect(() => {
+    if (autoResumedDownloadRef.current || !myJobs.length || downloadingJobId) return;
+    try {
+      const saved = localStorage.getItem('baawaray_active_download');
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      if (!parsed?.jobId || !parsed?.destDir) return;
+      const job = myJobs.find(j => j.id === parsed.jobId);
+      if (job && job.stage !== 'completed' && job.stage !== 'final_delivered') {
+        autoResumedDownloadRef.current = true;
+        void runDownloadBatches(job, parsed.destDir);
+      } else {
+        localStorage.removeItem('baawaray_active_download');
+      }
+    } catch {
+      localStorage.removeItem('baawaray_active_download');
+    }
+  }, [myJobs, downloadingJobId]);
+
   const currentMember = useMemo<TeamMember | undefined>(() => {
     return studio.team.find((m: TeamMember) => m.authUid === studio.currentUser.id);
   }, [studio.team, studio.currentUser]);
@@ -220,15 +241,18 @@ export function EditorDashboard(): React.JSX.Element {
    * and would otherwise overwrite each other. The job only advances to
    * In-Process once the editor holds every batch, not merely the first.
    */
-  async function handleStartDownload(job: FreelanceJob, batches?: RawBatch[]): Promise<void> {
+  async function runDownloadBatches(job: FreelanceJob, destDir: string, batches?: RawBatch[]): Promise<void> {
     const all = rawBatches(job);
     const list = batches?.length ? batches : all;
     if (!list.length) return;
     setError('');
     setNote('');
 
-    const destDir = await window.api.chooseDownloadDirectory();
-    if (!destDir) return; // User canceled dialog
+    try {
+      localStorage.setItem('baawaray_active_download', JSON.stringify({ jobId: job.id, destDir }));
+    } catch {
+      /* ignore storage quota */
+    }
 
     let expectedBytes = list.reduce((sum, batch) => sum + batch.bytes, 0)
       || (list.length === all.length ? Number((job as any).rawDataSizeBytes) || 0 : 0);
@@ -241,14 +265,17 @@ export function EditorDashboard(): React.JSX.Element {
         // Leave the size unknown; the guard below falls back to a low-disk check.
       }
     }
-    if (!(await diskSpaceAllows(destDir, expectedBytes))) return;
+    if (!(await diskSpaceAllows(destDir, expectedBytes))) {
+      localStorage.removeItem('baawaray_active_download');
+      return;
+    }
 
     const multi = list.length > 1;
     cancelBatches.current = false;
     setDownloadingJobId(job.id);
     setDownloadState({
       percent: 0,
-      fileName: 'Connecting\u2026',
+      fileName: 'Connecting…',
       downloadedBytes: 0,
       totalBytes: 0,
       status: 'downloading'
@@ -256,20 +283,27 @@ export function EditorDashboard(): React.JSX.Element {
 
     try {
       for (const [index, batch] of list.entries()) {
-        if (cancelBatches.current) return;
-        setDownloadBatch(multi ? { index: index + 1, total: list.length, label: `${batch.label} \u00b7 ${batch.cloud}` } : null);
+        if (cancelBatches.current) {
+          localStorage.removeItem('baawaray_active_download');
+          return;
+        }
+        setDownloadBatch(multi ? { index: index + 1, total: list.length, label: `${batch.label} · ${batch.cloud}` } : null);
         await window.api.downloadRawData(job.id, batch.link, multi ? `${destDir}/${batchFolder(batch)}` : destDir);
       }
-      if (cancelBatches.current) return;
+      if (cancelBatches.current) {
+        localStorage.removeItem('baawaray_active_download');
+        return;
+      }
       // Open Folder should land on the folder holding every batch, not the last one.
       if (multi) await window.api.verifyLocalFolder(job.id, destDir).catch(() => {});
+      localStorage.removeItem('baawaray_active_download');
       if (list.length === all.length) {
         // Automatically advance to in_process once the whole job is on disk.
         await markJobDownloaded(job.id);
-        setNote(`\u2713 Raw data download complete for "${job.title}"${multi ? ` (${list.length} batches)` : ''}. Job moved to In-Process.`);
+        setNote(`✓ Raw data download complete for "${job.title}"${multi ? ` (${list.length} batches)` : ''}. Job moved to In-Process.`);
       } else {
         const left = all.length - list.length;
-        setNote(`\u2713 ${list.map(b => b.label).join(', ')} downloaded. ${left} more ${left === 1 ? 'batch' : 'batches'} still to fetch before this job starts.`);
+        setNote(`✓ ${list.map(b => b.label).join(', ')} downloaded. ${left} more ${left === 1 ? 'batch' : 'batches'} still to fetch before this job starts.`);
       }
     } catch (err: any) {
       if (err?.message !== 'Download cancelled.') {
@@ -281,8 +315,15 @@ export function EditorDashboard(): React.JSX.Element {
     }
   }
 
+  async function handleStartDownload(job: FreelanceJob, batches?: RawBatch[]): Promise<void> {
+    const destDir = await window.api.chooseDownloadDirectory();
+    if (!destDir) return; // User canceled dialog
+    await runDownloadBatches(job, destDir, batches);
+  }
+
   async function handleCancelDownload(jobId: string): Promise<void> {
     cancelBatches.current = true;
+    localStorage.removeItem('baawaray_active_download');
     await window.api.cancelDownload(jobId);
     setDownloadingJobId(null);
     setDownloadBatch(null);

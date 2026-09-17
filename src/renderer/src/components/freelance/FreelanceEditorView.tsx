@@ -74,7 +74,6 @@ export const FreelanceEditorView: React.FC = () => {
 
   const goBack = () => {
     setSelectedFreelanceEditorId(null);
-    setActiveView('freelance');
   };
 
   const costOf = (job: FreelanceJob) => account.costByJob.get(job.id) || 0;
@@ -132,7 +131,7 @@ export const FreelanceEditorView: React.FC = () => {
           onClick={goBack}
           className="mt-3 px-4 py-2 rounded-xl bg-[#7a2e33] text-white text-xs font-bold cursor-pointer"
         >
-          Back to Freelance Department
+          Back to Active Jobs
         </button>
       </div>
     );
@@ -156,7 +155,7 @@ export const FreelanceEditorView: React.FC = () => {
         className="flex items-center gap-1.5 text-xs font-semibold text-[#6b6660] hover:text-[#7a2e33] cursor-pointer"
       >
         <ArrowLeft className="w-3.5 h-3.5" />
-        Freelance Department
+        Back to Team / Roster
       </button>
 
       <div className="bg-white rounded-xl border border-[#d4c1a3] shadow-2xs p-5 flex flex-wrap items-start justify-between gap-4">

@@ -143,7 +143,6 @@ export const FreelanceStudioView: React.FC = () => {
 
   const goBack = () => {
     setSelectedFreelanceClientId(null);
-    setActiveView('freelance');
   };
 
   /**

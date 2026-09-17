@@ -36,7 +36,14 @@ export class TransferEngine {
     const wanted: UploadDestination = destination === 'drive' ? 'drive' : 'b2';
     if (wanted === this.destination) return;
     this.destination = wanted;
-    this.pauseAll(); // A job cannot change cloud mid-flight; the studio resumes it deliberately.
+    for (const job of this.store.all(this.owner)) {
+      if (['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status)) {
+        const started = this.startedOn(job);
+        if (!started || started !== wanted) {
+          this.pause(job.id);
+        }
+      }
+    }
     this.changed();
   }
   getDestination(): UploadDestination { return this.destination; }
@@ -69,6 +76,38 @@ export class TransferEngine {
     for (const job of this.store.all(this.owner)) if (['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status)) this.pause(job.id);
   }
   shutdown(): void { this.pauseAll(); this.owner = ''; clearInterval(this.timer); }
+  autoResumeAll(): number {
+    if (!this.owner) return 0;
+    let count = 0;
+    for (const job of this.store.all(this.owner)) {
+      if (
+        ['paused', 'queued', 'waiting_network', 'waiting_quota'].includes(job.status) &&
+        job.target &&
+        job.scan &&
+        !job.scan.readErrors
+      ) {
+        try {
+          const started = this.startedOn(job);
+          // If this job was started on Drive, and Drive is connected, but engine is currently set to b2 without b2 connected:
+          if (started === 'drive' && this.destination === 'b2' && (!this.b2 || !this.b2.isConnected()) && this.account()) {
+            this.destination = 'drive';
+          }
+          if (!this.wrongCloud(job)) {
+            this.failures.delete(job.id);
+            this.store.patch(job.id, { status: 'queued', error: undefined, retryAt: undefined });
+            count++;
+          }
+        } catch (err) {
+          console.warn('[autoResumeAll] Skipping job:', job.id, err);
+        }
+      }
+    }
+    if (count > 0) {
+      this.changed();
+      void this.pump();
+    }
+    return count;
+  }
   resume(id: string): void {
     const job = this.store.get(id);
     if (!job.target || !job.scan || job.scan.readErrors) throw new Error('Finish reviewing a complete scan before uploading.');

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { FreelanceClient } from '../../types';
 import { sanitizePhone, generateUniquePassword } from '../../utils/formatters';
-import { DEFAULT_DIAL_CODE, DIAL_CODES, formatInternational } from '../../utils/phone';
+import { DEFAULT_DIAL_CODE, DIAL_CODES, formatInternational, detectDialCode } from '../../utils/phone';
 import { X, Check, KeyRound, Copy, RefreshCw } from 'lucide-react';
 
 /**
@@ -53,13 +53,15 @@ export const FreelanceClientForm: React.FC<FreelanceClientFormProps> = ({
     setTimeout(() => setCopiedPass(false), 2000);
   };
 
+  const initialDetected = detectDialCode(client?.phone, client?.dialCode);
+
   const [draft, setDraft] = useState(
     client
       ? {
           name: client.name,
           contactPerson: client.contactPerson || '',
-          dialCode: client.dialCode || DEFAULT_DIAL_CODE,
-          phone: client.phone || '',
+          dialCode: initialDetected.dialCode,
+          phone: initialDetected.nationalNumber,
           email: client.email || '',
           city: client.city || '',
           gstin: client.gstin || '',
@@ -71,11 +73,17 @@ export const FreelanceClientForm: React.FC<FreelanceClientFormProps> = ({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!draft.name.trim()) return;
+
+    // Detect dial code and clean national number
+    const det = detectDialCode(draft.phone, draft.dialCode);
+    const finalDialCode = det.dialCode || draft.dialCode || DEFAULT_DIAL_CODE;
+    const finalPhone = det.nationalNumber || draft.phone.trim();
+
     const payload = {
       name: draft.name.trim(),
       contactPerson: draft.contactPerson.trim() || undefined,
-      dialCode: draft.dialCode || DEFAULT_DIAL_CODE,
-      phone: sanitizePhone(draft.phone),
+      dialCode: finalDialCode,
+      phone: sanitizePhone(finalPhone),
       email: draft.email.trim() || undefined,
       city: draft.city.trim() || undefined,
       gstin: draft.gstin.trim() || undefined,
@@ -133,7 +141,16 @@ export const FreelanceClientForm: React.FC<FreelanceClientFormProps> = ({
           <div className="flex items-center gap-1.5">
             <select
               value={draft.dialCode}
-              onChange={e => setDraft(d => ({ ...d, dialCode: e.target.value }))}
+              onChange={e => {
+                const newCode = e.target.value;
+                setDraft(d => {
+                  let p = d.phone;
+                  if (newCode === '1' && p.length === 11 && p.startsWith('1')) {
+                    p = p.slice(1);
+                  }
+                  return { ...d, dialCode: newCode, phone: p };
+                });
+              }}
               className="w-28 px-2 py-2 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-xs font-medium text-[#111417] focus:outline-none focus:border-[#7a2e33]"
               aria-label="Country dial code"
             >
@@ -146,7 +163,22 @@ export const FreelanceClientForm: React.FC<FreelanceClientFormProps> = ({
             <input
               type="tel"
               value={draft.phone}
-              onChange={e => setDraft(d => ({ ...d, phone: e.target.value }))}
+              onChange={e => {
+                const val = e.target.value;
+                if (val.trim().startsWith('+') || val.trim().startsWith('00')) {
+                  const det = detectDialCode(val, draft.dialCode);
+                  setDraft(d => ({
+                    ...d,
+                    dialCode: det.dialCode,
+                    phone: det.nationalNumber,
+                  }));
+                } else {
+                  setDraft(d => ({
+                    ...d,
+                    phone: val,
+                  }));
+                }
+              }}
               placeholder="9876543210"
               className="flex-1 min-w-0 px-3 py-2 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-xs font-medium text-[#111417] focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all"
             />

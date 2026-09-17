@@ -4,6 +4,8 @@ export type FreelanceJobStage =
   | 'editor_assigned'
   | 'sent_to_editor'
   | 'draft_received'
+  | 'internal_review'
+  | 'internal_changes'
   | 'sent_to_client'
   | 'changes_received'
   | 'changes_sent_to_editor'
@@ -63,6 +65,15 @@ export interface FreelanceEditorPayout {
   createdAt: string;
 }
 
+export interface FreelanceExtraData {
+  id: string;
+  title: string;
+  url?: string;
+  sourceType?: 'cloud_upload' | 'hard_drive';
+  notes?: string;
+  addedAt: string; // YYYY-MM-DD
+}
+
 export interface FreelanceRevision {
   id: string;
   roundNumber: number;
@@ -72,6 +83,22 @@ export interface FreelanceRevision {
   sharedWithEditorDate?: string;
   status: 'pending' | 'in_progress' | 'resolved';
   resolvedDate?: string;
+  /** Feedback from editor or explanations why certain changes could not be made. */
+  editorNotes?: string;
+  editorFeedbackDate?: string;
+  /** Whether this revision was an internal studio check or client-facing review. */
+  revisionType?: 'client' | 'internal';
+}
+
+export interface FreelanceDoubt {
+  id: string;
+  question: string;
+  category?: 'song_music' | 'footage_clip' | 'revision_feedback' | 'audio_sync' | 'general';
+  askedBy?: string; // e.g. editor's name or Studio
+  askedAt: string; // YYYY-MM-DD
+  status: 'open' | 'shared_with_client' | 'resolved';
+  clientResponse?: string;
+  resolvedAt?: string;
 }
 
 export interface FreelanceActivityLog {
@@ -250,6 +277,10 @@ export interface FreelanceJob {
   rawDurationMinutes?: number;
   rawPhotoCount?: number;
   hardDriveNotes?: string;
+  additionalDataLinks?: FreelanceExtraData[];
+  hddStatus?: 'none' | 'received_by_studio' | 'sent_to_editor' | 'returned';
+  hddTrackingNumber?: string;
+  hddCourierName?: string;
   /**
    * Where the editor's work is watched — the one link the job delivers through.
    *
@@ -277,6 +308,8 @@ export interface FreelanceJob {
   sentToEditorDate?: string; // YYYY-MM-DD
   draftReceivedDate?: string; // YYYY-MM-DD
   sentToClientDate?: string; // YYYY-MM-DD
+  lastFollowUpDate?: string; // YYYY-MM-DD
+  followUpCount?: number;
   changesReceivedDate?: string; // YYYY-MM-DD
   changesSentToEditorDate?: string; // YYYY-MM-DD
   finalDeliveredDate?: string; // YYYY-MM-DD
@@ -299,6 +332,7 @@ export interface FreelanceJob {
   // Revisions & Activity History
   revisions: FreelanceRevision[];
   activityLogs: FreelanceActivityLog[];
+  doubts?: FreelanceDoubt[];
   notes?: string;
 }
 
