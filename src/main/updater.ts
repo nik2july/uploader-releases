@@ -150,7 +150,9 @@ export async function downloadUpdate(
     throw new Error('This release has no installable package. Use Download to install it by hand.');
   }
   const staging = stagingDirectory();
-  await fs.rm(staging, { recursive: true, force: true });
+  await run('/bin/rm', ['-rf', staging]).catch(async () => {
+    await fs.rm(staging, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+  });
   await fs.mkdir(staging, { recursive: true, mode: 0o700 });
 
   const archive = join(staging, 'update.zip');
