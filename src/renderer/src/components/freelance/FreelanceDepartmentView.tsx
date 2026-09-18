@@ -17,6 +17,7 @@ import { pricingFromRequest } from '../../utils/mediaPricing';
 import { addDaysToDate, getDueDateStatus, getFreelanceStageMeta, inrDigits, isClientPostProductionEligible } from '../../utils/formatters';
 import {
   Briefcase,
+  Building2,
   Plus,
   Upload,
   Search,
@@ -110,6 +111,7 @@ export const FreelanceDepartmentView: React.FC<{
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<string>('all');
   const [selectedEditor, setSelectedEditor] = useState<string>('all');
+  const [selectedStudio, setSelectedStudio] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('due_asc');
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'kanban'>('grid');
   const [attachingId, setAttachingId] = useState<string | null>(null);
@@ -389,6 +391,75 @@ export const FreelanceDepartmentView: React.FC<{
     return { list, unassigned };
   }, [freelanceJobs, pendingDeliverables]);
 
+  // Dynamically compute partner studios and active job counts
+  const partnerStudios = useMemo(() => {
+    const studioMap = new Map<string, { id: string; name: string; count: number }>();
+
+    // 1. Seed from registered freelanceClients
+    freelanceClients.forEach(c => {
+      studioMap.set(c.id, { id: c.id, name: c.name, count: 0 });
+    });
+
+    // 2. Ensure Baawaray Films studio is present
+    if (!studioMap.has(BAAWARAY_FILMS_STUDIO_ID)) {
+      const bf = freelanceClients.find(
+        c => c.id === BAAWARAY_FILMS_STUDIO_ID || c.name.trim().toLowerCase() === 'baawaray films'
+      );
+      studioMap.set(BAAWARAY_FILMS_STUDIO_ID, {
+        id: BAAWARAY_FILMS_STUDIO_ID,
+        name: bf?.name || 'BAAWARAY FILMS',
+        count: 0,
+      });
+    }
+
+    let unlinkedCount = 0;
+
+    // 3. Count jobs for each studio
+    const allRows = [...pendingDeliverables, ...freelanceJobs];
+    allRows.forEach(job => {
+      if (
+        (job as PendingRow).pendingDeliverable ||
+        job.freelanceClientId === BAAWARAY_FILMS_STUDIO_ID ||
+        job.sourceCompany === 'baawaray-films'
+      ) {
+        const entry = studioMap.get(BAAWARAY_FILMS_STUDIO_ID);
+        if (entry) entry.count++;
+        return;
+      }
+
+      if (job.freelanceClientId && studioMap.has(job.freelanceClientId)) {
+        studioMap.get(job.freelanceClientId)!.count++;
+        return;
+      }
+
+      // Check by clientName match against registered clients
+      const matchedClient = freelanceClients.find(
+        c => job.clientName && c.name.trim().toLowerCase() === job.clientName.trim().toLowerCase()
+      );
+      if (matchedClient && studioMap.has(matchedClient.id)) {
+        studioMap.get(matchedClient.id)!.count++;
+        return;
+      }
+
+      if (job.clientName && job.clientName.trim()) {
+        const key = `name:${job.clientName.trim().toLowerCase()}`;
+        if (!studioMap.has(key)) {
+          studioMap.set(key, { id: key, name: job.clientName.trim(), count: 0 });
+        }
+        studioMap.get(key)!.count++;
+      } else {
+        unlinkedCount++;
+      }
+    });
+
+    const list = Array.from(studioMap.values()).sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.name.localeCompare(b.name);
+    });
+
+    return { list, unlinkedCount };
+  }, [freelanceClients, freelanceJobs, pendingDeliverables]);
+
   const filteredJobs = useMemo(() => {
     // The studio's own pending work sits first: it is the work that cannot start
     // until someone does something about it.
@@ -425,6 +496,46 @@ export const FreelanceDepartmentView: React.FC<{
           if (name && name !== 'Unassigned' && !name.startsWith('⚠️')) return false;
         } else {
           if (name.toLowerCase() !== activeEditorFilter.toLowerCase()) return false;
+        }
+      }
+
+      // Filter: Partner Studio (selectedStudio dropdown or filter=studio:...)
+      const activeStudioFilter = selectedStudio !== 'all'
+        ? selectedStudio
+        : filter.startsWith('studio:')
+        ? filter.slice('studio:'.length)
+        : null;
+
+      if (activeStudioFilter) {
+        if (activeStudioFilter === BAAWARAY_FILMS_STUDIO_ID) {
+          const isBf =
+            !!(job as PendingRow).pendingDeliverable ||
+            job.freelanceClientId === BAAWARAY_FILMS_STUDIO_ID ||
+            job.sourceCompany === 'baawaray-films' ||
+            (job.clientName && job.clientName.trim().toLowerCase() === 'baawaray films');
+          if (!isBf) return false;
+        } else if (activeStudioFilter === 'unlinked') {
+          const isBf =
+            !!(job as PendingRow).pendingDeliverable ||
+            job.freelanceClientId === BAAWARAY_FILMS_STUDIO_ID ||
+            job.sourceCompany === 'baawaray-films';
+          if (isBf) return false;
+          if (job.freelanceClientId) return false;
+          const matched = freelanceClients.find(
+            c => job.clientName && c.name.trim().toLowerCase() === job.clientName.trim().toLowerCase()
+          );
+          if (matched) return false;
+        } else if (activeStudioFilter.startsWith('name:')) {
+          const nameToMatch = activeStudioFilter.slice('name:'.length).toLowerCase();
+          if (!job.clientName || job.clientName.trim().toLowerCase() !== nameToMatch) {
+            return false;
+          }
+        } else {
+          // freelanceClient ID
+          const studio = freelanceClients.find(c => c.id === activeStudioFilter);
+          const matchId = job.freelanceClientId === activeStudioFilter;
+          const matchName = studio && job.clientName && job.clientName.trim().toLowerCase() === studio.name.trim().toLowerCase();
+          if (!matchId && !matchName) return false;
         }
       }
 
@@ -526,7 +637,7 @@ export const FreelanceDepartmentView: React.FC<{
     });
 
     return result;
-  }, [pendingDeliverables, freelanceJobs, searchQuery, filter, selectedEditor, sortBy, clients, freelanceJobEditorCost]);
+  }, [pendingDeliverables, freelanceJobs, searchQuery, filter, selectedEditor, selectedStudio, freelanceClients, sortBy, clients, freelanceJobEditorCost]);
 
   // Stage & filter counts
   const stageCounts = useMemo(() => {
@@ -1275,6 +1386,16 @@ export const FreelanceDepartmentView: React.FC<{
                 <option value="client_due">Client Payment Due ({stageCounts.client_due})</option>
                 <option value="editor_due">Editor Payout Pending ({stageCounts.editor_due})</option>
                 <option value="overdue">Urgent / Due Soon ({stageCounts.overdue})</option>
+                {partnerStudios.list.length > 0 && (
+                  <>
+                    <option disabled className="text-gray-400 font-normal">── Partner Studios ──</option>
+                    {partnerStudios.list.map(s => (
+                      <option key={`studio:${s.id}`} value={`studio:${s.id}`}>
+                        Studio: {s.name} ({s.count})
+                      </option>
+                    ))}
+                  </>
+                )}
                 {allottedEditors.list.length > 0 && (
                   <>
                     <option disabled className="text-gray-400 font-normal">── Team Member Allotted ──</option>
@@ -1284,6 +1405,29 @@ export const FreelanceDepartmentView: React.FC<{
                       </option>
                     ))}
                   </>
+                )}
+              </select>
+            </div>
+
+            {/* Partner Studio Dropdown */}
+            <div className="flex items-center gap-1.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl px-2.5 py-1">
+              <Building2 className="w-3.5 h-3.5 text-[#7a2e33] shrink-0" />
+              <span className="text-[11px] font-bold text-[#6b6660] uppercase tracking-wider shrink-0">Studio:</span>
+              <select
+                value={selectedStudio}
+                onChange={e => setSelectedStudio(e.target.value)}
+                className="bg-transparent text-xs font-bold text-[#111417] focus:outline-none cursor-pointer py-1 pr-1 max-w-[170px] truncate"
+              >
+                <option value="all">All Studios ({partnerStudios.list.length})</option>
+                {partnerStudios.list.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.count})
+                  </option>
+                ))}
+                {partnerStudios.unlinkedCount > 0 && (
+                  <option value="unlinked">
+                    Direct / Unlinked ({partnerStudios.unlinkedCount})
+                  </option>
                 )}
               </select>
             </div>
@@ -1332,12 +1476,13 @@ export const FreelanceDepartmentView: React.FC<{
             </div>
 
             {/* Reset button when active */}
-            {(filter !== 'all' || selectedEditor !== 'all' || searchQuery.trim() !== '') && (
+            {(filter !== 'all' || selectedEditor !== 'all' || selectedStudio !== 'all' || searchQuery.trim() !== '') && (
               <button
                 type="button"
                 onClick={() => {
                   setFilter('all');
                   setSelectedEditor('all');
+                  setSelectedStudio('all');
                   setSearchQuery('');
                 }}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-[#7a2e33]/10 hover:bg-[#7a2e33]/20 text-[#7a2e33] text-xs font-bold rounded-xl transition-all cursor-pointer"
@@ -1365,7 +1510,7 @@ export const FreelanceDepartmentView: React.FC<{
           <div>
             <h3 className="text-base font-bold text-[#111417]">No freelance projects found</h3>
             <p className="text-xs text-[#6b6660] max-w-md mx-auto mt-1">
-              {searchQuery || filter !== 'all'
+              {searchQuery || filter !== 'all' || selectedEditor !== 'all' || selectedStudio !== 'all'
                 ? 'Try adjusting your filters or search keywords.'
                 : 'Start tracking external editing projects, client charges, and freelance editor payouts.'}
             </p>

@@ -351,9 +351,14 @@ export const FreelanceEditorView: React.FC = () => {
                   return (
                     <div key={job.id} className="flex items-center justify-between gap-3 py-2.5">
                       <div className="min-w-0">
-                        <div className="text-xs font-bold text-[#111417] truncate">
-                          <span className="font-mono text-[10px] text-[#7a2e33] mr-1.5">{job.jobCode}</span>
-                          {job.title}
+                        <div className="text-xs font-bold text-[#111417] truncate flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-[10px] text-[#7a2e33]">{job.jobCode}</span>
+                          {job.serviceType && (
+                            <span className="inline-block text-[9.5px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded bg-[#f5ebe6] text-[#7a2e33] border border-[#d4c1a3]/60">
+                              {job.serviceType}
+                            </span>
+                          )}
+                          <span>{job.title}</span>
                         </div>
                         <div className="text-[10px] text-[#6b6660]">
                           {job.clientName} · {getFreelanceStageMeta(job.stage).label}
@@ -470,9 +475,24 @@ export const FreelanceEditorView: React.FC = () => {
                       className="text-xs hover:bg-[#f9f8f6]/60 cursor-pointer"
                     >
                       <td className="py-3 px-4">
-                        <div className="font-mono text-[10px] font-bold text-[#7a2e33]">{job.jobCode}</div>
-                        <div className="font-bold text-[#111417] line-clamp-1">{job.title}</div>
-                        <div className="text-[10px] text-[#6b6660]">{job.clientName}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-[10px] font-bold text-[#7a2e33]">{job.jobCode}</span>
+                          {job.serviceType && (
+                            <span className="inline-block text-[9.5px] font-bold tracking-wide uppercase px-1.5 py-0.5 rounded bg-[#f5ebe6] text-[#7a2e33] border border-[#d4c1a3]/60">
+                              {job.serviceType}
+                            </span>
+                          )}
+                        </div>
+                        <div className="font-bold text-[#111417] line-clamp-1 mt-0.5">{job.title}</div>
+                        <div className="text-[10px] text-[#6b6660] flex items-center gap-1.5">
+                          <span>{job.clientName}</span>
+                          {job.projectCategory && (
+                            <>
+                              <span>·</span>
+                              <span>{job.projectCategory}</span>
+                            </>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4">
                         <span
@@ -575,7 +595,7 @@ export const FreelanceEditorView: React.FC = () => {
                         return (
                           <div key={split.jobId} className="text-[10px] text-[#6b6660] flex justify-between">
                             <span className="truncate">
-                              {job ? `${job.jobCode} — ${job.title}` : 'A job that no longer exists'}
+                              {job ? `${job.jobCode} — ${job.title}${job.serviceType ? ` (${job.serviceType})` : ''}` : 'A job that no longer exists'}
                             </span>
                             <span className="font-semibold shrink-0 ml-2">{formatINR(split.amount)}</span>
                           </div>
