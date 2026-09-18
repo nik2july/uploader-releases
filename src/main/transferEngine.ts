@@ -4,8 +4,6 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { ManifestFile, Transfer, UploadDestination } from '../shared/contracts';
 import { DriveClient, DriveError } from './drive';
-import type { B2Client } from './b2Client';
-import { b2ObjectName } from './b2Paths';
 import { TransferStore } from './store';
 
 const CHUNK_SIZE = 8 * 1024 * 1024; // Drive requires multiples of 256 KiB.
@@ -20,50 +18,21 @@ export class TransferEngine {
     readonly drive: DriveClient,
     private account: () => string | undefined,
     private changed: () => void,
-    private completed: (job: Transfer) => void = () => {},
-    private b2?: B2Client
+    private completed: (job: Transfer) => void = () => {}
   ) {
     this.timer = setInterval(() => { void this.pump(); }, 5000); this.timer.unref();
   }
-  setB2Client(b2: B2Client): void { this.b2 = b2; }
-  /**
-   * Which cloud the studio wants raw footage to land in. B2 stays the default so
-   * an install that never picks one keeps behaving exactly as it did; choosing
-   * Drive routes to Drive even while B2 credentials are still configured.
-   */
-  private destination: UploadDestination = 'b2';
-  setDestination(destination: UploadDestination): void {
-    const wanted: UploadDestination = destination === 'drive' ? 'drive' : 'b2';
-    if (wanted === this.destination) return;
-    this.destination = wanted;
-    for (const job of this.store.all(this.owner)) {
-      if (['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status)) {
-        const started = this.startedOn(job);
-        if (!started || started !== wanted) {
-          this.pause(job.id);
-        }
-      }
-    }
-    this.changed();
+  /** Raw footage uploads route exclusively to Google Drive. */
+  private destination: UploadDestination = 'drive';
+  private sharedDriveId = '';
+  setSharedDriveId(driveId: string): void {
+    this.sharedDriveId = driveId?.trim() || '';
+  }
+  getSharedDriveId(): string { return this.sharedDriveId; }
+  setDestination(_destination: UploadDestination): void {
+    this.destination = 'drive';
   }
   getDestination(): UploadDestination { return this.destination; }
-  private isB2(): boolean { return this.destination === 'b2' && Boolean(this.b2 && this.b2.isConnected()); }
-  /**
-   * The cloud a transfer has already put bytes into, recorded on its first run.
-   * A half-sent folder cannot change cloud: verified files are never sent again,
-   * so finishing it elsewhere would leave each cloud holding part of it while
-   * reconciliation — which counts files, not destinations — still called it done.
-   */
-  private startedOn(job: Transfer): UploadDestination | undefined {
-    return job.driveAccount ? (job.driveAccount.startsWith('B2:') ? 'b2' : 'drive') : undefined;
-  }
-  private wrongCloud(job: Transfer): string | undefined {
-    const started = this.startedOn(job);
-    const now: UploadDestination = this.isB2() ? 'b2' : 'drive';
-    if (!started || started === now) return undefined;
-    const name = (where: UploadDestination): string => where === 'b2' ? 'Backblaze B2' : 'Google Drive';
-    return `This folder already started uploading to ${name(started)}. Switch the destination back to ${name(started)} to finish it, or scan it again as a new transfer to send it to ${name(now)}.`;
-  }
   setOwner(owner: string): void { this.owner = owner; }
   pause(id: string): void {
     const job = this.store.get(id);
@@ -87,16 +56,9 @@ export class TransferEngine {
         !job.scan.readErrors
       ) {
         try {
-          const started = this.startedOn(job);
-          // If this job was started on Drive, and Drive is connected, but engine is currently set to b2 without b2 connected:
-          if (started === 'drive' && this.destination === 'b2' && (!this.b2 || !this.b2.isConnected()) && this.account()) {
-            this.destination = 'drive';
-          }
-          if (!this.wrongCloud(job)) {
-            this.failures.delete(job.id);
-            this.store.patch(job.id, { status: 'queued', error: undefined, retryAt: undefined });
-            count++;
-          }
+          this.failures.delete(job.id);
+          this.store.patch(job.id, { status: 'queued', error: undefined, retryAt: undefined });
+          count++;
         } catch (err) {
           console.warn('[autoResumeAll] Skipping job:', job.id, err);
         }
@@ -111,34 +73,23 @@ export class TransferEngine {
   resume(id: string): void {
     const job = this.store.get(id);
     if (!job.target || !job.scan || job.scan.readErrors) throw new Error('Finish reviewing a complete scan before uploading.');
-    if (!this.isB2() && !this.account()) throw new Error(this.destination === 'b2' && this.b2
-      ? 'Connect Backblaze B2 in Uploader settings first, or switch the destination to Google Drive.'
-      : 'Connect Google Drive in Uploader settings first.');
-    const mismatch = this.wrongCloud(job);
-    if (mismatch) throw new Error(mismatch);
-    if (!this.isB2() && job.driveAccount && job.driveAccount !== this.account()) throw new Error('Reconnect the original Drive account for this transfer.');
+    if (!this.account()) throw new Error('Connect Google Drive in Uploader settings first.');
+    if (job.driveAccount && job.driveAccount !== this.account()) throw new Error('Reconnect the original Drive account for this transfer.');
     if (job.status === 'completed') return;
     this.failures.delete(id);
     this.store.patch(id, { status: 'queued', error: undefined, retryAt: undefined }); this.changed(); void this.pump();
   }
   async pump(): Promise<void> {
-    if (this.busy || !this.owner || (!this.isB2() && !this.account())) return;
+    if (this.busy || !this.owner || !this.account()) return;
     const job = this.store.all(this.owner).reverse().find(j => j.status === 'queued'
       || (['waiting_network', 'waiting_quota'].includes(j.status) && (j.retryAt || 0) <= Date.now()));
     if (!job) return;
     this.busy = true;
     const controller = new AbortController(); this.active = { id: job.id, controller };
     try {
-      const mismatch = this.wrongCloud(job);
-      if (mismatch) throw new Error(mismatch);
-      if (!this.isB2() && job.driveAccount && job.driveAccount !== this.account()) throw new Error('This transfer belongs to a different Google Drive account.');
-      const activeAccount = this.isB2() ? `B2: ${this.b2?.credentials?.bucketName || 'active'}` : this.account();
-      this.store.patch(job.id, { status: 'uploading', driveAccount: activeAccount, error: undefined, retryAt: undefined }); this.changed();
-      if (this.isB2()) {
-        await this.uploadB2(job.id, controller.signal);
-      } else {
-        await this.upload(job.id, controller.signal);
-      }
+      if (job.driveAccount && job.driveAccount !== this.account()) throw new Error('This transfer belongs to a different Google Drive account.');
+      this.store.patch(job.id, { status: 'uploading', driveAccount: this.account(), error: undefined, retryAt: undefined }); this.changed();
+      await this.upload(job.id, controller.signal);
       controller.signal.throwIfAborted();
       const done = this.store.patch(job.id, { status: 'completed', error: undefined, currentFile: undefined, ...this.store.stats(job.id) });
       this.completed(done);
@@ -152,58 +103,6 @@ export class TransferEngine {
       }
     } finally { this.active = undefined; this.busy = false; this.changed(); }
   }
-  private async uploadB2(id: string, signal: AbortSignal): Promise<void> {
-    if (!this.b2 || !this.b2.isConnected()) throw new Error('Backblaze B2 is not connected.');
-    const job = this.store.get(id);
-    const root = await fs.realpath(job.rootPath).catch(() => {
-      throw new Error('Source drive is unavailable. Reconnect it or choose Locate folder.');
-    });
-
-    const bucketName = this.b2.credentials?.bucketName || '';
-    const folderSlug = (job.target?.jobCode || job.target?.title || job.rootName || 'package')
-      .replace(/[^a-zA-Z0-9_-]+/g, '_');
-    const prefix = `raw/${folderSlug}`;
-
-    this.store.patch(id, {
-      folderId: prefix,
-      link: `b2://${bucketName}/${prefix}`
-    });
-
-    let file: ManifestFile | undefined;
-    while ((file = this.store.next(id))) {
-      signal.throwIfAborted();
-      this.store.patch(id, { currentFile: file.relativePath, status: 'uploading', ...this.store.stats(id) });
-      this.changed();
-
-      const full = await this.localFile(root, file);
-      const b2FileName = b2ObjectName(prefix, file.relativePath);
-
-      try {
-        await this.b2.uploadFile(full, b2FileName, signal, chunkDownloaded => {
-          file!.offset = chunkDownloaded;
-          this.store.saveFile(file!);
-          this.store.patch(id, this.store.stats(id));
-          this.changed();
-        });
-
-        file.offset = file.size;
-        file.state = 'verified';
-        file.error = undefined;
-        this.store.saveFile(file);
-      } catch (err) {
-        if (!signal.aborted) {
-          file.error = err instanceof Error ? err.message : 'Upload error';
-          this.store.saveFile(file);
-        }
-        throw err;
-      }
-    }
-
-    const stats = this.store.stats(id);
-    if (stats.completedFiles !== job.scan?.fileCount || stats.uploadedBytes !== job.scan?.totalBytes) {
-      throw new Error('Manifest reconciliation failed. The folder is not marked complete.');
-    }
-  }
   private async upload(id: string, signal: AbortSignal): Promise<void> {
     const job = this.store.get(id);
     const root = await fs.realpath(job.rootPath).catch(() => { throw new Error('Source drive is unavailable. Reconnect it or choose Locate folder.'); });
@@ -212,7 +111,7 @@ export class TransferEngine {
       const driveId = folder.driveId || await this.drive.generateId(signal);
       this.store.saveFolder(id, folder.path, driveId); // Persist reserved ID before creation: crash-safe, duplicate-safe.
       const parentPath = path.posix.dirname(folder.path);
-      const parent = folder.path ? this.store.folderId(id, parentPath === '.' ? '' : parentPath) : undefined;
+      const parent = folder.path ? this.store.folderId(id, parentPath === '.' ? '' : parentPath) : (this.sharedDriveId || undefined);
       const name = folder.path ? path.posix.basename(folder.path) : `${job.target?.jobCode || job.target?.title || 'Baawaray'} - ${job.rootName}`;
       await this.drive.ensureFolder(driveId, name, parent, signal);
       if (!folder.path) this.store.patch(id, { folderId: driveId, link: `https://drive.google.com/drive/folders/${driveId}` });

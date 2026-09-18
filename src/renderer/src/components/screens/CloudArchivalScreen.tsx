@@ -46,7 +46,7 @@ export function CloudArchivalScreen({
 
   const summary = useMemo(() => calculateCloudArchivalSummary(jobs), [jobs]);
 
-  // Filtered B2 groups
+  // Filtered Raw Data groups
   const filteredRawGroups = useMemo(() => {
     return summary.rawDataGroups.filter(group => {
       if (rawStatusFilter !== 'all' && group.status !== rawStatusFilter) {
@@ -54,11 +54,10 @@ export function CloudArchivalScreen({
       }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchTitle = group.projectTitles.some(t => t.toLowerCase().includes(q));
-        const matchClient = group.clientNames.some(c => c.toLowerCase().includes(q));
-        const matchEditor = group.editors.some(e => e.editorName.toLowerCase().includes(q) || e.cutTitle.toLowerCase().includes(q) || e.jobCode.toLowerCase().includes(q));
-        const matchLink = group.rawDataLink.toLowerCase().includes(q);
-        if (!matchTitle && !matchClient && !matchEditor && !matchLink) return false;
+        const matchesProject = group.projectTitles.some(t => t.toLowerCase().includes(q));
+        const matchesClient = group.clientNames.some(c => c.toLowerCase().includes(q));
+        const matchesEditor = group.editors.some(e => e.editorName.toLowerCase().includes(q));
+        return matchesProject || matchesClient || matchesEditor;
       }
       return true;
     });
@@ -83,8 +82,7 @@ export function CloudArchivalScreen({
   }, [summary.dropboxDeliverables, dropboxStatusFilter, searchQuery]);
 
   async function handlePurgeDrive(group: RawDataArchiveGroup): Promise<void> {
-    const isB2 = group.rawDataLink.startsWith('b2://') || group.rawDataLink.includes('backblazeb2.com');
-    const cloudName = isB2 ? 'Backblaze B2' : 'Google Drive';
+    const cloudName = 'Google Drive';
 
     const confirm = window.confirm(
       `Purge raw footage from ${cloudName}?\n\n` +
@@ -98,14 +96,8 @@ export function CloudArchivalScreen({
     setBusyAction(`drive-${group.rawDataLink}`);
     setFeedbackMessage(null);
     try {
-      if (isB2) {
-        if (window.api?.deleteB2Folder) {
-          await window.api.deleteB2Folder(group.rawDataLink);
-        }
-      } else {
-        if (window.api?.deleteDriveFolder) {
-          await window.api.deleteDriveFolder(group.rawDataLink);
-        }
+      if (window.api?.deleteDriveFolder) {
+        await window.api.deleteDriveFolder(group.rawDataLink);
       }
       setPurgedLinks(prev => new Set(prev).add(group.rawDataLink));
       setFeedbackMessage({
@@ -230,7 +222,7 @@ export function CloudArchivalScreen({
       <div className="bg-[#2f6b34]/10 border border-[#2f6b34]/30 rounded-xl p-3.5 flex items-start sm:items-center gap-3 text-xs text-[#111417]">
         <ShieldCheck className="w-5 h-5 text-[#2f6b34] shrink-0 mt-0.5 sm:mt-0" />
         <div className="flex-1 leading-relaxed">
-          <strong className="text-[#2f6b34]">Offline Hard Drive Protection Active:</strong> Original raw footage uploaded to Backblaze B2 exists strictly for editor downloads. Once downloaded by all assigned editors, cloud copies can be safely purged after the 30-day archival window because master raw files remain safe on studio offline hard drives.
+          <strong className="text-[#2f6b34]">Offline Hard Drive Protection Active:</strong> Original raw footage uploaded to Google Drive exists strictly for editor downloads. Once downloaded by all assigned editors, cloud copies can be safely purged after the 30-day archival window because master raw files remain safe on studio offline hard drives.
         </div>
       </div>
 
@@ -247,10 +239,12 @@ export function CloudArchivalScreen({
             {summary.stats.totalRawPackages}
           </div>
           <div className="text-[11px] text-[#6b6660] mt-0.5 flex items-center gap-1.5 flex-wrap">
-            <span className="text-[#2f6b34] font-semibold">{summary.stats.rawIn30DayCountdown} in 30d countdown</span>
+            <span className="text-[#2f6b34] font-bold">
+              {summary.stats.rawIn30DayCountdown} in 30d Archival
+            </span>
             <span>·</span>
             <span className={summary.stats.rawReadyForPurge > 0 ? 'text-[#8c2b2b] font-bold' : 'text-[#6b6660]'}>
-              {summary.stats.rawReadyForPurge} ready to purge
+              {summary.stats.rawReadyForPurge} Ready for Purge
             </span>
           </div>
         </div>
@@ -329,7 +323,7 @@ export function CloudArchivalScreen({
               }`}
             >
               <Cloud className="w-3.5 h-3.5" />
-              Backblaze B2 Raw Data
+              Google Drive Raw Data
               <span
                 className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
                   activeTab === 'drive' ? 'bg-white/20 text-white' : 'bg-[#d4c1a3]/50 text-[#111417]'
@@ -428,7 +422,7 @@ export function CloudArchivalScreen({
           </div>
         )}
 
-        {/* Tab 1: Backblaze B2 Raw Data Groups */}
+        {/* Tab 1: Google Drive Raw Data Groups */}
         {activeTab === 'drive' && (
           <div className="space-y-4 pt-1">
             {filteredRawGroups.length === 0 ? (
@@ -440,7 +434,6 @@ export function CloudArchivalScreen({
               filteredRawGroups.map((group, idx) => {
                 const isPurged = purgedLinks.has(group.rawDataLink);
                 const isBusy = busyAction === `drive-${group.rawDataLink}`;
-                const isB2 = group.rawDataLink.startsWith('b2://') || group.rawDataLink.includes('backblazeb2.com');
 
                 let badgeClass = 'bg-[#6c757d]/10 text-[#6c757d] border-[#6c757d]/30';
                 let badgeText = 'Awaiting Downloads';
@@ -474,19 +467,13 @@ export function CloudArchivalScreen({
                             {badgeText}
                           </span>
 
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                              isB2
-                                ? 'bg-red-500/10 text-red-700 border-red-500/30'
-                                : 'bg-blue-500/10 text-blue-700 border-blue-500/30'
-                            }`}
-                          >
-                            {isB2 ? 'Backblaze B2' : 'Google Drive'}
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-blue-500/10 text-blue-700 border-blue-500/30">
+                            Google Drive
                           </span>
 
                           {isPurged && (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#2f6b34]/10 text-[#2f6b34] border border-[#2f6b34]/30">
-                              ✓ Purged from {isB2 ? 'Backblaze B2' : 'Cloud'}
+                              ✓ Purged from Google Drive
                             </span>
                           )}
                         </div>
@@ -520,7 +507,7 @@ export function CloudArchivalScreen({
                           title="Purge folder from cloud storage to reclaim storage quota. Offline hard drive copy is protected."
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          {isBusy ? 'Purging...' : group.allDownloaded ? `Purge from ${isB2 ? 'Backblaze B2' : 'Cloud'}` : 'Purge Anyway (Offline Safe)'}
+                          {isBusy ? 'Purging...' : group.allDownloaded ? 'Purge from Google Drive Now' : 'Purge Anyway (Offline Safe)'}
                         </button>
                       )}
                     </div>

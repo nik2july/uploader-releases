@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Film, HardDrive, X } from 'lucide-react';
-import type { WorkTarget } from '../../../shared/contracts';
+import { Film, HardDrive, X, FolderSearch, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
+import type { WorkTarget, OfflineScanResult } from '../../../shared/contracts';
 import { saveManualRawData } from '../lib/studioRepository';
 
 export function ManualRawDataModal({ target, title, onClose, onSaved }: { target: WorkTarget; title: string; onClose: () => void; onSaved: () => void }): React.JSX.Element {
@@ -12,6 +12,33 @@ export function ManualRawDataModal({ target, title, onClose, onSaved }: { target
   const [photos, setPhotos] = useState('0');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scannedSummary, setScannedSummary] = useState<OfflineScanResult | null>(null);
+
+  async function handleScanFolder(): Promise<void> {
+    setIsScanning(true);
+    setError('');
+    try {
+      const res = await window.api.scanOfflineFolder(target);
+      if (!res) {
+        // User cancelled dialog
+        return;
+      }
+      setScannedSummary(res);
+      setDriveNotes(res.driveLabel);
+      if (res.photoCount > 0) {
+        setPhotos(String(res.photoCount));
+      }
+      if (res.hours > 0 || res.minutes > 0) {
+        setHours(String(res.hours));
+        setMinutes(String(res.minutes));
+      }
+    } catch (err: any) {
+      setError(err instanceof Error ? err.message : 'Could not scan folder.');
+    } finally {
+      setIsScanning(false);
+    }
+  }
 
   async function save(event: React.FormEvent): Promise<void> {
     event.preventDefault();
@@ -41,11 +68,11 @@ export function ManualRawDataModal({ target, title, onClose, onSaved }: { target
           <div>
             <h2 id="manual-raw-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {source === 'hard_drive' ? <HardDrive size={18} style={{ color: 'var(--burgundy)' }} /> : <Film size={18} style={{ color: 'var(--burgundy)' }} />}
-              Manual Raw-Data Intake
+              {source === 'hard_drive' ? 'Share Offline' : 'Raw-Data Link'}
             </h2>
-            <p>{title} · Log physical hard drive handover or client shared cloud link</p>
+            <p>{title} · {source === 'hard_drive' ? 'Scan hard drive folder or log offline handover' : 'Log shared cloud link'}</p>
           </div>
-          <button className="icon-button" onClick={onClose} disabled={busy} aria-label="Close">
+          <button className="icon-button" onClick={onClose} disabled={busy || isScanning} aria-label="Close">
             <X size={20} />
           </button>
         </header>
@@ -54,7 +81,7 @@ export function ManualRawDataModal({ target, title, onClose, onSaved }: { target
           <label>
             Intake Source
             <select value={source} onChange={e => setSource(e.target.value as 'hard_drive' | 'link')}>
-              <option value="hard_drive">Physical hard drive handover (In-house / local SSD)</option>
+              <option value="hard_drive">Share Offline (External Hard Drive / SSD Handover)</option>
               <option value="link">Shared cloud link (Google Drive, Dropbox, WeTransfer)</option>
             </select>
           </label>
@@ -74,13 +101,112 @@ export function ManualRawDataModal({ target, title, onClose, onSaved }: { target
 
           {source === 'hard_drive' && (
             <>
+              {/* Scan Folder Action */}
+              <div
+                style={{
+                  padding: '14px 16px',
+                  borderRadius: '12px',
+                  border: scannedSummary ? '1.5px solid #10b981' : '1.5px dashed var(--burgundy, #7a2e33)',
+                  backgroundColor: scannedSummary ? '#f0fdf4' : '#fdfaf6',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '10px'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {scannedSummary ? (
+                      <CheckCircle2 size={22} style={{ color: '#10b981', flexShrink: 0 }} />
+                    ) : (
+                      <FolderSearch size={22} style={{ color: 'var(--burgundy, #7a2e33)', flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: '700', color: scannedSummary ? '#065f46' : '#111417' }}>
+                        {scannedSummary ? 'Folder Scanned' : 'Scan Hard Drive Folder'}
+                      </div>
+                      <div style={{ fontSize: '11px', color: '#6b6660' }}>
+                        {scannedSummary
+                          ? scannedSummary.folderPath
+                          : 'Select the raw folder on your external drive/SSD to auto-calculate photos & videos'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleScanFolder()}
+                    disabled={isScanning || busy}
+                    style={{
+                      padding: '8px 16px',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      borderRadius: '8px',
+                      backgroundColor: scannedSummary ? '#ffffff' : 'var(--burgundy, #7a2e33)',
+                      color: scannedSummary ? '#111417' : '#ffffff',
+                      border: scannedSummary ? '1px solid #d4c1a3' : 'none',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
+                    }}
+                  >
+                    {isScanning ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Scanning folder…</span>
+                      </>
+                    ) : scannedSummary ? (
+                      <>
+                        <RefreshCw size={14} />
+                        <span>Scan Different Folder</span>
+                      </>
+                    ) : (
+                      <>
+                        <HardDrive size={14} />
+                        <span>Select & Scan Folder</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {scannedSummary && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                      gap: '8px',
+                      paddingTop: '8px',
+                      borderTop: '1px solid #bbf7d0'
+                    }}
+                  >
+                    {scannedSummary.photoCount > 0 && (
+                      <div style={{ fontSize: '12px', color: '#047857', fontWeight: '600' }}>
+                        📸 <strong>{scannedSummary.photoCount}</strong> photos
+                      </div>
+                    )}
+                    {(scannedSummary.hours > 0 || scannedSummary.minutes > 0 || scannedSummary.videoCount > 0) && (
+                      <div style={{ fontSize: '12px', color: '#047857', fontWeight: '600' }}>
+                        🎬 <strong>{scannedSummary.hours}h {scannedSummary.minutes}m</strong> ({scannedSummary.videoCount} clips)
+                      </div>
+                    )}
+                    <div style={{ fontSize: '12px', color: '#047857', fontWeight: '600' }}>
+                      💾 <strong>{scannedSummary.formattedSize}</strong> ({scannedSummary.fileCount} files)
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#047857', fontWeight: '600', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={scannedSummary.driveLabel}>
+                      🏷️ {scannedSummary.driveLabel}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <label>
                 Drive label / storage reference
                 <input
                   value={driveNotes}
                   onChange={event => setDriveNotes(event.target.value)}
                   placeholder="e.g. Samsung T7 2TB (Red) - In-House Desk #2"
-                  autoFocus
                 />
               </label>
 
@@ -127,9 +253,9 @@ export function ManualRawDataModal({ target, title, onClose, onSaved }: { target
 
           {error && <p className="error">{error}</p>}
           <div className="actions">
-            <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
-            <button className="primary" disabled={busy}>
-              {busy ? 'Saving…' : source === 'hard_drive' ? 'Save Hard Drive Details' : 'Save Raw-Data Link'}
+            <button type="button" onClick={onClose} disabled={busy || isScanning}>Cancel</button>
+            <button className="primary" disabled={busy || isScanning}>
+              {busy ? 'Saving…' : source === 'hard_drive' ? (scannedSummary ? 'Confirm & Move to Post Production' : 'Save Offline Share') : 'Save Raw-Data Link'}
             </button>
           </div>
         </form>

@@ -14,6 +14,7 @@ import {
 import type { ScanOptions, WorkTarget } from '../../../shared/contracts';
 import { useApp } from '../context/AppContext';
 import { createExtra } from '../lib/studioRepository';
+import { GoogleDriveRequiredModal } from './common/GoogleDriveRequiredModal';
 import type { TeamMember } from '../types';
 import type { FreelanceJob, FreelanceServiceType } from '../types/freelance';
 import { calculateDynamicDueDates } from '../utils/dynamicScheduling';
@@ -81,6 +82,8 @@ export function NewWorkModal({
 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showDriveModal, setShowDriveModal] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<WorkTarget | null>(null);
 
   // Deliverables roles (when adding deliverable to an internal client)
   const roles = useMemo(() => {
@@ -237,6 +240,14 @@ export function NewWorkModal({
             recipientPhone: selectedEditor?.phone,
             recipientEmail: selectedEditor?.email,
           };
+
+          const driveStatus = await window.api.driveStatus();
+          if (!driveStatus?.connected) {
+            setPendingTarget(target);
+            setShowDriveModal(true);
+            return;
+          }
+
           const scanId = await window.api.scan(
             options || { excludedBillingFolders: [], countPhotoPairsOnce: true },
             target
@@ -553,7 +564,7 @@ export function NewWorkModal({
                     onChange={e => setRawDataSource(e.target.value as typeof rawDataSource)}
                   >
                     <option value="later">Provide / upload raw data later (from project row)</option>
-                    <option value="scan_folder">Upload folder or files now via Backblaze B2 (Desktop App)</option>
+                    <option value="scan_folder">Upload folder or files now via Google Drive (Desktop App)</option>
                     <option value="hard_drive">Physical Hard Drive Handover (In-house / local SSD)</option>
                     <option value="link">Shared Cloud Link (Google Drive, Dropbox, WeTransfer, NAS)</option>
                   </select>
@@ -563,7 +574,7 @@ export function NewWorkModal({
                   <div className="drawer-card">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600 }}>
                       <FolderPlus size={15} style={{ color: 'var(--burgundy)' }} />
-                      Backblaze B2 Direct Cloud Upload
+                      Google Drive Direct Cloud Upload
                     </div>
                     <p style={{ margin: 0, fontSize: 12, color: 'var(--muted)' }}>
                       After project creation, the Desktop App file scanner will immediately open to select the folder.
@@ -683,7 +694,7 @@ export function NewWorkModal({
                 ? 'Creating…'
                 : freelance
                 ? rawDataSource === 'scan_folder'
-                  ? 'Create Project & Open B2 Scanner'
+                  ? 'Create Project & Open Scanner'
                   : rawDataSource === 'hard_drive'
                   ? 'Create Project (Hard Drive Handover)'
                   : 'Create Project'
@@ -692,6 +703,25 @@ export function NewWorkModal({
           </div>
         </form>
       </section>
+      <GoogleDriveRequiredModal
+        isOpen={showDriveModal}
+        onClose={() => {
+          setShowDriveModal(false);
+          setPendingTarget(null);
+          onClose();
+        }}
+        onConnected={async () => {
+          if (pendingTarget && onScanStarted) {
+            const scanId = await window.api.scan(
+              options || { excludedBillingFolders: [], countPhotoPairsOnce: true },
+              pendingTarget
+            );
+            if (scanId) onScanStarted(scanId);
+          }
+          setShowDriveModal(false);
+          onClose();
+        }}
+      />
     </div>
   );
 }

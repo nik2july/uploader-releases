@@ -82,19 +82,12 @@ export function TransferDetail({ job, onBack, refresh }: {
   }, [deliverable, freelanceJob, parsedTitleMinutes, target]);
 
   const [driveStatus, setDriveStatus] = useState<{ email?: string; connected?: boolean } | null>(null);
-  const [b2Status, setB2Status] = useState<{ bucketName?: string; connected?: boolean } | null>(null);
   useEffect(() => {
     void window.api.driveStatus().then(setDriveStatus).catch(() => {});
-    void window.api.b2Status().then(setB2Status).catch(() => {});
   }, []);
 
-  const configuredDest = studio.studioSettings?.uploader?.destination || 'drive';
-  const isB2 = job.driveAccount ? job.driveAccount.startsWith('B2:') : (job.link?.startsWith('b2://') || configuredDest === 'b2');
-  const cloudDestinationName = isB2 ? 'Backblaze B2' : 'Google Drive';
-
-  const cloudAccountLabel = isB2
-    ? (job.driveAccount?.replace(/^B2:/, '') || b2Status?.bucketName || 'B2')
-    : (job.driveAccount || driveStatus?.email || 'baawaray.raw@gmail.com');
+  const cloudDestinationName = 'Google Drive';
+  const cloudAccountLabel = job.driveAccount || driveStatus?.email || 'baawaray.raw@gmail.com';
 
   // null means "not typed in yet", so the rate card can still fill it once
   // Firestore answers — and clearing the box stays cleared.

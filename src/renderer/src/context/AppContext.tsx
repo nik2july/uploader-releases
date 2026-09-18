@@ -45,8 +45,10 @@ interface UploaderSettings {
   excludedBillingFolders?: string[];
   countPhotoPairsOnce?: boolean;
   keepAwake?: boolean;
-  /** Which cloud raw footage uploads to. Absent on installs that predate the choice. */
-  destination?: 'drive' | 'b2';
+  /** Which cloud raw footage uploads to. Hardened to Google Drive. */
+  destination?: 'drive';
+  sharedDriveId?: string;
+  sharedDriveLink?: string;
 }
 
 export interface AppContextType {
@@ -69,7 +71,7 @@ export interface AppContextType {
   advanceFreelanceJobStage: (jobId: string, stage: FreelanceJobStage, detail?: string) => Promise<void>;
   addFreelanceRevision: (
     jobId: string,
-    revisionData: { feedbackNotes: string; timecodes?: string; sharedWithEditor?: boolean }
+    revisionData: { feedbackNotes: string; timecodes?: string; sharedWithEditor?: boolean; revisionType?: 'internal' | 'client' }
   ) => Promise<void>;
   addFreelanceClientPayment: (
     jobId: string,
@@ -267,10 +269,6 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
           if (dbx?.refreshToken || dbx?.accessToken) {
             void window.api.connectDropbox(dbx).catch(err => console.warn('Dropbox connect error:', err));
           }
-          const b2 = data.studioSettings?.b2;
-          if (b2?.keyId && b2?.applicationKey && b2?.bucketName) {
-            void window.api.connectB2(b2).catch(err => console.warn('B2 connect error:', err));
-          }
         },
         fail
       )
@@ -346,9 +344,9 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
 
     const addFreelanceRevision = async (
       jobId: string,
-      revisionData: { feedbackNotes: string; timecodes?: string; sharedWithEditor?: boolean }
+      revisionData: { feedbackNotes: string; timecodes?: string; sharedWithEditor?: boolean; revisionType?: 'internal' | 'client' }
     ): Promise<void> => {
-      await logRevision(jobId, revisionData.feedbackNotes, revisionData.timecodes);
+      await logRevision(jobId, revisionData.feedbackNotes, revisionData.timecodes, revisionData.revisionType);
       if (revisionData.sharedWithEditor) {
         await markRevisionShared(jobId);
       }

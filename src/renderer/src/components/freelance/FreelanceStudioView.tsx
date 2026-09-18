@@ -7,6 +7,7 @@ import { resolvePostProductionServices } from '../../utils/postProductionService
 import { freelanceDueDate } from '../../utils/freelance';
 import { buildStudioAccount, buildStatementText } from '../../utils/freelanceAccount';
 import { formatInternational, whatsAppLink } from '../../utils/phone';
+import { copyToClipboard } from '../../utils/clipboard';
 import { FreelanceClientForm } from './FreelanceClientForm';
 import { NewFreelanceJobModal } from '../modals/NewFreelanceJobModal';
 import { FreelanceJobDetailModal } from '../modals/FreelanceJobDetailModal';
@@ -349,11 +350,11 @@ export const FreelanceStudioView: React.FC = () => {
    * to get it out, and it doubles as a chance to read the bill before it goes.
    */
   const handleCopyStatement = async () => {
-    try {
-      await navigator.clipboard.writeText(buildStatement());
+    const ok = await copyToClipboard(buildStatement());
+    if (ok) {
       setStatementCopied(true);
       window.setTimeout(() => setStatementCopied(false), 2500);
-    } catch {
+    } else {
       setStatementCopied(false);
     }
   };

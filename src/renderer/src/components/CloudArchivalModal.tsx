@@ -43,8 +43,7 @@ export function CloudArchivalModal({
   const summary = calculateCloudArchivalSummary(jobs);
 
   async function handlePurgeDrive(group: RawDataArchiveGroup): Promise<void> {
-    const isB2 = group.rawDataLink.startsWith('b2://') || group.rawDataLink.includes('backblazeb2.com');
-    const cloudName = isB2 ? 'Backblaze B2' : 'Google Drive';
+    const cloudName = 'Google Drive';
 
     const confirm = window.confirm(
       `Purge raw footage from ${cloudName}?\n\n` +
@@ -58,14 +57,8 @@ export function CloudArchivalModal({
     setBusyAction(`drive-${group.rawDataLink}`);
     setFeedbackMessage(null);
     try {
-      if (isB2) {
-        if (window.api?.deleteB2Folder) {
-          await window.api.deleteB2Folder(group.rawDataLink);
-        }
-      } else {
-        if (window.api?.deleteDriveFolder) {
-          await window.api.deleteDriveFolder(group.rawDataLink);
-        }
+      if (window.api?.deleteDriveFolder) {
+        await window.api.deleteDriveFolder(group.rawDataLink);
       }
       setPurgedLinks(prev => new Set(prev).add(group.rawDataLink));
       setFeedbackMessage({
@@ -203,7 +196,7 @@ export function CloudArchivalModal({
         >
           <ShieldCheck size={20} style={{ color: '#2f6b34', flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
-            <strong>Offline Hard Drive Protection Active:</strong> Original raw footage uploaded to Backblaze B2 exists only for editor downloads. Once downloaded, cloud copies can be purged after the 30-day archival window because master raw data is preserved offline on studio hard drives.
+            <strong>Offline Hard Drive Protection Active:</strong> Original raw footage uploaded to Google Drive exists only for editor downloads. Once downloaded, cloud copies can be purged after the 30-day archival window because master raw data is preserved offline on studio hard drives.
           </div>
         </div>
 
@@ -239,13 +232,14 @@ export function CloudArchivalModal({
           </div>
         </div>
 
+        {/* Feedback Message */}
         {feedbackMessage && (
           <div
             style={{
               padding: '10px 14px',
-              borderRadius: 10,
-              fontSize: 13,
+              borderRadius: 8,
               marginBottom: 14,
+              fontSize: 13,
               background:
                 feedbackMessage.type === 'success'
                   ? 'color-mix(in srgb, #2f6b34 12%, var(--panel))'
@@ -254,21 +248,16 @@ export function CloudArchivalModal({
               border: `1px solid ${feedbackMessage.type === 'success' ? '#2f6b34' : '#8c2b2b'}`,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'space-between'
+              gap: 8,
+              flexShrink: 0
             }}
           >
-            <span>{feedbackMessage.text}</span>
-            <button
-              onClick={() => setFeedbackMessage(null)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2 }}
-            >
-              <X size={14} />
-            </button>
+            {feedbackMessage.text}
           </div>
         )}
 
-        {/* Navigation Tabs */}
-        <div style={{ display: 'flex', gap: 10, borderBottom: '1px solid var(--line)', paddingBottom: 10, marginBottom: 16 }}>
+        {/* Tab Navigation */}
+        <div style={{ display: 'flex', gap: 10, borderBottom: '1px solid var(--line)', paddingBottom: 10, marginBottom: 14, flexShrink: 0 }}>
           <button
             onClick={() => setActiveTab('drive')}
             style={{
@@ -285,7 +274,7 @@ export function CloudArchivalModal({
             }}
           >
             <Cloud size={16} />
-            Backblaze B2 Raw Data ({summary.rawDataGroups.length})
+            Google Drive Raw Data ({summary.rawDataGroups.length})
           </button>
           <button
             onClick={() => setActiveTab('dropbox')}
@@ -321,7 +310,6 @@ export function CloudArchivalModal({
                   {summary.rawDataGroups.map((group, idx) => {
                     const isPurged = purgedLinks.has(group.rawDataLink);
                     const isBusy = busyAction === `drive-${group.rawDataLink}`;
-                    const isB2 = group.rawDataLink.startsWith('b2://') || group.rawDataLink.includes('backblazeb2.com');
 
                     let badgeColor = '#6c757d';
                     let badgeBg = 'color-mix(in srgb, #6c757d 12%, transparent)';
@@ -374,13 +362,13 @@ export function CloudArchivalModal({
                                 style={{
                                   fontSize: 11,
                                   fontWeight: 600,
-                                  color: isB2 ? '#c43d2e' : '#1a73e8',
-                                  background: isB2 ? 'color-mix(in srgb, #c43d2e 12%, transparent)' : 'color-mix(in srgb, #1a73e8 12%, transparent)',
+                                  color: '#1a73e8',
+                                  background: 'color-mix(in srgb, #1a73e8 12%, transparent)',
                                   padding: '2px 8px',
                                   borderRadius: 999
                                 }}
                               >
-                                {isB2 ? 'Backblaze B2' : 'Google Drive'}
+                                Google Drive
                               </span>
                               {isPurged && (
                                 <span
@@ -393,7 +381,7 @@ export function CloudArchivalModal({
                                     borderRadius: 999
                                   }}
                                 >
-                                  ✓ Purged from {isB2 ? 'Backblaze B2' : 'Cloud'}
+                                  ✓ Purged from Google Drive
                                 </span>
                               )}
                             </div>
@@ -429,7 +417,7 @@ export function CloudArchivalModal({
                               title="Delete folder from cloud storage to reclaim quota. (Offline hard drive copy remains safe)"
                             >
                               <Trash2 size={14} />
-                              {isBusy ? 'Purging...' : group.allDownloaded ? `Purge from ${isB2 ? 'Backblaze B2' : 'Cloud'} Now` : 'Purge Anyway (Offline Safe)'}
+                              {isBusy ? 'Purging...' : group.allDownloaded ? 'Purge from Google Drive Now' : 'Purge Anyway (Offline Safe)'}
                             </button>
                           )}
                         </div>

@@ -6,6 +6,7 @@ import { isDeliverablesTeamMember, isSalariedMember } from '../../utils/freelanc
 import { toWhatsAppNumber } from '../../utils/phone';
 import { getWhatsAppUrl } from '../../utils/whatsappShare';
 import { renderWhatsAppMessage } from '../../utils/whatsappTemplates';
+import { copyToClipboard } from '../../utils/clipboard';
 import {
   X,
   User,
@@ -143,11 +144,13 @@ export const AssignEditorPanel: React.FC<AssignEditorPanelProps> = ({
     setError('');
   };
 
-  const handleCopyLink = () => {
+  const handleCopyLink = async () => {
     if (!rawDataLink) return;
-    navigator.clipboard.writeText(rawDataLink);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    const ok = await copyToClipboard(rawDataLink);
+    if (ok) {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
   };
 
   const handleSaveAndAssign = async (sendWhatsApp: boolean = false) => {
@@ -335,7 +338,7 @@ export const AssignEditorPanel: React.FC<AssignEditorPanelProps> = ({
                 type="url"
                 value={rawDataLink}
                 onChange={e => setRawDataLink(e.target.value)}
-                placeholder="Paste Google Drive, Dropbox, or B2 footage link here..."
+                placeholder="Paste Google Drive or cloud footage link here..."
                 className="w-full px-3 py-1.5 text-xs font-mono rounded-xl border border-[#d4c1a3] bg-white text-[#111417] focus:outline-none focus:border-[#7a2e33]"
               />
             </div>

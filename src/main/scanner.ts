@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import ffprobe from 'ffprobe-static';
-import type { ScanSummary } from '../shared/contracts';
+import type { ScanSummary, OfflineScanResult } from '../shared/contracts';
 import { findSequences } from './sequences';
 import type { TransferStore } from './store';
 
@@ -127,4 +127,124 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
   store.patch(jobId, { rootPath: root, scan: result, status: result.readErrors ? 'needs_attention' : 'ready',
     error: result.readErrors ? 'Some folders or files could not be inventoried. Resolve permissions and scan again before uploading.' : undefined });
   changed();
+}
+
+/**
+ * Scans a folder on an external hard drive or local disk for offline sharing / hard drive handover.
+ * Calculates exact billable photo counts (with RAW+JPEG deduplication) or video duration,
+ * file sizes, and extracts volume information so users don't have to enter them manually.
+ */
+export async function scanOfflineDirectory(
+  rootPath: string,
+  serviceType?: string,
+  countPhotoPairsOnce: boolean = true
+): Promise<OfflineScanResult> {
+  const root = await fs.realpath(rootPath);
+  const isShortForm = serviceType === 'Short Form';
+  const isPhotoOnlyService = serviceType === 'Edited Photos' || serviceType === 'Album';
+  const isLongForm = serviceType === 'Long Form';
+  const probeVideoDuration = !isShortForm && !isPhotoOnlyService;
+
+  let totalPhotos = 0;
+  let billablePhotos = 0;
+  let totalVideos = 0;
+  let totalDurationSeconds = 0;
+  let totalBytes = 0;
+  let fileCount = 0;
+
+  const photoPairs = new Map<string, Set<string>>();
+
+  async function walk(dir: string): Promise<void> {
+    let entries: Dir;
+    try {
+      entries = await fs.opendir(dir);
+    } catch {
+      return;
+    }
+    for await (const entry of entries) {
+      if (entry.name === '.DS_Store' || entry.name.startsWith('._')) continue;
+      if (entry.isSymbolicLink()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const lower = entry.name.toLowerCase();
+        if (lower === 'proxies' || lower === 'proxy' || lower === 'exports') continue;
+        await walk(full);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      try {
+        const stat = await fs.stat(full);
+        const ext = path.extname(entry.name).toLowerCase();
+        const kind = PHOTO.has(ext) ? 'photo' : VIDEO.has(ext) ? 'video' : 'other';
+        fileCount++;
+        totalBytes += stat.size;
+
+        if (kind === 'photo') {
+          totalPhotos++;
+          if (!isShortForm && !isLongForm) {
+            billablePhotos++;
+            const relativePath = path.relative(root, full).split(path.sep).join('/');
+            const key = relativePath.slice(0, -ext.length);
+            const pair = photoPairs.get(key) ?? new Set<string>();
+            const wasPair = pair.has('raw') && pair.has('jpeg');
+            pair.add(RAW.has(ext) ? 'raw' : ['.jpg', '.jpeg'].includes(ext) ? 'jpeg' : ext);
+            if (!wasPair && pair.has('raw') && pair.has('jpeg')) {
+              if (countPhotoPairsOnce) billablePhotos--;
+            }
+            photoPairs.set(key, pair);
+          }
+        } else if (kind === 'video') {
+          totalVideos++;
+          if (probeVideoDuration) {
+            try {
+              const binary = ffprobe.path.replace(/\.asar\//, '.asar.unpacked/');
+              const { stdout } = await exec(binary, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', full], { timeout: 15000, maxBuffer: 1024 * 1024 });
+              const duration = Number(JSON.parse(stdout).format?.duration);
+              if (Number.isFinite(duration) && duration > 0) {
+                totalDurationSeconds += duration;
+              }
+            } catch {
+              // Ignore ffprobe failures on individual clips
+            }
+          }
+        }
+      } catch {
+        // Skip unreadable files
+      }
+    }
+  }
+
+  await walk(root);
+
+  // Extract drive volume label if under /Volumes/<VolumeName>
+  const folderName = path.basename(root);
+  let driveLabel = folderName;
+  const match = root.match(/^\/Volumes\/([^/]+)/);
+  if (match && match[1]) {
+    driveLabel = `${match[1]} · ${folderName}`;
+  } else {
+    driveLabel = `Local Drive · ${folderName}`;
+  }
+
+  const hours = Math.floor(totalDurationSeconds / 3600);
+  const minutes = Math.floor((totalDurationSeconds % 3600) / 60);
+
+  // Format bytes
+  const gb = totalBytes / (1024 * 1024 * 1024);
+  const formattedSize = gb >= 1 ? `${gb.toFixed(1)} GB` : `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`;
+
+  return {
+    folderPath: root,
+    folderName,
+    driveLabel,
+    photoCount: billablePhotos > 0 ? billablePhotos : totalPhotos,
+    totalPhotos,
+    videoCount: totalVideos,
+    totalDurationSeconds,
+    hours,
+    minutes,
+    totalBytes,
+    formattedSize,
+    fileCount
+  };
 }

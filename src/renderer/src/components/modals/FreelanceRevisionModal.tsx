@@ -7,6 +7,7 @@ import { renderWhatsAppMessage } from '../../utils/whatsappTemplates';
 import { FreelanceJob } from '../../types';
 import { addDaysToDate } from '../../utils/formatters';
 import { X, MessageSquare, Clock, Send, CheckCircle2, MessageCircle, AlertCircle } from 'lucide-react';
+import { AudioRevisionRecorder } from '../common/AudioRevisionRecorder';
 
 interface FreelanceRevisionModalProps {
   isOpen: boolean;
@@ -49,6 +50,7 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
           feedbackNotes: `[Internal Studio Review] ${feedbackNotes.trim()}`,
           timecodes: timecodes.trim() || undefined,
           sharedWithEditor: true,
+          revisionType: 'internal',
         });
         await advanceFreelanceJobStage(job.id, 'internal_changes', `Internal changes requested by studio: ${feedbackNotes.trim().slice(0, 80)}`);
       } else {
@@ -56,6 +58,7 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
           feedbackNotes: feedbackNotes.trim(),
           timecodes: timecodes.trim() || undefined,
           sharedWithEditor: sharedImmediately,
+          revisionType: 'client',
         });
       }
 
@@ -144,6 +147,20 @@ export const FreelanceRevisionModal: React.FC<FreelanceRevisionModalProps> = ({
               </div>
             </div>
           )}
+
+          {/* Audio Recording & Gemini AI Extraction */}
+          <AudioRevisionRecorder
+            jobTitle={job.title}
+            clientName={job.clientName}
+            serviceType={job.serviceType}
+            rawTextNotes={feedbackNotes}
+            onExtracted={({ points, timecodes: extTimecodes }) => {
+              setFeedbackNotes(prev => (prev.trim() ? `${prev.trim()}\n\n${points}` : points));
+              if (extTimecodes) {
+                setTimecodes(prev => (prev.trim() ? `${prev.trim()}, ${extTimecodes}` : extTimecodes));
+              }
+            }}
+          />
 
           {/* Feedback Notes */}
           <div>

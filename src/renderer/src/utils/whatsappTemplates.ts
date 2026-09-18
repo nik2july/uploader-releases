@@ -4,6 +4,8 @@ export type WhatsAppTemplateId =
   | 'client_doubt'
   | 'client_final'
   | 'client_payment_reminder'
+  | 'client_album_selection'
+  | 'client_frame_selection'
   | 'editor_assign'
   | 'editor_extra_data'
   | 'editor_revisions';
@@ -141,6 +143,72 @@ Kindly arrange the transfer at your convenience. Thank you!
       { key: 'totalFee', label: 'Total Fee', description: 'Agreed client charge' },
       { key: 'paidAmount', label: 'Amount Paid', description: 'Amount collected so far' },
       { key: 'balance', label: 'Balance Due', description: 'Remaining amount due' },
+      { key: 'studioName', label: 'Studio Name', description: 'Your studio brand name' },
+    ],
+  },
+  {
+    id: 'client_album_selection',
+    name: 'Album Photo Selection Request',
+    category: 'client',
+    description: 'Sent to request photo selection for wedding album design with sheet formula (Sheets × 5 = Photos).',
+    defaultTemplate: `*BAAWARAY FILMS · Wedding Album Photo Selection*
+
+Hello {clientName},
+We are excited to begin designing your wedding album for *{projectName}*! 📖✨
+
+To create your album layout, we need your selected photos:
+• *Album Specifications:* {sheetsCount} Sheets
+• *Photos Required:* *{photosRequired} Photos* (Calculated as ~5 photos per sheet)
+
+📱 *How to Select in Photo Sharing App:*
+1. Open your online gallery / photo sharing app.
+2. Tap the ⭐ *Star* icon on your favorite photos to select them for your album.
+3. Aim for *{photosRequired} photos* so all your key moments, family rituals, and portraits are covered.
+
+{?link}🔗 *Gallery Link:* {link}
+{/link}Please complete your selection as soon as possible so our design team can craft the album layout without delay! 🙏
+
+Warm regards,
+— {studioName}`,
+    variables: [
+      { key: 'clientName', label: 'Client Name', description: 'Name of the client / couple' },
+      { key: 'projectName', label: 'Project Name', description: 'Project title' },
+      { key: 'sheetsCount', label: 'Sheets Count', description: 'Number of album sheets (e.g. 40)' },
+      { key: 'photosRequired', label: 'Photos Required', description: 'Total photos needed (Sheets × 5, e.g. 200)' },
+      { key: 'link', label: 'Gallery Link', description: 'Photo sharing app or gallery URL' },
+      { key: 'studioName', label: 'Studio Name', description: 'Your studio brand name' },
+    ],
+  },
+  {
+    id: 'client_frame_selection',
+    name: 'Wall Frame Photo Selection Request',
+    category: 'client',
+    description: 'Sent to request photo selection for wall frames with screenshot sharing instructions.',
+    defaultTemplate: `*BAAWARAY FILMS · Wall Frame Photo Selection*
+
+Hello {clientName},
+We are getting ready to print and assemble your premium wall frames for *{projectName}*! 🖼️✨
+
+We need your final photo selection for *{frameCount} Wall Frames*:
+{?frameSize}• *Frame Size:* {frameSize}
+{/frameSize}• *Quantity:* {frameCount} Frames
+
+📱 *How to Share Your Selection:*
+1. Open your photo sharing app / gallery.
+2. Pick your top *{frameCount} favorite photos* that you would love to display on your wall.
+3. Take a *screenshot* of each selected photo and share them directly here on this WhatsApp chat.
+
+{?link}🔗 *Gallery Link:* {link}
+{/link}Please share the {frameCount} screenshots as soon as possible so our printing team can begin fabrication! 🙏
+
+Warm regards,
+— {studioName}`,
+    variables: [
+      { key: 'clientName', label: 'Client Name', description: 'Name of the client / couple' },
+      { key: 'projectName', label: 'Project Name', description: 'Project title' },
+      { key: 'frameCount', label: 'Frame Count', description: 'Number of frames to produce (e.g. 4)' },
+      { key: 'frameSize', label: 'Frame Size', description: 'Size of the frame (e.g. 20 × 30 Inches)' },
+      { key: 'link', label: 'Gallery Link', description: 'Photo sharing app or gallery URL' },
       { key: 'studioName', label: 'Studio Name', description: 'Your studio brand name' },
     ],
   },

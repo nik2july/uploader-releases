@@ -77,7 +77,7 @@ export function UpdateBanner(): React.JSX.Element | null {
           : stage === 'downloading'
           ? `Downloading… ${percent}%`
           : update.packageUrl
-          ? 'Install it without leaving the app. Your transfers, Drive and Backblaze connections are kept.'
+          ? 'Install it without leaving the app. Your transfers, Drive and Dropbox connections are kept.'
           : 'Download it, then drag it into Applications over the current app. Your transfers and Drive connection are kept.'}
         {failed && <><br/><span className="error">{failed} You can still use Download to install it by hand.</span></>}
       </span>

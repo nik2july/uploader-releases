@@ -65,9 +65,7 @@ export function ShareActions({ job, refresh }: { job: Transfer; refresh: () => P
         <div className="panel" style={{ background: 'var(--paper)', border: 0, marginTop: 4 }}>
           <h3><Share2 size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Cloud Footage Package</h3>
           <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            {job.link?.startsWith('b2://') || job.driveAccount?.startsWith('B2:')
-              ? 'Uploaded directly to Backblaze B2. Assigned editors download this raw footage bundle immediately in their Studio OS Desktop App.'
-              : 'Package uploaded and synchronized. Assigned editors download raw footage directly in their Studio OS Desktop App.'}
+            Package uploaded and synchronized to Google Drive. Assigned editors download raw footage directly in their Studio OS Desktop App.
           </p>
         </div>
       )}

@@ -88,6 +88,8 @@ export interface FreelanceRevision {
   editorFeedbackDate?: string;
   /** Whether this revision was an internal studio check or client-facing review. */
   revisionType?: 'client' | 'internal';
+  /** Attached audio voice note URL (recorded or uploaded). */
+  audioRecordingUrl?: string;
 }
 
 export interface FreelanceDoubt {
@@ -185,6 +187,9 @@ export interface FreelanceJob {
 
   // Client Details
   clientName: string;
+  coupleName?: string;
+  couple?: string;
+  musicPreference?: string;
   clientPhone: string;
   clientEmail?: string;
   clientOrganization?: string;

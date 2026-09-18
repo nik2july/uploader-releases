@@ -1,26 +1,21 @@
 import { useEffect, useState } from 'react';
-import type { B2Status, DriveStatus } from '../../../shared/contracts';
+import type { DriveStatus } from '../../../shared/contracts';
 import { useApp } from '../context/AppContext';
-import { saveUploaderSettings, saveDropboxSettings, saveB2Settings } from '../lib/studioRepository';
+import { saveUploaderSettings, saveDropboxSettings } from '../lib/studioRepository';
 import { auth } from '../lib/auth';
+import { extractDriveFolderId } from '../utils/cloudArchival';
 export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refresh: () => Promise<void> }) {
   const { studioSettings, currentUser } = useApp();
   const defaults = studioSettings?.uploader;
   const dbxConfig = studioSettings?.dropbox;
-  const b2Config = studioSettings?.b2;
   const [dbxKey, setDbxKey] = useState(dbxConfig?.appKey ?? '');
   const [dbxSecret, setDbxSecret] = useState(dbxConfig?.appSecret ?? '');
   const [dbxToken, setDbxToken] = useState(dbxConfig?.refreshToken ?? '');
-  const [b2KeyId, setB2KeyId] = useState(b2Config?.keyId ?? '');
-  const [b2AppKey, setB2AppKey] = useState(b2Config?.applicationKey ?? '');
-  const [b2BucketName, setB2BucketName] = useState(b2Config?.bucketName ?? '');
-  const [b2Endpoint, setB2Endpoint] = useState(b2Config?.endpoint ?? '');
-  const [b2Status, setB2Status] = useState<B2Status | null>(null);
+  const [sharedDriveInput, setSharedDriveInput] = useState(defaults?.sharedDriveLink || defaults?.sharedDriveId || '');
   const [keep, setKeep] = useState(defaults?.keepPercentDefault ?? 20), [sheets, setSheets] = useState(defaults?.photosPerSheet ?? 5);
   const [exclusions, setExclusions] = useState((defaults?.excludedBillingFolders ?? ['Proxies', 'Proxy']).join(', '));
   const [pairs, setPairs] = useState(defaults?.countPhotoPairsOnce ?? true);
   const [awake, setAwake] = useState(defaults?.keepAwake ?? false);
-  const [dest, setDest] = useState<'drive' | 'b2'>(defaults?.destination ?? 'b2');
   // Which build this Mac is actually running. The main process is the only
   // thing that knows, and "am I on the new one yet?" is otherwise a trip
   // through the About panel.
@@ -35,23 +30,24 @@ export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refr
     }
   }, [dbxConfig]);
   useEffect(() => {
-    if (b2Config) {
-      if (b2Config.keyId) setB2KeyId(b2Config.keyId);
-      if (b2Config.applicationKey) setB2AppKey(b2Config.applicationKey);
-      if (b2Config.bucketName) setB2BucketName(b2Config.bucketName);
-      if (b2Config.endpoint) setB2Endpoint(b2Config.endpoint);
+    if (defaults?.sharedDriveLink || defaults?.sharedDriveId) {
+      setSharedDriveInput(defaults.sharedDriveLink || defaults.sharedDriveId || '');
     }
-    if (window.api?.b2Status) {
-      void window.api.b2Status().then(setB2Status).catch(() => {});
-    }
-  }, [b2Config]);
-  useEffect(() => { if (defaults?.destination) setDest(defaults.destination); }, [defaults?.destination]);
+  }, [defaults?.sharedDriveLink, defaults?.sharedDriveId]);
+
+  const activeSharedDriveId = extractDriveFolderId(sharedDriveInput.trim()) || (sharedDriveInput.trim().startsWith('0A') ? sharedDriveInput.trim() : undefined);
+
   /** The uploader document is written whole, so every save carries the current defaults. */
-  function uploaderPayload(overrides: Partial<{ destination: 'drive' | 'b2' }> = {}) {
+  function uploaderPayload(overrides: Partial<{ destination?: 'drive'; sharedDriveId?: string; sharedDriveLink?: string }> = {}) {
+    const rawInput = sharedDriveInput.trim();
+    const driveId = extractDriveFolderId(rawInput) || (rawInput.startsWith('0A') ? rawInput : undefined);
     return {
       keepPercentDefault: keep, photosPerSheet: sheets,
       excludedBillingFolders: exclusions.split(',').map(t => t.trim()).filter(Boolean),
-      countPhotoPairsOnce: pairs, keepAwake: awake, destination: dest, ...overrides
+      countPhotoPairsOnce: pairs, keepAwake: awake, destination: 'drive' as const,
+      sharedDriveId: driveId || undefined,
+      sharedDriveLink: rawInput || undefined,
+      ...overrides
     };
   }
   async function run(fn: () => Promise<unknown>, success: string): Promise<void> {
@@ -60,37 +56,6 @@ export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refr
   }
   return (
     <div className="settings-grid">
-      <section className="panel">
-        <span className="eyebrow">RAW FOOTAGE DESTINATION</span>
-        <h2>Where raw footage uploads</h2>
-        <p className="muted">
-          Every raw-footage transfer from this app goes to the cloud you pick here. Transfers already
-          finished keep their existing links and stay downloadable; only new and resumed uploads move.
-          Changing this pauses anything currently uploading so nothing is split across two clouds.
-        </p>
-        <label className="check-label">
-          <input type="radio" name="upload-destination" checked={dest === 'drive'} onChange={() => setDest('drive')}/>
-          Google Drive {drive?.connected ? `— connected as ${drive.email}` : '— not connected yet'}
-        </label>
-        <label className="check-label">
-          <input type="radio" name="upload-destination" checked={dest === 'b2'} onChange={() => setDest('b2')}/>
-          Backblaze B2 {b2Status?.connected || b2Config?.keyId ? `— bucket ${b2Config?.bucketName || b2Status?.bucketName}` : '— not connected yet'}
-        </label>
-        {dest === 'drive' && !drive?.connected && (
-          <p className="notice">Connect a Google account below before starting a transfer.</p>
-        )}
-        {dest === 'drive' && drive?.connected && (
-          <p className="success">New raw-footage uploads will go to Google Drive.</p>
-        )}
-        <div className="actions">
-          <button className="primary" disabled={busy || dest === (defaults?.destination ?? 'b2')} onClick={() => void run(async () => {
-            await saveUploaderSettings(uploaderPayload({ destination: dest }));
-            await window.api.setUploadDestination(dest);
-          }, dest === 'drive' ? 'Raw footage now uploads to Google Drive.' : 'Raw footage now uploads to Backblaze B2.')}>
-            {busy ? 'Saving…' : 'Save destination'}
-          </button>
-        </div>
-      </section>
 
       <section className="panel">
         <span className="eyebrow">GOOGLE DRIVE STORAGE</span>
@@ -113,6 +78,49 @@ export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refr
           <p className="notice">One-time per Mac: sign in with the studio Google account in your browser.</p>
         )}
         {drive?.error && <p className="error">{drive.error}</p>}
+        <div style={{ margin: '16px 0', padding: '14px', background: 'rgba(255, 255, 255, 0.04)', borderRadius: 8, border: '1px solid var(--line)' }}>
+          <label style={{ display: 'block', fontWeight: 600, marginBottom: 6, fontSize: 13, color: 'var(--ink)' }}>
+            Google Workspace Shared Drive (Shoot Ingest Destination)
+          </label>
+          <input
+            value={sharedDriveInput}
+            onChange={e => setSharedDriveInput(e.target.value)}
+            placeholder="Paste Shared Drive link or folder ID (e.g. https://drive.google.com/drive/folders/0AB...)"
+            style={{ width: '100%', boxSizing: 'border-box', marginBottom: 8 }}
+          />
+          {activeSharedDriveId ? (
+            <p className="success" style={{ margin: '4px 0 8px 0', fontSize: 12 }}>
+              Active Shared Drive: <strong>{activeSharedDriveId}</strong> (All raw-footage uploads will route directly here)
+            </p>
+          ) : (
+            <p className="muted" style={{ margin: '4px 0 8px 0', fontSize: 12 }}>
+              Paste your Google Workspace Shared Drive link above so raw-footage uploads land inside your team Shared Drive instead of personal My Drive.
+            </p>
+          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => void run(async () => {
+                const payload = uploaderPayload();
+                await saveUploaderSettings(payload);
+                if (payload.sharedDriveId && window.api?.setSharedDriveId) {
+                  await window.api.setSharedDriveId(payload.sharedDriveId);
+                }
+              }, 'Shared Drive settings saved.')}
+            >
+              {busy ? 'Saving…' : 'Save Shared Drive'}
+            </button>
+            {activeSharedDriveId && (
+              <button
+                className="text-button"
+                onClick={() => void window.api.openExternal(sharedDriveInput.startsWith('http') ? sharedDriveInput : `https://drive.google.com/drive/folders/${activeSharedDriveId}`)}
+              >
+                Open Shared Drive
+              </button>
+            )}
+          </div>
+        </div>
         <details style={{ margin: '14px 0', fontSize: 13 }}>
           <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--burgundy)' }}>Before you switch: Drive storage and daily limits</summary>
           <ul style={{ paddingLeft: 20, lineHeight: 1.6, margin: '8px 0', color: 'var(--ink)' }}>
@@ -131,63 +139,6 @@ export function UploaderSettings({ drive, refresh }: { drive?: DriveStatus; refr
           {drive?.connected && <button disabled={busy} onClick={() => void run(async () => {
             await window.api.disconnectDrive();
           }, 'Google Drive disconnected. Uploads in progress were paused.')}>Disconnect</button>}
-        </div>
-      </section>
-
-      <section className="panel">
-        <span className="eyebrow">BACKBLAZE B2 STORAGE</span>
-        <h2>Backblaze B2 Cloud Storage (Raw Footage)</h2>
-        <p>
-          {b2Status?.connected || b2Config?.keyId
-            ? `Connected to B2 Bucket "${b2Config?.bucketName || b2Status?.bucketName}".`
-            : 'Connect Backblaze B2 for unlimited fast raw footage sharing.'}
-        </p>
-        <p className="muted">
-          Backblaze B2 provides direct, high-speed raw footage downloads. Freelance editors can download raw footage straight through the desktop app without needing any Google sign-in or Backblaze accounts.
-        </p>
-        {b2Status?.connected ? (
-          <p className="success">Backblaze B2 is connected and active. Direct high-speed raw downloads are enabled.</p>
-        ) : (
-          <p className="notice">One-time studio setup: Enter your Backblaze B2 Application Key ID, Application Key, and Bucket Name.</p>
-        )}
-        <details style={{ margin: '14px 0', fontSize: 13 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--burgundy)' }}>Step-by-step: How to connect Backblaze B2 in 2 minutes</summary>
-          <ol style={{ paddingLeft: 20, lineHeight: 1.6, margin: '8px 0', color: 'var(--ink)' }}>
-            <li>Sign in to your Backblaze account at <code>backblaze.com</code>.</li>
-            <li>Under <strong>B2 Cloud Storage</strong>, click <strong>Buckets</strong> and copy your bucket name (e.g. <code>baawaray.raw</code>).</li>
-            <li>Go to <strong>Application Keys</strong> on the left menu and click <strong>Add a New Application Key</strong>.</li>
-            <li>Name your key (e.g. <code>BaawarayStudioApp</code>), select access to your bucket, and ensure <strong>Read and Write</strong> access is enabled.</li>
-            <li>Copy the <strong>keyID</strong> and <strong>applicationKey</strong> (shown once upon creation) and paste them below along with your <strong>Bucket Name</strong>.</li>
-            <li>Click <strong>Connect Backblaze B2</strong>. The app will verify connection instantly.</li>
-          </ol>
-        </details>
-        <div className="field-row">
-          <label>Key ID (keyID)<input value={b2KeyId} onChange={e => setB2KeyId(e.target.value)} placeholder="e.g. 005a1b2c3d4e..." autoComplete="off"/></label>
-          <label>Bucket Name<input value={b2BucketName} onChange={e => setB2BucketName(e.target.value)} placeholder="e.g. baawaray.raw (from Buckets page)" autoComplete="off"/></label>
-        </div>
-        <label>Application Key (applicationKey)<input type="password" value={b2AppKey} onChange={e => setB2AppKey(e.target.value)} placeholder="Paste application key here" autoComplete="new-password"/></label>
-        <div className="actions">
-          <button className="primary" disabled={busy || !b2KeyId || !b2AppKey} onClick={() => void run(async () => {
-            const payload = { keyId: b2KeyId.trim(), applicationKey: b2AppKey.trim(), bucketName: b2BucketName.trim(), endpoint: b2Endpoint.trim() };
-            const res = window.api?.connectB2
-              ? await window.api.connectB2(payload)
-              : { connected: true, bucketName: payload.bucketName };
-            const savedPayload = { ...payload, bucketName: res.bucketName || payload.bucketName };
-            await saveB2Settings(savedPayload);
-            if (res.bucketName) setB2BucketName(res.bucketName);
-            setB2Status(res);
-          }, 'Backblaze B2 connected successfully!')}>{busy ? 'Saving…' : (b2Status?.connected || b2Config?.keyId) ? 'Update B2 Connection' : 'Connect Backblaze B2'}</button>
-          <button className="text-button" onClick={() => void window.api.openExternal('https://secure.backblaze.com/b2_buckets.htm')}>Open Backblaze Console</button>
-          {(b2Status?.connected || b2Config?.keyId) && <button disabled={busy} onClick={() => void run(async () => {
-            await saveB2Settings({ keyId: '', applicationKey: '', bucketName: '' });
-            if (window.api?.disconnectB2) {
-              await window.api.disconnectB2();
-            }
-            setB2KeyId('');
-            setB2AppKey('');
-            setB2BucketName('');
-            setB2Status({ connected: false });
-          }, 'Backblaze B2 disconnected.')}>Disconnect</button>}
         </div>
       </section>
 

@@ -7,6 +7,7 @@ import { setupIpcHandlers, allowedExternal } from './ipc'
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
+    title: 'Baawaray Films',
     width: 1280,
     height: 840,
     minWidth: 1000,
@@ -31,8 +32,18 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  mainWindow.webContents.on('will-navigate', event => event.preventDefault())
-  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  mainWindow.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
+    if (permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
+      return callback(true)
+    }
+    callback(false)
+  })
+  mainWindow.webContents.session.setPermissionCheckHandler((_contents, permission) => {
+    if (permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
+      return true
+    }
+    return false
+  })
   mainWindow.webContents.on('console-message', (_, level, message) => {
     console.log(`[Renderer:${level}] ${message}`)
   })

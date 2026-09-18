@@ -49,12 +49,17 @@ import {
   Send,
   Check,
   Trash2,
+  UploadCloud,
 } from 'lucide-react';
 import { AssignEditorPanel } from './AssignEditorPanel';
 import { NewFreelanceJobModal } from '../modals/NewFreelanceJobModal';
 import { FreelanceJobDetailModal } from '../modals/FreelanceJobDetailModal';
 import { FreelancePaymentModal } from '../modals/FreelancePaymentModal';
 import { FreelanceRevisionModal } from '../modals/FreelanceRevisionModal';
+import { ManualRawDataModal } from '../ManualRawDataModal';
+import { EditDeliverableModal } from '../modals/EditDeliverableModal';
+import { useTransfers } from '../../hooks/useTransfers';
+import { formatBytes, progressFraction } from '../../utils/uploadFormat';
 
 /**
  * The freelance board, with client deliverables as one of its sections.
@@ -80,7 +85,9 @@ type PendingRow = FreelanceJob & {
 export const FreelanceDepartmentView: React.FC<{
   /** Starts a scan for a deliverable that has no footage yet. Owned by the dashboard. */
   onUploadForDeliverable?: (target: WorkTarget) => void;
-}> = ({ onUploadForDeliverable }) => {
+  onViewTransfer?: (transferId: string) => void;
+  onGoToQueue?: () => void;
+}> = ({ onUploadForDeliverable, onViewTransfer, onGoToQueue }) => {
   const {
 
     freelanceJobs,
@@ -102,9 +109,18 @@ export const FreelanceDepartmentView: React.FC<{
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filter, setFilter] = useState<string>('all');
+  const [selectedEditor, setSelectedEditor] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('due_asc');
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'kanban'>('grid');
   const [attachingId, setAttachingId] = useState<string | null>(null);
+
+  const { transfers } = useTransfers();
+
+  const isDataPending = (job: FreelanceJob | PendingRow) => {
+    if ((job as PendingRow).pendingDeliverable) return true;
+    if (job.stage === 'completed') return false;
+    return (!job.rawDataLink || !job.rawDataLink.trim()) && job.rawDataSource !== 'hard_drive';
+  };
   // The studio's own work belongs on the roster whether or not a deliverable has
   // been filed yet, so the board guarantees it rather than waiting for the first
   // send to create it.
@@ -125,6 +141,81 @@ export const FreelanceDepartmentView: React.FC<{
     job: FreelanceJob | null;
     revisionType: 'client' | 'internal';
   }>({ isOpen: false, job: null, revisionType: 'client' });
+  const [manualRawTarget, setManualRawTarget] = useState<{ target: WorkTarget; title: string } | null>(null);
+  // Edit Deliverable Modal State (for pending deliverables)
+  const [editingDeliverableState, setEditingDeliverableState] = useState<{
+    isOpen: boolean;
+    clientId: string;
+    clientName: string;
+    deliverable: ClientDeliverable | null;
+  }>({
+    isOpen: false,
+    clientId: '',
+    clientName: '',
+    deliverable: null,
+  });
+
+  const handleEditPendingDeliverable = (pending: NonNullable<PendingRow['pendingDeliverable']>) => {
+    if (!pending.deliverable) return;
+    setEditingDeliverableState({
+      isOpen: true,
+      clientId: pending.target.clientId || '',
+      clientName: pending.target.clientName || pending.client?.couple || pending.client?.name || 'Client',
+      deliverable: pending.deliverable,
+    });
+  };
+
+  const handleDirectWhatsAppSelectionFollowUp = (
+    job: FreelanceJob,
+    pending: NonNullable<PendingRow['pendingDeliverable']>
+  ) => {
+    const deliverable = pending.deliverable;
+    const deliverableDesc = `${job.title} ${job.serviceType} ${deliverable?.title || ''}`.toLowerCase();
+    const isAlbum = deliverableDesc.includes('album') || deliverableDesc.includes('sheet');
+
+    let messageText = '';
+    const studioName = studioSettings?.studioName || 'BAAWARAY FILMS';
+    const clientDisplayName = job.clientName || job.title || 'Client';
+    const projectDisplayName = job.title || job.clientName || 'Wedding Project';
+
+    if (isAlbum) {
+      const match = `${deliverable?.title || ''} ${job.serviceType}`.match(/(\d+)\s*(?:sheet|sh|p)/i);
+      const sheetsCount = deliverable?.billableQuantity || (match && match[1] ? Number(match[1]) : 40);
+      const photosRequired = sheetsCount * 5;
+
+      messageText = renderWhatsAppMessage(
+        'client_album_selection',
+        {
+          clientName: clientDisplayName,
+          projectName: projectDisplayName,
+          sheetsCount,
+          photosRequired,
+          link: deliverable?.rawDataLink || '',
+        },
+        studioName
+      );
+    } else {
+      const match = `${deliverable?.title || ''} ${job.serviceType}`.match(/(\d+\s*[x×]\s*\d+\s*(?:inches|inch|in)?)/i);
+      const frameSize = match && match[1] ? match[1].trim() : '20 × 30 Inches';
+      const frameCount = deliverable?.billableQuantity || 4;
+
+      messageText = renderWhatsAppMessage(
+        'client_frame_selection',
+        {
+          clientName: clientDisplayName,
+          projectName: projectDisplayName,
+          frameCount,
+          frameSize,
+          link: deliverable?.rawDataLink || '',
+        },
+        studioName
+      );
+    }
+
+    const phone = job.clientPhone || pending.client?.phone || '';
+    const url = getWhatsAppUrl(phone, messageText);
+    window.open(url, '_blank');
+  };
 
   // Raw footage & hard drive data modal state
   const [rawLinkPromptJob, setRawLinkPromptJob] = useState<FreelanceJob | null>(null);
@@ -267,6 +358,37 @@ export const FreelanceDepartmentView: React.FC<{
     return job.clientName;
   };
 
+  // Dynamically compute editors allotted to active jobs and unassigned count
+  const allottedEditors = useMemo(() => {
+    const counts = new Map<string, number>();
+    let unassigned = 0;
+
+    freelanceJobs.forEach(j => {
+      if (j.stage === 'completed') return;
+      const name = j.editorName?.trim();
+      if (!name || name === 'Unassigned' || name.startsWith('⚠️')) {
+        unassigned++;
+      } else {
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+    });
+
+    pendingDeliverables.forEach(p => {
+      const name = p.editorName?.trim();
+      if (!name || name === 'Unassigned' || name.startsWith('⚠️')) {
+        unassigned++;
+      } else {
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+    });
+
+    const list = Array.from(counts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+    return { list, unassigned };
+  }, [freelanceJobs, pendingDeliverables]);
+
   const filteredJobs = useMemo(() => {
     // The studio's own pending work sits first: it is the work that cannot start
     // until someone does something about it.
@@ -290,9 +412,30 @@ export const FreelanceDepartmentView: React.FC<{
         }
       }
 
+      // Filter: Allotted Team Member (selectedEditor dropdown or filter=editor:...)
+      const activeEditorFilter = selectedEditor !== 'all'
+        ? selectedEditor
+        : filter.startsWith('editor:')
+        ? filter.slice('editor:'.length)
+        : null;
+
+      if (activeEditorFilter) {
+        const name = job.editorName?.trim() || '';
+        if (activeEditorFilter === 'unassigned') {
+          if (name && name !== 'Unassigned' && !name.startsWith('⚠️')) return false;
+        } else {
+          if (name.toLowerCase() !== activeEditorFilter.toLowerCase()) return false;
+        }
+      }
+
       // Filter: Unassigned
       if (filter === 'unassigned') {
         return !job.editorName || job.editorName.trim() === '';
+      }
+
+      // Filter: Data Pending
+      if (filter === 'data_pending') {
+        return isDataPending(job);
       }
 
       // If pending deliverable (awaiting footage):
@@ -383,12 +526,17 @@ export const FreelanceDepartmentView: React.FC<{
     });
 
     return result;
-  }, [pendingDeliverables, freelanceJobs, searchQuery, filter, sortBy, clients, freelanceJobEditorCost]);
+  }, [pendingDeliverables, freelanceJobs, searchQuery, filter, selectedEditor, sortBy, clients, freelanceJobEditorCost]);
 
   // Stage & filter counts
   const stageCounts = useMemo(() => {
     const unassignedPending = pendingDeliverables.length;
     const unassignedReal = freelanceJobs.filter(j => !j.editorName || j.editorName.trim() === '').length;
+    const dataPendingCount =
+      pendingDeliverables.length +
+      freelanceJobs.filter(
+        j => j.stage !== 'completed' && (!j.rawDataLink || !j.rawDataLink.trim()) && j.rawDataSource !== 'hard_drive'
+      ).length;
     const overduePending = pendingDeliverables.filter(p => {
       if (!p.dueDate) return false;
       const s = getDueDateStatus(p.dueDate);
@@ -402,6 +550,7 @@ export const FreelanceDepartmentView: React.FC<{
     return {
       all: freelanceJobs.length + pendingDeliverables.length,
       unassigned: unassignedReal + unassignedPending,
+      data_pending: dataPendingCount,
       active: freelanceJobs.filter(j => j.stage !== 'completed').length + pendingDeliverables.length,
       data_received: freelanceJobs.filter(j => j.stage === 'data_received').length,
       sent_to_editor: freelanceJobs.filter(j => j.stage === 'sent_to_editor').length,
@@ -1112,6 +1261,7 @@ export const FreelanceDepartmentView: React.FC<{
               >
                 <option value="all">All Jobs ({stageCounts.all})</option>
                 <option value="unassigned">⚠️ Unassigned ({stageCounts.unassigned})</option>
+                <option value="data_pending">⏳ Data Pending ({stageCounts.data_pending})</option>
                 <option disabled className="text-gray-400 font-normal">── Stages ──</option>
                 <option value="active">In Progress ({stageCounts.active})</option>
                 <option value="data_received">Data Received ({stageCounts.data_received})</option>
@@ -1125,6 +1275,38 @@ export const FreelanceDepartmentView: React.FC<{
                 <option value="client_due">Client Payment Due ({stageCounts.client_due})</option>
                 <option value="editor_due">Editor Payout Pending ({stageCounts.editor_due})</option>
                 <option value="overdue">Urgent / Due Soon ({stageCounts.overdue})</option>
+                {allottedEditors.list.length > 0 && (
+                  <>
+                    <option disabled className="text-gray-400 font-normal">── Team Member Allotted ──</option>
+                    {allottedEditors.list.map(e => (
+                      <option key={`editor:${e.name}`} value={`editor:${e.name}`}>
+                        Allotted: {e.name} ({e.count})
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
+
+            {/* Allotted Team Member Dropdown */}
+            <div className="flex items-center gap-1.5 bg-[#f9f8f6] border border-[#d4c1a3] rounded-xl px-2.5 py-1">
+              <User className="w-3.5 h-3.5 text-[#7a2e33] shrink-0" />
+              <span className="text-[11px] font-bold text-[#6b6660] uppercase tracking-wider shrink-0">Allotted:</span>
+              <select
+                value={selectedEditor}
+                onChange={e => setSelectedEditor(e.target.value)}
+                className="bg-transparent text-xs font-bold text-[#111417] focus:outline-none cursor-pointer py-1 pr-1 max-w-[170px] truncate"
+              >
+                <option value="all">All Members ({stageCounts.active})</option>
+                <option value="unassigned">⚠️ Unassigned ({allottedEditors.unassigned})</option>
+                {allottedEditors.list.length > 0 && (
+                  <option disabled className="text-gray-400 font-normal">── Editors ──</option>
+                )}
+                {allottedEditors.list.map(e => (
+                  <option key={e.name} value={e.name}>
+                    {e.name} ({e.count})
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1150,11 +1332,12 @@ export const FreelanceDepartmentView: React.FC<{
             </div>
 
             {/* Reset button when active */}
-            {(filter !== 'all' || searchQuery.trim() !== '') && (
+            {(filter !== 'all' || selectedEditor !== 'all' || searchQuery.trim() !== '') && (
               <button
                 type="button"
                 onClick={() => {
                   setFilter('all');
+                  setSelectedEditor('all');
                   setSearchQuery('');
                 }}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-[#7a2e33]/10 hover:bg-[#7a2e33]/20 text-[#7a2e33] text-xs font-bold rounded-xl transition-all cursor-pointer"
@@ -1204,14 +1387,26 @@ export const FreelanceDepartmentView: React.FC<{
           {filteredJobs.map(job => {
             const pending = (job as PendingRow).pendingDeliverable;
             if (pending) {
-              /*
-               * The studio's own work, before there is any footage to do it with.
-               *
-               * Same card, same list, so it reads as one board — but none of a
-               * job's actions apply to it: there is no editor to chase, no charge
-               * to collect and no stage to advance. The one thing that moves it
-               * forward is footage, so that is the only thing offered.
-               */
+              const deliverableTitle = pending.deliverable?.title || job.title || '';
+              const deliverableDesc = `${deliverableTitle} ${job.serviceType}`.toLowerCase();
+              const isAlbum = deliverableDesc.includes('album') || deliverableDesc.includes('sheet');
+              const isFrame = deliverableDesc.includes('frame') || deliverableDesc.includes('canvas');
+
+              const transfer = transfers.find(t =>
+                t.status !== 'completed' &&
+                ((t.target?.id && t.target.id === pending.target.id) ||
+                 (t.target?.clientId && String(t.target.clientId) === String(pending.target.clientId) &&
+                  t.target?.title && pending.target.title &&
+                  t.target.title.trim().toLowerCase() === pending.target.title.trim().toLowerCase()))
+              );
+
+              const fraction = transfer ? progressFraction(transfer) : 0;
+              const percent = Math.round(fraction * 100);
+              const totalBytes = transfer?.scan?.totalBytes || 0;
+              const uploadedBytes = transfer?.uploadedBytes || 0;
+              const totalFiles = transfer?.scan?.fileCount || 0;
+              const completedFiles = transfer?.completedFiles || 0;
+
               return (
                 <div
                   key={job.id}
@@ -1225,16 +1420,130 @@ export const FreelanceDepartmentView: React.FC<{
                           {job.serviceType}
                         </div>
                       </div>
-                      <span className="shrink-0 px-2 py-0.5 rounded-md bg-[#f9f8f6] border border-[#d4c1a3] text-[9px] font-bold uppercase tracking-wider text-[#6b6660]">
-                        Awaiting footage
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {transfer ? (
+                          <span className={`shrink-0 px-2.5 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 ${
+                            transfer.status === 'uploading'
+                              ? 'bg-blue-50 border border-blue-300 text-blue-800'
+                              : transfer.status === 'needs_attention'
+                              ? 'bg-red-50 border border-red-300 text-red-800'
+                              : transfer.status === 'paused'
+                              ? 'bg-amber-50 border border-amber-300 text-amber-800'
+                              : transfer.status === 'verifying'
+                              ? 'bg-indigo-50 border border-indigo-300 text-indigo-800'
+                              : 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+                          }`}>
+                            {transfer.status === 'uploading' ? (
+                              <>
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse" />
+                                ⚡ UPLOADING RAW ({percent}%)
+                              </>
+                            ) : transfer.status === 'needs_attention' ? (
+                              <>⚠️ UPLOAD ATTENTION ({percent}%)</>
+                            ) : transfer.status === 'paused' ? (
+                              <>⏸️ UPLOAD PAUSED ({percent}%)</>
+                            ) : transfer.status === 'verifying' ? (
+                              <>🔍 VERIFYING RAW</>
+                            ) : (
+                              <>⏳ QUEUED IN UP DOWN</>
+                            )}
+                          </span>
+                        ) : isAlbum ? (
+                          <span className="shrink-0 px-2.5 py-0.5 rounded-md bg-amber-50 border border-amber-300 text-[9px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1">
+                            <span>⭐</span> Awaiting Album Selection
+                          </span>
+                        ) : isFrame ? (
+                          <span className="shrink-0 px-2.5 py-0.5 rounded-md bg-purple-50 border border-purple-300 text-[9px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1">
+                            <span>🖼️</span> Awaiting Frame Selection
+                          </span>
+                        ) : (
+                          <span className="shrink-0 px-2 py-0.5 rounded-md bg-[#f9f8f6] border border-[#d4c1a3] text-[9px] font-bold uppercase tracking-wider text-[#6b6660]">
+                            Awaiting footage
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditPendingDeliverable(pending);
+                          }}
+                          className="p-1 text-[#6b6660] hover:text-[#7a2e33] hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
+                          title="Edit Deliverable"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     <div className="text-[11px] text-[#6b6660] font-medium">
                       BAAWARAY FILMS{job.dueDate ? ` · Due ${job.dueDate}` : ''}
                     </div>
-                    <p className="text-[11px] text-[#6b6660] leading-relaxed">
-                      Upload raw rushes or link existing client footage to move this deliverable to Post Production.
-                    </p>
+                    {transfer ? (
+                      <div className="p-3 bg-blue-50/70 border border-blue-200/80 rounded-xl text-[11px] space-y-2">
+                        <div className="flex items-center justify-between font-bold text-blue-950">
+                          <div className="flex items-center gap-1.5">
+                            <UploadCloud className={`w-3.5 h-3.5 ${transfer.status === 'uploading' ? 'text-blue-600 animate-pulse' : 'text-blue-600'}`} />
+                            <span>
+                              {transfer.status === 'uploading'
+                                ? 'Raw Footage Uploading'
+                                : transfer.status === 'paused'
+                                ? 'Raw Footage Upload Paused'
+                                : transfer.status === 'needs_attention'
+                                ? 'Upload Needs Attention'
+                                : transfer.status === 'verifying'
+                                ? 'Verifying Upload'
+                                : 'Raw Footage in Queue'}
+                            </span>
+                          </div>
+                          <span className="text-blue-800 font-mono text-[10px] font-bold">{percent}%</span>
+                        </div>
+
+                        <div className="w-full h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-300 rounded-full ${
+                              transfer.status === 'needs_attention'
+                                ? 'bg-red-500'
+                                : transfer.status === 'paused'
+                                ? 'bg-amber-500'
+                                : 'bg-blue-600'
+                            }`}
+                            style={{ width: `${Math.max(2, percent)}%` }}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between text-[10.5px] text-blue-800">
+                          <span>{formatBytes(uploadedBytes)} of {formatBytes(totalBytes)}</span>
+                          <span>{completedFiles} of {totalFiles} files</span>
+                        </div>
+
+                        {transfer.status === 'needs_attention' && transfer.error && (
+                          <div className="text-[10px] text-red-700 bg-red-50 p-1.5 rounded-lg border border-red-200 font-medium">
+                            {transfer.error}
+                          </div>
+                        )}
+                      </div>
+                    ) : isAlbum ? (
+                      <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 space-y-1">
+                        <div className="font-bold flex items-center gap-1 text-amber-950">
+                          <span>⭐</span> Album Photo Selection Needed:
+                        </div>
+                        <p className="leading-relaxed text-amber-800 text-[10.5px]">
+                          Client needs to star <strong>200 photos</strong> (40 sheets × 5 photos) in the photo sharing app. Click below to send WhatsApp follow-up.
+                        </p>
+                      </div>
+                    ) : isFrame ? (
+                      <div className="p-2.5 bg-purple-50/70 border border-purple-200/80 rounded-xl text-[11px] text-purple-900 space-y-1">
+                        <div className="font-bold flex items-center gap-1 text-purple-950">
+                          <span>🖼️</span> Frame Selection Needed (4 Frames):
+                        </div>
+                        <p className="leading-relaxed text-purple-800 text-[10.5px]">
+                          Client needs to share screenshots of <strong>4 selected photos</strong> from the photo sharing app. Click below to send WhatsApp follow-up.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-[#6b6660] leading-relaxed">
+                        Upload raw rushes or link existing client footage to move this deliverable to Post Production.
+                      </p>
+                    )}
                   </div>
                   <div className="px-5 pb-5 space-y-2">
                     {pending.reusableDeliverables && pending.reusableDeliverables.length > 0 && (
@@ -1274,15 +1583,54 @@ export const FreelanceDepartmentView: React.FC<{
                         ))}
                       </div>
                     )}
-                    <button
-                      type="button"
-                      disabled={!onUploadForDeliverable}
-                      onClick={() => onUploadForDeliverable?.(pending.target)}
-                      className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#7a2e33] hover:bg-[#5a2226] disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      <span>Send data</span>
-                    </button>
+
+                    {(isAlbum || isFrame) && (
+                      <button
+                        type="button"
+                        onClick={() => handleDirectWhatsAppSelectionFollowUp(job, pending)}
+                        className="w-full inline-flex items-center justify-center gap-2 px-3.5 py-2.5 bg-[#25D366]/15 hover:bg-[#25D366]/25 border border-[#25D366]/40 text-[#0f5132] font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                        title="Open WhatsApp directly requesting photo selection with formula & instructions"
+                      >
+                        <MessageCircle className="w-4 h-4 text-[#25D366]" />
+                        <span>WhatsApp Follow-Up: Request Selection</span>
+                      </button>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setManualRawTarget({ target: pending.target, title: `${job.title} · ${job.serviceType}` })}
+                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-[#f9f8f6] hover:bg-[#ece7de] border border-[#d4c1a3] text-[#111417] font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                        title="Share offline: scan hard drive folder or log hand-off"
+                      >
+                        <HardDrive className="w-3.5 h-3.5 text-[#7a2e33]" />
+                        <span>Share Offline</span>
+                      </button>
+                      {transfer ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onViewTransfer) onViewTransfer(transfer.id);
+                            else onGoToQueue?.();
+                          }}
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-[#111417] hover:bg-stone-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                          title="Open and manage this transfer in Up Down Queue"
+                        >
+                          <ArrowUpDown className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>View in Queue ({percent}%)</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={!onUploadForDeliverable}
+                          onClick={() => onUploadForDeliverable?.(pending.target)}
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-[#7a2e33] hover:bg-[#632529] text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Upload raw</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1408,71 +1756,204 @@ export const FreelanceDepartmentView: React.FC<{
 
                   {/* Data Intake & Logistics Section */}
                   <div className="p-2.5 bg-[#f9f8f6] rounded-xl border border-[#d4c1a3]/70 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
-                        {job.rawDataSource === 'hard_drive' ? (
-                          <>
-                            <HardDrive className="w-3.5 h-3.5 text-amber-700 shrink-0" />
-                            <span className="text-[11px] font-bold text-amber-900 truncate">
-                              HDD: {job.hddStatus === 'sent_to_editor' ? 'With Editor 🚚' : 'At Studio 💽'}
-                            </span>
-                          </>
-                        ) : job.rawDataLink ? (
-                          <>
-                            <LinkIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <a
-                              href={job.rawDataLink}
-                              target="_blank"
-                              rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-[11px] text-blue-700 font-semibold hover:underline truncate"
-                              title={job.rawDataLink}
-                            >
-                              ☁️ Raw Footage Attached
-                            </a>
-                          </>
-                        ) : (
-                          <>
-                            <LinkIcon className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span className="text-[11px] text-amber-700 font-medium truncate">
-                              ⚠️ No raw data logged
-                            </span>
-                          </>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setRawLinkPromptJob(job);
-                            setRawSourceType(job.rawDataSource === 'hard_drive' ? 'hard_drive' : 'partner_upload');
-                            setRawLinkInput(job.rawDataLink || '');
-                            setRawHddStatus(job.hddStatus === 'sent_to_editor' ? 'sent_to_editor' : 'received_by_studio');
-                            setRawHddNotes(job.hardDriveNotes || '');
-                          }}
-                          className="text-[10px] font-bold text-amber-800 hover:text-amber-900 hover:underline cursor-pointer"
-                        >
-                          {job.rawDataLink || job.rawDataSource === 'hard_drive' ? 'Edit' : '+ Add'}
-                        </button>
-                        <span className="text-[#d4c1a3]">|</span>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setExtraDataPromptJob(job);
-                            setExtraDataTitle('');
-                            setExtraDataUrl('');
-                            setExtraDataNotes('');
-                            setExtraDataSourceType('cloud_upload');
-                          }}
-                          className="text-[10px] font-bold text-[#7a2e33] hover:underline cursor-pointer"
-                          title="Append additional footage or data clips anytime"
-                        >
-                          + Add Data
-                        </button>
-                      </div>
-                    </div>
+                    {(() => {
+                      const jobTarget: WorkTarget = {
+                        kind: 'freelance',
+                        id: job.id,
+                        title: job.title,
+                        clientName: job.clientName,
+                        serviceType: job.serviceType,
+                        purpose: 'raw',
+                        jobCode: job.jobCode,
+                        dueDate: freelanceDueDate(job),
+                      };
+
+                      const freelanceTransfer = transfers.find(t =>
+                        t.status !== 'completed' &&
+                        t.target?.kind === 'freelance' &&
+                        t.target.id === job.id
+                      );
+
+                      if (freelanceTransfer) {
+                        const fraction = progressFraction(freelanceTransfer);
+                        const percent = Math.round(fraction * 100);
+                        const totalBytes = freelanceTransfer.scan?.totalBytes || 0;
+                        const uploadedBytes = freelanceTransfer.uploadedBytes || 0;
+                        const totalFiles = freelanceTransfer.scan?.fileCount || 0;
+                        const completedFiles = freelanceTransfer.completedFiles || 0;
+
+                        return (
+                          <div className="p-2.5 bg-blue-50/70 border border-blue-200/80 rounded-lg text-[11px] space-y-2">
+                            <div className="flex items-center justify-between font-bold text-blue-950">
+                              <div className="flex items-center gap-1.5">
+                                <UploadCloud className={`w-3.5 h-3.5 ${freelanceTransfer.status === 'uploading' ? 'text-blue-600 animate-pulse' : 'text-blue-600'}`} />
+                                <span>
+                                  {freelanceTransfer.status === 'uploading'
+                                    ? 'Raw Footage Uploading'
+                                    : freelanceTransfer.status === 'paused'
+                                    ? 'Raw Footage Upload Paused'
+                                    : freelanceTransfer.status === 'needs_attention'
+                                    ? 'Upload Needs Attention'
+                                    : freelanceTransfer.status === 'verifying'
+                                    ? 'Verifying Upload'
+                                    : 'Raw Footage in Queue'}
+                                </span>
+                              </div>
+                              <span className="text-blue-800 font-mono text-[10px] font-bold">{percent}%</span>
+                            </div>
+
+                            <div className="w-full h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                              <div
+                                className={`h-full transition-all duration-300 rounded-full ${
+                                  freelanceTransfer.status === 'needs_attention'
+                                    ? 'bg-red-500'
+                                    : freelanceTransfer.status === 'paused'
+                                    ? 'bg-amber-500'
+                                    : 'bg-blue-600'
+                                }`}
+                                style={{ width: `${Math.max(2, percent)}%` }}
+                              />
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10.5px] text-blue-800">
+                              <span>{formatBytes(uploadedBytes)} of {formatBytes(totalBytes)}</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (onViewTransfer) onViewTransfer(freelanceTransfer.id);
+                                  else onGoToQueue?.();
+                                }}
+                                className="font-bold underline hover:text-blue-950 cursor-pointer flex items-center gap-0.5"
+                              >
+                                <ArrowUpDown className="w-3 h-3 text-emerald-600" />
+                                <span>View in Queue ↗</span>
+                              </button>
+                            </div>
+
+                            {freelanceTransfer.status === 'needs_attention' && freelanceTransfer.error && (
+                              <div className="text-[10px] text-red-700 bg-red-50 p-1.5 rounded-lg border border-red-200 font-medium">
+                                {freelanceTransfer.error}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            {job.rawDataSource === 'hard_drive' ? (
+                              <>
+                                <HardDrive className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                                <span className="text-[11px] font-bold text-amber-900 truncate">
+                                  HDD: {job.hddStatus === 'sent_to_editor' ? 'With Editor 🚚' : 'At Studio 💽'}
+                                </span>
+                              </>
+                            ) : job.rawDataLink ? (
+                              <>
+                                <LinkIcon className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                <a
+                                  href={job.rawDataLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[11px] text-blue-700 font-semibold hover:underline truncate"
+                                  title={job.rawDataLink}
+                                >
+                                  ☁️ Raw Footage Attached
+                                </a>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span className="text-[11px] text-amber-800 font-semibold truncate">
+                                  Data Pending
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {job.rawDataLink || job.rawDataSource === 'hard_drive' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRawLinkPromptJob(job);
+                                    setRawSourceType(job.rawDataSource === 'hard_drive' ? 'hard_drive' : 'partner_upload');
+                                    setRawLinkInput(job.rawDataLink || '');
+                                    setRawHddStatus(job.hddStatus === 'sent_to_editor' ? 'sent_to_editor' : 'received_by_studio');
+                                    setRawHddNotes(job.hardDriveNotes || '');
+                                  }}
+                                  className="text-[10.5px] font-bold text-amber-800 hover:text-amber-950 hover:underline cursor-pointer"
+                                >
+                                  Edit
+                                </button>
+                                <span className="text-[#d4c1a3]">|</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExtraDataPromptJob(job);
+                                    setExtraDataTitle('');
+                                    setExtraDataUrl('');
+                                    setExtraDataNotes('');
+                                    setExtraDataSourceType('cloud_upload');
+                                  }}
+                                  className="text-[10.5px] font-bold text-[#7a2e33] hover:underline cursor-pointer"
+                                  title="Append additional footage or extra clips"
+                                >
+                                  + Add Clip
+                                </button>
+                              </>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={!onUploadForDeliverable}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onUploadForDeliverable?.(jobTarget);
+                                  }}
+                                  className="px-2 py-1 bg-[#7a2e33] hover:bg-[#632529] text-white text-[10px] font-bold rounded-lg shadow-2xs flex items-center gap-1 cursor-pointer transition-all disabled:opacity-40"
+                                  title="Scan local folder to upload raw footage to Google Drive"
+                                >
+                                  <UploadCloud className="w-3 h-3" />
+                                  <span>Upload</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setManualRawTarget({ target: jobTarget, title: `${job.title} · ${job.serviceType}` });
+                                  }}
+                                  className="px-2 py-1 bg-white hover:bg-stone-100 border border-[#d4c1a3] text-[#111417] text-[10px] font-bold rounded-lg shadow-2xs flex items-center gap-1 cursor-pointer transition-all"
+                                  title="Scan hard drive folder or log courier / offline handover"
+                                >
+                                  <HardDrive className="w-3 h-3 text-[#7a2e33]" />
+                                  <span>Offline</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRawLinkPromptJob(job);
+                                    setRawSourceType('partner_upload');
+                                    setRawLinkInput('');
+                                    setRawHddNotes('');
+                                  }}
+                                  className="px-1.5 py-1 text-blue-700 hover:text-blue-900 text-[10px] font-bold hover:underline cursor-pointer"
+                                  title="Paste link from partner studio (GDrive/Dropbox/WeTransfer)"
+                                >
+                                  Link
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Appended / Extra Data list if any */}
                     {job.additionalDataLinks && job.additionalDataLinks.length > 0 && (
@@ -1844,14 +2325,39 @@ export const FreelanceDepartmentView: React.FC<{
                 {filteredJobs.map(job => {
                   const pendingRow = (job as PendingRow).pendingDeliverable;
                   if (pendingRow) {
-                    // Its own row rather than a job's: running payment and stage
-                    // logic over a deliverable would report zeros as though they
-                    // were facts about work that has not started.
+                    const deliverableTitle = pendingRow.deliverable?.title || job.title || '';
+                    const deliverableDesc = `${deliverableTitle} ${job.serviceType}`.toLowerCase();
+                    const isAlbumRow = deliverableDesc.includes('album') || deliverableDesc.includes('sheet');
+                    const isFrameRow = deliverableDesc.includes('frame') || deliverableDesc.includes('canvas');
+
+                    const transfer = transfers.find(t =>
+                      t.status !== 'completed' &&
+                      ((t.target?.id && t.target.id === pendingRow.target.id) ||
+                       (t.target?.clientId && String(t.target.clientId) === String(pendingRow.target.clientId) &&
+                        t.target?.title && pendingRow.target.title &&
+                        t.target.title.trim().toLowerCase() === pendingRow.target.title.trim().toLowerCase()))
+                    );
+
+                    const fraction = transfer ? progressFraction(transfer) : 0;
+                    const percent = Math.round(fraction * 100);
+
                     return (
                       <tr key={job.id} className="hover:bg-[#f9f8f6]/40 transition-colors text-[#6b6660]">
                         <td className="py-3 px-4">
                           <span className="font-mono text-[10px] font-bold text-[#6b6660] bg-[#f9f8f6] px-2 py-0.5 rounded border border-[#d4c1a3]">
-                            AWAITING FOOTAGE
+                            {transfer
+                              ? transfer.status === 'uploading'
+                                ? `UPLOADING (${percent}%)`
+                                : transfer.status === 'needs_attention'
+                                ? 'UPLOAD ATTENTION'
+                                : transfer.status === 'paused'
+                                ? 'UPLOAD PAUSED'
+                                : 'IN QUEUE'
+                              : isAlbumRow
+                              ? 'AWAITING ALBUM'
+                              : isFrameRow
+                              ? 'AWAITING FRAMES'
+                              : 'AWAITING FOOTAGE'}
                           </span>
                         </td>
                         <td className="py-3 px-4">
@@ -1866,9 +2372,37 @@ export const FreelanceDepartmentView: React.FC<{
                           Unassigned
                         </td>
                         <td className="py-3 px-4">
-                          <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-50 text-amber-800 border border-amber-200">
-                            Awaiting Footage
-                          </span>
+                          {transfer ? (
+                            <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${
+                              transfer.status === 'uploading'
+                                ? 'bg-blue-50 text-blue-800 border-blue-200'
+                                : transfer.status === 'needs_attention'
+                                ? 'bg-red-50 text-red-800 border-red-200'
+                                : transfer.status === 'paused'
+                                ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            }`}>
+                              {transfer.status === 'uploading'
+                                ? `⚡ Uploading Raw (${percent}%)`
+                                : transfer.status === 'needs_attention'
+                                ? `⚠️ Needs Attention (${percent}%)`
+                                : transfer.status === 'paused'
+                                ? `⏸️ Paused (${percent}%)`
+                                : '⏳ Queued'}
+                            </span>
+                          ) : isAlbumRow ? (
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                              ⭐ Album Selection (200 Photos)
+                            </span>
+                          ) : isFrameRow ? (
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-purple-50 text-purple-800 border border-purple-200">
+                              🖼️ Frame Selection (4 Frames)
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                              Awaiting Footage
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-4 font-medium text-[#111417]">
                           {job.dueDate || '—'}
@@ -1877,6 +2411,17 @@ export const FreelanceDepartmentView: React.FC<{
                         <td className="py-3 px-4 text-xs text-[#6b6660]">—</td>
                         <td className="py-3 px-4 text-right">
                           <div className="inline-flex flex-col items-end gap-1">
+                            {(isAlbumRow || isFrameRow) && (
+                              <button
+                                type="button"
+                                onClick={() => handleDirectWhatsAppSelectionFollowUp(job, pendingRow)}
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-[#0f5132] hover:text-emerald-700 cursor-pointer bg-[#25D366]/10 px-2 py-0.5 rounded-md border border-[#25D366]/30 mb-0.5"
+                                title="Open WhatsApp directly requesting photo selection with formula & instructions"
+                              >
+                                <MessageCircle className="w-3 h-3 text-[#25D366]" />
+                                Request Selection
+                              </button>
+                            )}
                             {pendingRow.reusableDeliverables && pendingRow.reusableDeliverables.length > 0 && (
                               <button
                                 type="button"
@@ -1906,12 +2451,45 @@ export const FreelanceDepartmentView: React.FC<{
                             )}
                             <button
                               type="button"
-                              disabled={!onUploadForDeliverable}
-                              onClick={() => onUploadForDeliverable?.(pendingRow.target)}
-                              className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7a2e33] hover:underline disabled:opacity-40 cursor-pointer"
+                              onClick={() => setManualRawTarget({ target: pendingRow.target, title: `${job.title} · ${job.serviceType}` })}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-[#111417] hover:text-[#7a2e33] cursor-pointer"
+                              title="Share offline: scan hard drive folder or log hand-off"
                             >
-                              <Upload className="w-3 h-3" />
-                              Send data
+                              <HardDrive className="w-3 h-3 text-[#7a2e33]" />
+                              Share Offline
+                            </button>
+                            {transfer ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (onViewTransfer) onViewTransfer(transfer.id);
+                                  else onGoToQueue?.();
+                                }}
+                                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-blue-700 hover:text-blue-900 hover:underline cursor-pointer"
+                                title="View transfer progress in Up Down Queue"
+                              >
+                                <ArrowUpDown className="w-3 h-3 text-emerald-600" />
+                                View in Queue ({percent}%)
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={!onUploadForDeliverable}
+                                onClick={() => onUploadForDeliverable?.(pendingRow.target)}
+                                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#7a2e33] hover:underline disabled:opacity-40 cursor-pointer"
+                              >
+                                <Upload className="w-3 h-3" />
+                                Upload raw
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleEditPendingDeliverable(pendingRow)}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-[#111417] hover:text-[#7a2e33] cursor-pointer"
+                              title="Edit Deliverable"
+                            >
+                              <Edit3 className="w-3 h-3 text-[#7a2e33]" />
+                              Edit Deliverable
                             </button>
                           </div>
                         </td>
@@ -1924,6 +2502,12 @@ export const FreelanceDepartmentView: React.FC<{
                   const dueStatus = getDueDateStatus(targetDue);
                   const clientBal = freelanceJobPayment(job).balance;
                   const editorCost = freelanceJobEditorCost(job);
+
+                  const freelanceTransfer = transfers.find(t =>
+                    t.status !== 'completed' &&
+                    t.target?.kind === 'freelance' &&
+                    t.target.id === job.id
+                  );
 
                   return (
                     <tr key={job.id} className="hover:bg-[#f9f8f6]/40 transition-colors">
@@ -1940,6 +2524,17 @@ export const FreelanceDepartmentView: React.FC<{
                         <div className="text-[11px] text-[#6b6660]">
                           {getJobDisplayClient(job)} {job.clientPhone ? `(${job.clientPhone})` : ''}
                         </div>
+                        {freelanceTransfer ? (
+                          <div className="text-[10px] text-blue-700 font-bold flex items-center gap-1 mt-0.5">
+                            <UploadCloud className="w-3 h-3 text-blue-600 animate-pulse" />
+                            <span>Uploading Raw ({Math.round(progressFraction(freelanceTransfer) * 100)}%)</span>
+                          </div>
+                        ) : !job.rawDataLink && job.rawDataSource !== 'hard_drive' ? (
+                          <div className="text-[10px] text-amber-700 font-semibold flex items-center gap-1 mt-0.5">
+                            <AlertCircle className="w-3 h-3 text-amber-600" />
+                            <span>Data Pending</span>
+                          </div>
+                        ) : null}
                       </td>
                       <td className="py-3 px-4">
                         {job.editorName ? (
@@ -2000,6 +2595,38 @@ export const FreelanceDepartmentView: React.FC<{
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          {freelanceTransfer ? (
+                            <button
+                              onClick={() => {
+                                if (onViewTransfer) onViewTransfer(freelanceTransfer.id);
+                                else onGoToQueue?.();
+                              }}
+                              className="p-1.5 bg-blue-50 border border-blue-300 hover:bg-blue-100 text-blue-700 rounded-lg cursor-pointer"
+                              title={`View Upload in Queue (${Math.round(progressFraction(freelanceTransfer) * 100)}%)`}
+                            >
+                              <ArrowUpDown className="w-3.5 h-3.5 text-emerald-600" />
+                            </button>
+                          ) : !job.rawDataLink && job.rawDataSource !== 'hard_drive' ? (
+                            <button
+                              onClick={() => {
+                                const jobTarget: WorkTarget = {
+                                  kind: 'freelance',
+                                  id: job.id,
+                                  title: job.title,
+                                  clientName: job.clientName,
+                                  serviceType: job.serviceType,
+                                  purpose: 'raw',
+                                  jobCode: job.jobCode,
+                                  dueDate: freelanceDueDate(job),
+                                };
+                                onUploadForDeliverable?.(jobTarget);
+                              }}
+                              className="p-1.5 bg-[#7a2e33]/10 border border-[#7a2e33]/30 hover:bg-[#7a2e33] hover:text-white text-[#7a2e33] rounded-lg cursor-pointer transition-colors"
+                              title="Scan Folder to Upload Raw Data to Google Drive"
+                            >
+                              <UploadCloud className="w-3.5 h-3.5" />
+                            </button>
+                          ) : null}
                           {(job.stage === 'data_received' || job.stage === 'pending_assignment') && job.editorName && (
                             <button
                               onClick={() => handleShareDataWhatsApp(job)}
@@ -2371,11 +2998,84 @@ export const FreelanceDepartmentView: React.FC<{
                       className="w-full px-3.5 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] focus:outline-none focus:border-[#7a2e33]"
                     />
                   </div>
+
+                  <div className="pt-2 border-t border-amber-200/80">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const t: WorkTarget = {
+                          kind: 'freelance',
+                          id: rawLinkPromptJob.id,
+                          title: rawLinkPromptJob.title,
+                          clientName: rawLinkPromptJob.clientName,
+                          serviceType: rawLinkPromptJob.serviceType,
+                          purpose: 'raw',
+                          jobCode: rawLinkPromptJob.jobCode,
+                          dueDate: freelanceDueDate(rawLinkPromptJob),
+                        };
+                        const jobTitle = `${rawLinkPromptJob.title} · ${rawLinkPromptJob.serviceType}`;
+                        setRawLinkPromptJob(null);
+                        setManualRawTarget({ target: t, title: jobTitle });
+                      }}
+                      className="w-full py-2 px-3 bg-white hover:bg-amber-100/60 border border-amber-300 rounded-xl text-xs font-bold text-amber-950 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                    >
+                      <HardDrive className="w-4 h-4 text-[#7a2e33]" />
+                      <span>Scan Folder on Hard Drive to Measure Files 💽</span>
+                    </button>
+                  </div>
+                </div>
+              ) : rawSourceType === 'studio_upload' ? (
+                <div className="space-y-3 p-3.5 bg-stone-50 border border-[#d4c1a3] rounded-xl">
+                  <div className="space-y-1">
+                    <div className="text-xs font-bold text-[#111417] flex items-center gap-1.5">
+                      <UploadCloud className="w-4 h-4 text-[#7a2e33]" />
+                      <span>Scan Folder & Upload to Google Drive</span>
+                    </div>
+                    <p className="text-[11px] text-[#6b6660]">
+                      Select the raw rushes folder on your Mac or external drive. The desktop app will scan it and upload directly to Google Drive.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!onUploadForDeliverable}
+                    onClick={() => {
+                      const t: WorkTarget = {
+                        kind: 'freelance',
+                        id: rawLinkPromptJob.id,
+                        title: rawLinkPromptJob.title,
+                        clientName: rawLinkPromptJob.clientName,
+                        serviceType: rawLinkPromptJob.serviceType,
+                        purpose: 'raw',
+                        jobCode: rawLinkPromptJob.jobCode,
+                        dueDate: freelanceDueDate(rawLinkPromptJob),
+                      };
+                      setRawLinkPromptJob(null);
+                      onUploadForDeliverable?.(t);
+                    }}
+                    className="w-full py-2.5 px-4 bg-[#7a2e33] hover:bg-[#632529] text-white text-xs font-bold rounded-xl shadow-xs flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-40"
+                  >
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Select Folder to Scan & Upload ⚡</span>
+                  </button>
+
+                  <div className="pt-2 border-t border-[#d4c1a3]/60 space-y-1.5">
+                    <label className="text-[11px] font-bold text-[#6b6660]">
+                      Or paste an existing cloud link:
+                    </label>
+                    <input
+                      type="url"
+                      value={rawLinkInput}
+                      onChange={(e) => setRawLinkInput(e.target.value)}
+                      placeholder="https://drive.google.com/..."
+                      className="w-full px-3 py-2 bg-white border border-[#d4c1a3] rounded-xl text-xs text-[#111417] placeholder:text-[#6b6660]/60 focus:outline-none focus:border-[#7a2e33]"
+                    />
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-[#111417] uppercase tracking-wider">
-                    Footage Download Link
+                    Partner Studio Download Link
                   </label>
                   <input
                     type="url"
@@ -2386,7 +3086,7 @@ export const FreelanceDepartmentView: React.FC<{
                     autoFocus
                   />
                   <p className="text-[11px] text-[#6b6660]">
-                    Paste the link shared by the partner studio or your upload.
+                    Paste the link shared by the partner studio or client.
                   </p>
                 </div>
               )}
@@ -2992,6 +3692,36 @@ export const FreelanceDepartmentView: React.FC<{
         isOpen={isWhatsAppTemplatesOpen}
         onClose={() => setIsWhatsAppTemplatesOpen(false)}
       />
+
+      {/* Manual Raw-Data / Physical Hard Disk Modal */}
+      {manualRawTarget && (
+        <ManualRawDataModal
+          target={manualRawTarget.target}
+          title={manualRawTarget.title}
+          onClose={() => setManualRawTarget(null)}
+          onSaved={() => setManualRawTarget(null)}
+        />
+      )}
+
+
+
+      {/* Edit Deliverable Modal */}
+      {editingDeliverableState.isOpen && editingDeliverableState.deliverable && (
+        <EditDeliverableModal
+          isOpen={editingDeliverableState.isOpen}
+          onClose={() =>
+            setEditingDeliverableState({
+              isOpen: false,
+              clientId: '',
+              clientName: '',
+              deliverable: null,
+            })
+          }
+          clientId={editingDeliverableState.clientId}
+          clientName={editingDeliverableState.clientName}
+          deliverable={editingDeliverableState.deliverable}
+        />
+      )}
     </div>
   );
 };

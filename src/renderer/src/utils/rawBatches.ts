@@ -13,7 +13,6 @@ interface TransferRecord {
 export interface RawBatch { id: string; link: string; label: string; cloud: string; bytes: number; fileCount: number }
 
 export function cloudName(link: string): string {
-  if (link.startsWith('b2://') || link.includes('backblazeb2.com')) return 'Backblaze B2';
   if (link.includes('drive.google.com') || link.includes('googleusercontent.com')) return 'Google Drive';
   if (link.includes('dropbox.com')) return 'Dropbox';
   return 'Shared link';

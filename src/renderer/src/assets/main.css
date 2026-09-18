@@ -123,6 +123,18 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'TAN Aegean';
+  src: local('TAN Aegean'), local('TAN-Aegean'), local('Tan Aegean'),
+       url('/fonts/TAN-Aegean.woff2') format('woff2'),
+       url('/fonts/TAN-Aegean.otf') format('opentype'),
+       url('/fonts/TAN-Meringue.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+
 @layer base {
   :root {
     --ink: #111417;
@@ -222,6 +234,10 @@
 /* Retained Utility Classes */
 .font-tan-moncheri, .font-tan {
   font-family: 'TAN Meringue', serif;
+}
+
+.font-tan-aegean {
+  font-family: 'TAN Aegean', 'Tan Aegean', 'TAN Meringue', 'The Seasons', serif;
 }
 
 /* Custom Scrollbar */

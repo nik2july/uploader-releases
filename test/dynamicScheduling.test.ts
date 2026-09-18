@@ -39,9 +39,10 @@ test('getEditorWorkflowStage categorizes jobs correctly', () => {
   assert.equal(getEditorWorkflowStage(baseJob), 'download_pending');
   assert.equal(getEditorWorkflowStage({ ...baseJob, downloadedAt: '2026-09-10T10:00:00Z' }), 'in_process');
 
-  // Changes received / sent to editor => In Process
-  assert.equal(getEditorWorkflowStage({ ...baseJob, stage: 'changes_received' }), 'in_process');
-  assert.equal(getEditorWorkflowStage({ ...baseJob, stage: 'changes_sent_to_editor' }), 'in_process');
+  // Changes received / sent to editor / internal changes => Changes Needed
+  assert.equal(getEditorWorkflowStage({ ...baseJob, stage: 'changes_received' }), 'changes_needed');
+  assert.equal(getEditorWorkflowStage({ ...baseJob, stage: 'changes_sent_to_editor' }), 'changes_needed');
+  assert.equal(getEditorWorkflowStage({ ...baseJob, stage: 'internal_changes' }), 'changes_needed');
 
   // Draft received / sent to client => Sent for Review
   assert.equal(getEditorWorkflowStage({ ...baseJob, stage: 'draft_received' }), 'sent_for_review');

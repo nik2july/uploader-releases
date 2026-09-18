@@ -1,5 +1,5 @@
 appId: com.baawaray.studio-uploader
-productName: Baawaray Uploader
+productName: Baawaray Films
 directories:
   buildResources: build
 # Ad-hoc signs the bundle so macOS does not report an unsigned build as damaged.

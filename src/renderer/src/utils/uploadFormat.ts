@@ -6,7 +6,9 @@ export function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   const index = Math.min(units.length - 1, Math.floor(Math.log10(bytes) / 3));
   const value = bytes / 1000 ** index;
-  return `${value.toFixed(index === 0 ? 0 : value >= 100 ? 0 : 1)} ${units[index]}`;
+  if (index === 0) return `${Math.round(value)} B`;
+  const formatted = value.toFixed(1);
+  return `${formatted.endsWith('.0') ? formatted.slice(0, -2) : formatted} ${units[index]}`;
 }
 
 /** Raw footage totals run to hours, so hours lead and seconds still show. */

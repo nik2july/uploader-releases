@@ -13,6 +13,20 @@ export interface ScanSummary {
   /** Files present but unreadable: an empty file, or a clip with no duration in its header. */
   unreadableFiles: { path: string; reason: string }[];
 }
+export interface OfflineScanResult {
+  folderPath: string;
+  folderName: string;
+  driveLabel: string;
+  photoCount: number;
+  totalPhotos: number;
+  videoCount: number;
+  totalDurationSeconds: number;
+  hours: number;
+  minutes: number;
+  totalBytes: number;
+  formattedSize: string;
+  fileCount: number;
+}
 export interface WorkTarget {
   kind: 'freelance' | 'deliverable'; id: string; clientId?: string; title: string; clientName: string;
   serviceType: string; purpose: 'raw' | 'delivery'; jobCode?: string; dueDate?: string;
@@ -55,7 +69,7 @@ export interface UpdateInfo {
   publishedAt: string;
 }
 /** Where raw-footage transfers land. Chosen once in Uploader settings, shared by the studio. */
-export type UploadDestination = 'drive' | 'b2';
+export type UploadDestination = 'drive';
 export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
 export interface DesktopAPI {
   login(phone: string, password: string): Promise<{ customToken: string; accountType: string }>;
@@ -63,6 +77,7 @@ export interface DesktopAPI {
   signOut(): Promise<void>;
   scan(options: ScanOptions, target?: WorkTarget): Promise<string | null>;
   scanFiles(options: ScanOptions, target?: WorkTarget): Promise<string | null>;
+  scanOfflineFolder(target?: WorkTarget): Promise<OfflineScanResult | null>;
   cancelScan(id: string): Promise<void>;
   list(): Promise<Transfer[]>;
   inspect(id: string): Promise<{ files: { path: string; error: string }[] }>;
@@ -71,6 +86,7 @@ export interface DesktopAPI {
   driveStatus(): Promise<DriveStatus>;
   disconnectDrive(): Promise<DriveStatus>;
   setUploadDestination(destination: UploadDestination): Promise<void>;
+  setSharedDriveId(driveId: string): Promise<void>;
   removeTransfer(id: string, keepUploaded?: boolean): Promise<{ removed: boolean; keptLink?: string }>;
   downloadUpdate(info: UpdateInfo): Promise<{ ready: boolean; version: string }>;
   installUpdate(): Promise<void>;
@@ -79,22 +95,21 @@ export interface DesktopAPI {
   dropboxStatus(): Promise<DropboxStatus>;
   connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;
   disconnectDropbox(): Promise<DropboxStatus>;
-  b2Status(): Promise<B2Status>;
-  connectB2(config: B2ConfigInput): Promise<B2Status>;
-  disconnectB2(): Promise<B2Status>;
-  deleteB2Folder(prefix: string): Promise<number>;
   chooseDeliverableFile(): Promise<{ filePath: string; fileName: string; fileSize: number } | null>;
   uploadDeliverable(jobId: string, filePath: string, targetFolder: string, fileName: string): Promise<string>;
   onUploadProgress(callback: (progress: { jobId: string; percent: number; uploadedBytes: number; totalBytes: number }) => void): () => void;
   chooseDownloadDirectory(): Promise<string | null>;
   downloadRawData(jobId: string, rawDataLink: string, destDir: string): Promise<{ success: boolean; downloadedBytes: number; totalBytes: number; fileCount: number; path: string }>;
   cancelDownload(jobId: string): Promise<void>;
+  pauseDownload(jobId: string): Promise<void>;
+  getActiveDownload(jobId?: string): Promise<{ isDownloading: boolean; jobId?: string; progress?: DownloadProgress; destDir?: string; isPaused: boolean }>;
   onDownloadProgress(callback: (progress: DownloadProgress) => void): () => void;
   verifyLocalFolder(jobId: string, folderPath: string): Promise<{ valid: boolean; fileCount: number; totalBytes: number }>;
   openDownloadedFolder(jobId: string): Promise<void>;
   forgetDownloadedFolder(jobId: string): Promise<void>;
   checkDiskSpace(targetPath: string): Promise<DiskSpaceInfo>;
   getDownloadSize(rawDataLink: string): Promise<number>;
+  getDownloadDetails(rawDataLink: string): Promise<DownloadLinkDetails>;
   deleteDriveFolder(folderId: string): Promise<void>;
   deleteDropboxFile(dropboxPath: string): Promise<void>;
   downloadDropboxFile(dropboxPath: string, localPath: string): Promise<void>;
@@ -119,6 +134,7 @@ export interface DesktopAPI {
   setAutoStart(enable: boolean): Promise<boolean>;
   checkForUpdate(): Promise<UpdateInfo | null>;
   appVersion(): Promise<string>;
+  copyToClipboard(text: string): Promise<boolean>;
   diagnostics(): Promise<string>;
   onChange(callback: () => void): () => void;
 }
@@ -129,29 +145,23 @@ export interface DiskSpaceInfo {
   path: string;
 }
 
+export interface DownloadLinkDetails {
+  totalBytes: number;
+  folderName?: string;
+  fileCount: number;
+}
+
 export interface DownloadProgress {
   jobId: string;
   percent: number;
   downloadedBytes: number;
   totalBytes: number;
   fileName?: string;
-  status: 'downloading' | 'completed' | 'error';
+  status: 'downloading' | 'completed' | 'error' | 'paused';
   error?: string;
+  speedBytesPerSec?: number;
+  estimatedRemainingSec?: number;
 }
 
 export interface DropboxStatus { configured: boolean; connected: boolean; email?: string; error?: string }
 
-export interface B2Status {
-  connected: boolean;
-  bucketName?: string;
-  accountId?: string;
-  error?: string;
-}
-
-export interface B2ConfigInput {
-  keyId: string;
-  applicationKey: string;
-  bucketName: string;
-  endpoint?: string;
-  region?: string;
-}

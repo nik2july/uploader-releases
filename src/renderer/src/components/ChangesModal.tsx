@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import { logRevision } from '../lib/studioRepository';
+import { AudioRevisionRecorder } from './common/AudioRevisionRecorder';
 
 /**
  * A round of client changes, written down while it is still fresh.
@@ -45,6 +46,17 @@ export function ChangesModal({ jobId, jobTitle, editorName, onClose, onSaved }: 
         <p className="muted" style={{ marginTop: 0 }}>{jobTitle}</p>
 
         <form onSubmit={event => void save(event)}>
+          <AudioRevisionRecorder
+            jobTitle={jobTitle}
+            rawTextNotes={notes}
+            onExtracted={({ points, timecodes: extTimecodes }) => {
+              setNotes(prev => (prev.trim() ? `${prev.trim()}\n\n${points}` : points));
+              if (extTimecodes) {
+                setTimecodes(prev => (prev.trim() ? `${prev.trim()}, ${extTimecodes}` : extTimecodes));
+              }
+            }}
+          />
+
           <label>What needs changing
             <textarea required autoFocus value={notes} onChange={e => setNotes(e.target.value)}
               placeholder="Colour on the ceremony is too warm. Swap the second song. Cut the speech at the end." />

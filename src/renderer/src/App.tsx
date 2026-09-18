@@ -26,7 +26,7 @@ export default function App() {
     });
     return () => { generation++; unsubscribe(); };
   }, [retry]);
-  if (loading) return <div className="session-screen"><h1>Baawaray</h1><p>Verifying your studio session…</p></div>;
+  if (loading) return <div className="session-screen"><h1 className="brand-title font-tan-aegean">BAAWARAY</h1><p>Verifying your studio session…</p></div>;
   if (error) return <div className="session-screen"><h1>Studio connection</h1><p role="alert">{error}</p><div className="actions"><button onClick={() => setRetry(n => n + 1)}>Retry connection</button><button onClick={() => void signOut(auth)}>Sign out</button></div></div>;
   if (!session) return <Login onLogin={() => {}} />;
   return <AppProvider uid={session.uid} isOwner={session.isOwner}><Dashboard /></AppProvider>;

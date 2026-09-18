@@ -17,6 +17,7 @@ import type {
   FreelanceActivityLog,
   CrewRoleConfig,
 } from '../types';
+import type { FreelanceDoubt } from '../types/freelance';
 import type { InvoiceSnapshot, Transfer, WorkTarget } from '../../../shared/contracts';
 
 const clean = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -89,7 +90,7 @@ export async function sendBaawarayDeliverableToPostProduction(
   services: string[]
 ): Promise<string[]> {
   if (!clientId || !deliverable?.id || (!deliverable.rawDataLink && deliverable.rawDataSource !== 'hard_drive' && deliverable.rawDataSource !== 'upload')) {
-    throw new Error('Upload raw footage to Backblaze B2 or log hard drive handover before sending this deliverable to Post Production.');
+    throw new Error('Upload raw footage to Google Drive or log hard drive handover before sending this deliverable to Post Production.');
   }
   if (services.length === 0) throw new Error('Choose at least one Post Production service.');
   const partnerId = await ensureBaawarayFilmsStudio();
@@ -123,6 +124,8 @@ export async function sendBaawarayDeliverableToPostProduction(
       clientName: clientName, clientPhone: clientPhone, rawDataLink: deliverable.rawDataLink,
       rawDataSource: deliverable.rawDataSource, rawDurationHours: deliverable.rawDurationHours,
       rawDurationMinutes: deliverable.rawDurationMinutes, rawPhotoCount: deliverable.rawPhotoCount,
+      hardDriveNotes: deliverable.hardDriveNotes,
+      hddStatus: deliverable.rawDataSource === 'hard_drive' ? 'sent_to_editor' : 'none',
       clientCharge, pricing,
       sourceCompany: 'baawaray-films', sourceClientId: String(clientId), sourceDeliverableId: deliverable.id,
       editorName: '', editorPhone: '', dueDate: deliverable.dueDate || '',
@@ -256,6 +259,67 @@ export async function createExtra(clientId: string, extra: Pick<ClientDeliverabl
   return id;
 }
 
+export async function updateClientDeliverable(
+  clientId: string,
+  deliverableId: string,
+  updates: Partial<ClientDeliverable>
+): Promise<void> {
+  if (!clientId || !deliverableId) throw new Error('Client ID and deliverable ID are required.');
+  const ref = doc(db, 'clients', clientId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Client no longer exists.');
+    const items = (snap.data().deliverables || []) as ClientDeliverable[];
+    const idx = items.findIndex(d => d.id === deliverableId);
+    if (idx === -1) throw new Error('Deliverable was not found.');
+
+    const updated = clean({
+      ...items[idx],
+      ...updates,
+    });
+    items[idx] = updated;
+    tx.update(ref, { deliverables: items });
+
+    // If there are linked post-production jobs, keep due date and notes synced
+    if (updated.postProductionJobIds && updated.postProductionJobIds.length > 0) {
+      for (const jId of updated.postProductionJobIds) {
+        const jobRef = doc(db, 'freelance_jobs', jId);
+        const jobUpdates: any = {};
+        if (updates.dueDate !== undefined) jobUpdates.dueDate = updates.dueDate;
+        if (updates.notes !== undefined) jobUpdates.editingInstructions = updates.notes;
+        if (updates.title !== undefined) jobUpdates.description = updates.title;
+        if (Object.keys(jobUpdates).length > 0) {
+          tx.update(jobRef, clean(jobUpdates));
+        }
+      }
+    }
+  });
+}
+
+export async function deleteClientDeliverable(
+  clientId: string,
+  deliverableId: string
+): Promise<void> {
+  if (!clientId || !deliverableId) throw new Error('Client ID and deliverable ID are required.');
+  const ref = doc(db, 'clients', clientId);
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Client no longer exists.');
+    const items = (snap.data().deliverables || []) as ClientDeliverable[];
+    const target = items.find(d => d.id === deliverableId);
+    if (!target) return;
+
+    tx.update(ref, { deliverables: items.filter(d => d.id !== deliverableId) });
+
+    if (target.postProductionJobIds && target.postProductionJobIds.length > 0) {
+      for (const jId of target.postProductionJobIds) {
+        const jobRef = doc(db, 'freelance_jobs', jId);
+        tx.delete(jobRef);
+      }
+    }
+  });
+}
+
 /** Apply an explicitly reviewed billing snapshot. Upload retries never call this. */
 export async function saveBilling(target: WorkTarget, invoice: InvoiceSnapshot, expectedCharge: number): Promise<InvoiceSnapshot> {
   const now = new Date().toISOString();
@@ -377,9 +441,18 @@ export async function attachVerifiedTransfer(job: Transfer): Promise<void> {
   }
 }
 
-export async function saveUploaderSettings(settings: { keepPercentDefault: number; photosPerSheet: number; excludedBillingFolders: string[]; countPhotoPairsOnce: boolean; keepAwake: boolean; destination?: 'drive' | 'b2' }): Promise<void> {
+export async function saveUploaderSettings(settings: {
+  keepPercentDefault: number;
+  photosPerSheet: number;
+  excludedBillingFolders: string[];
+  countPhotoPairsOnce: boolean;
+  keepAwake: boolean;
+  destination?: 'drive';
+  sharedDriveId?: string;
+  sharedDriveLink?: string;
+}): Promise<void> {
   if (settings.keepPercentDefault < 0 || settings.keepPercentDefault > 100 || !Number.isInteger(settings.photosPerSheet) || settings.photosPerSheet < 1 || settings.photosPerSheet > 100) throw new Error('Invalid uploader defaults.');
-  await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.uploader': settings });
+  await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.uploader': clean(settings) });
 }
 
 export async function saveDropboxSettings(config: { appKey?: string; appSecret?: string; refreshToken?: string }): Promise<void> {
@@ -388,21 +461,6 @@ export async function saveDropboxSettings(config: { appKey?: string; appSecret?:
 
 export async function saveCrewRolesSettings(crewRoles: CrewRoleConfig[]): Promise<void> {
   await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.crewRoles': clean(crewRoles) });
-}
-
-export interface B2Config {
-  keyId: string;
-  applicationKey: string;
-  bucketName: string;
-  bucketId?: string;
-  endpoint?: string;
-  region?: string;
-  downloadUrl?: string;
-  enabled?: boolean;
-}
-
-export async function saveB2Settings(config: Partial<B2Config>): Promise<void> {
-  await updateDoc(doc(db, 'studio_config', 'main'), { 'studioSettings.b2': clean(config) });
 }
 
 /**
@@ -451,15 +509,54 @@ export async function syncEditorAuthUid(jobId: string, member: TeamMember): Prom
   });
 }
 
-export async function submitEditorDelivery(jobId: string, link: string, advance: boolean): Promise<void> {
+export async function submitEditorDelivery(
+  jobId: string,
+  link: string,
+  advance: boolean,
+  options?: {
+    revisionId?: string;
+    editorNotes?: string;
+    actor?: string;
+  }
+): Promise<void> {
   const value = link.trim();
   if (!value) throw new Error('Paste the link to your finished work.');
   if (!/^https?:\/\/\S+$/i.test(value)) throw new Error('That does not look like a link. It should start with https://');
   if (value.length > 1900) throw new Error('That link is too long to save.');
 
   try {
-    await updateDoc(doc(db, 'freelance_jobs', jobId),
-      advance ? { deliveryLink: value, stage: 'draft_received' } : { deliveryLink: value });
+    const now = new Date();
+    const snap = await getDoc(doc(db, 'freelance_jobs', jobId));
+    const job = snap.exists() ? (snap.data() as FreelanceJob) : null;
+
+    const updates: Record<string, any> = {
+      deliveryLink: value,
+    };
+
+    if (advance) {
+      updates.stage = 'draft_received';
+      updates.draftReceivedDate = now.toISOString().slice(0, 10);
+    }
+
+    if (job && options?.revisionId && options?.editorNotes) {
+      updates.revisions = (job.revisions || []).map(r =>
+        r.id === options.revisionId
+          ? { ...r, editorNotes: options.editorNotes!.trim(), editorFeedbackDate: now.toISOString().slice(0, 10) }
+          : r
+      );
+    }
+
+    if (job) {
+      const newLog: FreelanceActivityLog = {
+        id: `log_${Date.now()}`,
+        timestamp: now.toISOString(),
+        action: advance ? 'Editor delivered work for review' : 'Editor updated delivery link',
+        actor: options?.actor || 'Editor',
+      };
+      updates.activityLogs = clean([...(job.activityLogs || []), newLog]);
+    }
+
+    await updateDoc(doc(db, 'freelance_jobs', jobId), clean(updates));
   } catch (error) {
     const code = (error as { code?: string })?.code || '';
     if (code === 'permission-denied') {
@@ -473,6 +570,107 @@ export async function submitEditorDelivery(jobId: string, link: string, advance:
     }
     throw new Error(`${(error as Error)?.message || 'That could not be saved.'}${code ? ` (${code})` : ''}`);
   }
+}
+
+export async function submitEditorDoubt(
+  jobId: string,
+  doubt: {
+    question: string;
+    category?: FreelanceDoubt['category'];
+    askedBy?: string;
+  }
+): Promise<FreelanceDoubt> {
+  const q = doubt.question.trim();
+  if (!q) throw new Error('Enter your question or doubt.');
+
+  const snap = await getDoc(doc(db, 'freelance_jobs', jobId));
+  if (!snap.exists()) throw new Error('That job no longer exists.');
+  const job = snap.data() as FreelanceJob;
+
+  const now = new Date();
+  const newDoubt: FreelanceDoubt = {
+    id: `dbt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    question: q,
+    category: doubt.category || 'general',
+    askedBy: doubt.askedBy || 'Editor',
+    askedAt: now.toISOString().slice(0, 10),
+    status: 'open',
+  };
+
+  const updatedDoubts = [...(job.doubts || []), newDoubt];
+  const newLog: FreelanceActivityLog = {
+    id: `log_${Date.now()}`,
+    timestamp: now.toISOString(),
+    action: `Editor asked query (${newDoubt.category}): ${q.slice(0, 60)}`,
+    actor: doubt.askedBy || 'Editor',
+  };
+  const updatedLogs = [...(job.activityLogs || []), newLog];
+
+  await updateDoc(doc(db, 'freelance_jobs', jobId), {
+    doubts: clean(updatedDoubts),
+    activityLogs: clean(updatedLogs),
+  });
+
+  return newDoubt;
+}
+
+export async function resolveEditorDoubt(
+  jobId: string,
+  doubtId: string,
+  resolvedBy?: string
+): Promise<void> {
+  const snap = await getDoc(doc(db, 'freelance_jobs', jobId));
+  if (!snap.exists()) throw new Error('That job no longer exists.');
+  const job = snap.data() as FreelanceJob;
+
+  const now = new Date();
+  const updatedDoubts = (job.doubts || []).map(d =>
+    d.id === doubtId ? { ...d, status: 'resolved' as const, resolvedAt: now.toISOString().slice(0, 10) } : d
+  );
+
+  const newLog: FreelanceActivityLog = {
+    id: `log_${Date.now()}`,
+    timestamp: now.toISOString(),
+    action: `Editor marked query resolved (${doubtId})`,
+    actor: resolvedBy || 'Editor',
+  };
+  const updatedLogs = [...(job.activityLogs || []), newLog];
+
+  await updateDoc(doc(db, 'freelance_jobs', jobId), {
+    doubts: clean(updatedDoubts),
+    activityLogs: clean(updatedLogs),
+  });
+}
+
+export async function submitEditorRevisionFeedback(
+  jobId: string,
+  revisionId: string,
+  editorNotes: string,
+  actor?: string
+): Promise<void> {
+  const snap = await getDoc(doc(db, 'freelance_jobs', jobId));
+  if (!snap.exists()) throw new Error('That job no longer exists.');
+  const job = snap.data() as FreelanceJob;
+
+  const now = new Date();
+  const updatedRevisions = (job.revisions || []).map(r =>
+    r.id === revisionId
+      ? { ...r, editorNotes: editorNotes.trim(), editorFeedbackDate: now.toISOString().slice(0, 10) }
+      : r
+  );
+
+  const newLog: FreelanceActivityLog = {
+    id: `log_${Date.now()}`,
+    timestamp: now.toISOString(),
+    action: 'Editor responded to client revision',
+    actor: actor || 'Editor',
+  };
+  const updatedLogs = [...(job.activityLogs || []), newLog];
+
+  await updateDoc(doc(db, 'freelance_jobs', jobId), {
+    revisions: clean(updatedRevisions),
+    activityLogs: clean(updatedLogs),
+  });
 }
 
 /**
@@ -504,7 +702,23 @@ export async function advanceStage(jobId: string, stage: string, detail: string)
         ...(snap.data().finalDeliveredDate ? {} : { finalDeliveredDate: date }),
       },
     };
-    tx.update(ref, { stage, ...(stageDates[stage] || {}) });
+
+    const isPublicAction = !detail.toLowerCase().includes('invoice') &&
+      !detail.toLowerCase().includes('₹') &&
+      !detail.toLowerCase().includes('payout');
+    
+    const jobUpdate: Record<string, any> = { stage, ...(stageDates[stage] || {}) };
+    if (isPublicAction) {
+      const existingLogs = (snap.data().activityLogs || []) as FreelanceActivityLog[];
+      jobUpdate.activityLogs = clean([...existingLogs, {
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: now.toISOString(),
+        action: detail,
+        actor: 'Studio Owner',
+      }]);
+    }
+
+    tx.update(ref, clean(jobUpdate));
     // The log belongs in the billing half. Entries elsewhere in the app carry
     // figures — "Desktop invoice issued: DU-… 45,000" — and the parent document
     // is readable by the assigned editor and the partner studio. Writing a log
@@ -571,7 +785,12 @@ export async function confirmClientFinalDownload(jobId: string): Promise<void> {
  * because two people logging changes at once would otherwise both write
  * "round 2" and one would silently replace the other.
  */
-export async function logRevision(jobId: string, feedbackNotes: string, timecodes?: string): Promise<number> {
+export async function logRevision(
+  jobId: string,
+  feedbackNotes: string,
+  timecodes?: string,
+  revisionType?: 'internal' | 'client'
+): Promise<number> {
   if (!feedbackNotes.trim()) throw new Error('Write down what needs changing.');
   const now = new Date();
   return runTransaction(db, async tx => {
@@ -582,16 +801,35 @@ export async function logRevision(jobId: string, feedbackNotes: string, timecode
     const billing = await tx.get(billingRef);
     const existing = (snap.data().revisions || []) as { roundNumber?: number }[];
     const roundNumber = existing.reduce((highest, r) => Math.max(highest, Number(r.roundNumber) || 0), 0) + 1;
+    const isInternal = revisionType === 'internal' || feedbackNotes.startsWith('[Internal');
+    const actionLabel = isInternal ? 'Internal studio changes requested' : `Changes received — round ${roundNumber}`;
+    const newRev = {
+      id: crypto.randomUUID(),
+      roundNumber,
+      receivedDate: now.toISOString().slice(0, 10),
+      feedbackNotes: feedbackNotes.trim(),
+      timecodes: timecodes?.trim() || '',
+      status: 'pending',
+      revisionType: isInternal ? 'internal' : 'client',
+    };
+    const existingLogs = (snap.data().activityLogs || []) as FreelanceActivityLog[];
+    const jobLogs = [...existingLogs, {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: now.toISOString(),
+      action: actionLabel,
+      details: feedbackNotes.trim().slice(0, 300),
+      actor: 'Studio Owner',
+    }];
     tx.update(ref, clean({
-      revisions: [...existing, {
-        id: crypto.randomUUID(), roundNumber, receivedDate: now.toISOString().slice(0, 10),
-        feedbackNotes: feedbackNotes.trim(), timecodes: timecodes?.trim() || '', status: 'pending',
-      }],
-      stage: 'changes_received',
+      revisions: [...existing, newRev],
+      stage: isInternal ? 'internal_changes' : 'changes_received',
+      changesReceivedDate: now.toISOString().slice(0, 10),
+      changesSentToEditorDate: now.toISOString().slice(0, 10),
+      activityLogs: jobLogs,
     }));
     tx.set(billingRef, { activityLogs: [...(billing.data()?.activityLogs || []), {
       id: crypto.randomUUID(), timestamp: now.toISOString(),
-      action: `Changes received — round ${roundNumber}`, details: feedbackNotes.trim().slice(0, 300), actor: 'Studio Owner',
+      action: actionLabel, details: feedbackNotes.trim().slice(0, 300), actor: 'Studio Owner',
     }] }, { merge: true });
     return roundNumber;
   });
@@ -608,14 +846,26 @@ export async function markRevisionShared(jobId: string): Promise<void> {
     const billing = await tx.get(billingRef);
     const revisions = (snap.data().revisions || []) as Record<string, unknown>[];
     const open = [...revisions].reverse().find(r => r.status === 'pending');
+    const existingLogs = (snap.data().activityLogs || []) as FreelanceActivityLog[];
+    const isInternal = (open as any)?.revisionType === 'internal' || (open as any)?.feedbackNotes?.startsWith('[Internal');
+    const shareAction = isInternal
+      ? `Internal changes shared with editor${open ? ` — round ${open.roundNumber}` : ''}`
+      : `Changes shared with the editor${open ? ` — round ${open.roundNumber}` : ''}`;
     tx.update(ref, clean({
       revisions: revisions.map(r => r === open
         ? { ...r, status: 'in_progress', sharedWithEditorDate: now.toISOString().slice(0, 10) } : r),
-      stage: 'changes_sent_to_editor',
+      stage: isInternal ? 'internal_changes' : 'changes_sent_to_editor',
+      changesSentToEditorDate: now.toISOString().slice(0, 10),
+      activityLogs: [...existingLogs, {
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        timestamp: now.toISOString(),
+        action: shareAction,
+        actor: 'Studio Owner',
+      }],
     }));
     tx.set(billingRef, { activityLogs: [...(billing.data()?.activityLogs || []), {
       id: crypto.randomUUID(), timestamp: now.toISOString(),
-      action: `Changes shared with the editor${open ? ` — round ${open.roundNumber}` : ''}`, actor: 'Studio Owner',
+      action: shareAction, actor: 'Studio Owner',
     }] }, { merge: true });
   });
 }
@@ -630,7 +880,7 @@ export async function markRevisionShared(jobId: string): Promise<void> {
  */
 export async function saveRawDataLink(target: WorkTarget, link: string): Promise<void> {
   const value = link.trim();
-  if (value && !/^(https?|b2):\/\/\S+$/i.test(value)) throw new Error('Paste a full link, starting with https:// or b2://');
+  if (value && !/^https?:\/\/\S+$/i.test(value)) throw new Error('Paste a full link, starting with https://');
   if (target.kind === 'freelance') {
     const docId = (target as any)._documentId || target.id;
     await setDoc(doc(db, 'freelance_jobs', docId), { rawDataLink: value || null }, { merge: true });
@@ -673,6 +923,7 @@ export async function saveManualRawData(target: WorkTarget, input: {
         id: target.id, title: target.title, category: target.serviceType, status: 'pending',
         rawDataLink: data.rawDataLink, rawDataSource: input.source, dueDate: target.dueDate,
         rawDurationHours: input.hours, rawDurationMinutes: input.minutes, rawPhotoCount: input.photoCount,
+        hardDriveNotes: data.hardDriveNotes,
       } as ClientDeliverable, [target.serviceType]);
     }
   }

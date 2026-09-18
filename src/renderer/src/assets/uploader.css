@@ -186,7 +186,17 @@ button.danger { color: var(--burgundy); border-color: color-mix(in srgb, var(--b
   gap: 18px; margin-top: 16px; padding-top: 16px;
   border-top: 1px solid color-mix(in srgb, var(--line) 26%, transparent);
 }
-.job-cell { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+.job-cell {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  overflow: hidden;
+}
 .job-cell .cell-label {
   font-family: var(--font-caption); font-size: 10px; letter-spacing: .14em;
   text-transform: uppercase; color: var(--muted);
@@ -342,5 +352,327 @@ button.danger { color: var(--burgundy); border-color: color-mix(in srgb, var(--b
   text-align: center; gap: 6px; padding: 32px; background: var(--paper);
 }
 .session-screen h1 { font-family: var(--font-heading); font-size: 42px; margin: 0; }
+.session-screen .brand-title {
+  font-family: 'TAN Aegean', 'TAN-Aegean', 'TAN Meringue', var(--font-heading);
+  font-size: 44px;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
 .session-screen p { color: var(--muted); max-width: 46ch; }
 .session-screen .actions { justify-content: center; }
+
+/* ------------------------------------------------ Activity Notification Sidebar --- */
+
+.activity-bell-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.activity-bell-trigger:hover {
+  background: var(--paper);
+  border-color: var(--burgundy);
+  color: var(--burgundy);
+}
+
+.activity-bell-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #dc2626;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  border: 1.5px solid var(--paper);
+}
+
+.activity-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+  z-index: 1000;
+  display: flex;
+  justify-content: flex-end;
+  animation: drawerFadeIn 0.2s ease;
+}
+
+.activity-drawer {
+  width: 440px;
+  max-width: 90vw;
+  height: 100vh;
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.12);
+  animation: drawerSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.activity-drawer-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  flex-shrink: 0;
+}
+
+.activity-icon-badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--burgundy) 10%, transparent);
+  color: var(--burgundy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.activity-unread-pill {
+  background: #dc2626;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 12px;
+  letter-spacing: 0.02em;
+}
+
+.activity-mark-read-btn {
+  border: none;
+  background: transparent;
+  color: var(--burgundy);
+  font-size: 11.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.activity-mark-read-btn:hover {
+  background: color-mix(in srgb, var(--burgundy) 8%, transparent);
+}
+
+.activity-filter-bar {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  background: var(--paper);
+  flex-shrink: 0;
+}
+
+.activity-filter-pill {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 20px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.activity-filter-pill:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.activity-filter-pill.active {
+  background: var(--burgundy);
+  color: #fff;
+  border-color: var(--burgundy);
+}
+
+.activity-stream-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.activity-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.activity-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding-left: 2px;
+}
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.activity-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  position: relative;
+  transition: all 0.15s ease;
+}
+.activity-card:hover {
+  border-color: var(--burgundy);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+.activity-card.unread {
+  background: color-mix(in srgb, var(--paper) 60%, #fff);
+  border-left: 3.5px solid var(--burgundy);
+}
+
+.activity-card-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.activity-card-icon.upload { background: #fce7f3; color: #be185d; }
+.activity-card-icon.download { background: #e0f2fe; color: #0369a1; }
+.activity-card-icon.revision { background: #fee2e2; color: #b91c1c; }
+.activity-card-icon.doubt { background: #fef3c7; color: #b45309; }
+.activity-card-icon.payment { background: #dcfce7; color: #15803d; }
+.activity-card-icon.done { background: #dcfce7; color: #15803d; }
+.activity-card-icon.stage { background: #f3e8ff; color: #7e22ce; }
+
+.activity-card-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.activity-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-card-time {
+  font-size: 10.5px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.activity-card-action {
+  font-size: 12px;
+  color: var(--ink);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.activity-card-details {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 3px 0 0;
+  line-height: 1.35;
+  font-style: italic;
+}
+
+.activity-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.activity-card-code {
+  font-family: monospace;
+  font-size: 10px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--ink);
+}
+
+.activity-card-tag {
+  font-size: 10px;
+  background: color-mix(in srgb, var(--burgundy) 10%, transparent);
+  color: var(--burgundy);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.activity-card-actor {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.activity-card-arrow {
+  align-self: center;
+  color: var(--muted);
+  opacity: 0.4;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
+}
+.activity-card:hover .activity-card-arrow {
+  opacity: 1;
+  color: var(--burgundy);
+}
+
+.activity-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--muted);
+}
+

@@ -1,7 +1,7 @@
 import { FreelanceJob } from '../types/freelance';
 import { TeamMember } from '../types';
 
-export type EditorWorkflowStage = 'download_pending' | 'in_process' | 'sent_for_review' | 'finalized';
+export type EditorWorkflowStage = 'download_pending' | 'in_process' | 'changes_needed' | 'sent_for_review' | 'finalized';
 
 export interface UnavailablePeriod {
   id: string;
@@ -48,31 +48,36 @@ const DAY_MS = 86400000;
 
 /** Parse YYYY-MM-DD to UTC Date to avoid timezone shift */
 export function parseDate(iso: string): Date {
-  const clean = iso.slice(0, 10);
-  const [y, m, d] = clean.split('-').map(Number);
-  return new Date(Date.UTC(y, (m || 1) - 1, d || 1));
+  const parts = iso.slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
 }
 
-/** Format Date to YYYY-MM-DD */
-export function formatIsoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+export function formatIsoDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
-/** Add calendar days to YYYY-MM-DD */
 export function addCalendarDays(iso: string, days: number): string {
-  return formatIsoDate(new Date(parseDate(iso).getTime() + days * DAY_MS));
+  const d = parseDate(iso);
+  d.setUTCDate(d.getUTCDate() + days);
+  return formatIsoDate(d);
 }
 
-/** Check if a date falls on an editor off-day / leave */
-export function isDayUnavailable(iso: string, unavailablePeriods?: UnavailablePeriod[]): boolean {
-  if (!unavailablePeriods || unavailablePeriods.length === 0) return false;
-  const dateOnly = iso.slice(0, 10);
-  return unavailablePeriods.some(p => dateOnly >= p.from && dateOnly <= p.to);
+/** Check if a given date string (YYYY-MM-DD) falls inside an unavailable / off day range */
+export function isDayUnavailable(dateIso: string, periods?: UnavailablePeriod[]): boolean {
+  if (!periods || periods.length === 0) return false;
+  const target = dateIso.slice(0, 10);
+  return periods.some(p => {
+    const from = p.from.slice(0, 10);
+    const to = p.to.slice(0, 10);
+    return target >= from && target <= to;
+  });
 }
 
-/** Get the next working day (skipping off days) */
-export function advanceToNextWorkingDay(iso: string, unavailablePeriods?: UnavailablePeriod[]): string {
-  let curr = iso.slice(0, 10);
+/**
+ * Find the next available working day starting on or after candidateIso.
+ */
+export function nextAvailableDate(candidateIso: string, unavailablePeriods?: UnavailablePeriod[]): string {
+  let curr = candidateIso.slice(0, 10);
   let guard = 0;
   while (isDayUnavailable(curr, unavailablePeriods) && guard < 365) {
     curr = addCalendarDays(curr, 1);
@@ -82,21 +87,26 @@ export function advanceToNextWorkingDay(iso: string, unavailablePeriods?: Unavai
 }
 
 /**
-/**
  * Categorize a job into editor workflow stages:
- * - 'in_process': Actively assigned to editor (due date runs continuously, downloads can happen anytime)
- * - 'sent_for_review': Deliverable uploaded/submitted to Dropbox, awaiting review
+ * - 'download_pending': Raw data needs to be downloaded to local disk
+ * - 'in_process': Actively assigned to editor for initial cut
+ * - 'changes_needed': Revision or internal studio changes requested (2-day priority turnaround)
+ * - 'sent_for_review': Deliverable uploaded/submitted, awaiting client or internal review
  * - 'finalized': Approved, final delivered or completed (shows in Payments)
  */
 export function getEditorWorkflowStage(job: FreelanceJob): EditorWorkflowStage {
   if (job.stage === 'final_delivered' || job.stage === 'completed') {
     return 'finalized';
   }
-  if (job.stage === 'draft_received' || job.stage === 'sent_to_client') {
+  if (job.stage === 'draft_received' || job.stage === 'sent_to_client' || job.stage === 'internal_review') {
     return 'sent_for_review';
   }
-  if (job.stage === 'changes_received' || job.stage === 'changes_sent_to_editor') {
-    return 'in_process';
+  if (
+    job.stage === 'changes_received' ||
+    job.stage === 'changes_sent_to_editor' ||
+    job.stage === 'internal_changes'
+  ) {
+    return 'changes_needed';
   }
   if (!job.downloadedAt) {
     return 'download_pending';
@@ -151,9 +161,9 @@ export function calculateDynamicDueDates(
   const unavailablePeriods: UnavailablePeriod[] = member?.unavailablePeriods || [];
   const isAvailableToday = !isDayUnavailable(todayIso, unavailablePeriods);
 
-  // 1. First, handle all jobs undergoing client changes (independent 2-day turnaround)
+  // 1. First, handle all jobs undergoing client or internal studio changes (independent 2-day turnaround)
   const changeJobs = jobs.filter(
-    j => j.stage === 'changes_received' || j.stage === 'changes_sent_to_editor'
+    j => j.stage === 'changes_received' || j.stage === 'changes_sent_to_editor' || j.stage === 'internal_changes'
   );
 
   for (const job of changeJobs) {

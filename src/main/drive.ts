@@ -52,7 +52,17 @@ export class DriveClient {
   async ensureFolder(id: string, name: string, parent: string | undefined, signal?: AbortSignal): Promise<void> {
     const existing = await this.metadata(id, signal);
     if (existing) {
-      if (existing.trashed || existing.mimeType !== 'application/vnd.google-apps.folder' || (parent && !existing.parents?.includes(parent))) throw new Error('A destination folder was moved or removed. Review it before continuing.');
+      if (existing.mimeType !== 'application/vnd.google-apps.folder') {
+        throw new Error('A destination folder was moved or removed. Review it before continuing.');
+      }
+      if (existing.trashed) {
+        await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, {
+          method: 'PATCH', signal, headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trashed: false })
+        }, [200]).catch(() => {
+          throw new Error('A destination folder was moved or removed. Review it before continuing.');
+        });
+      }
       return;
     }
     await this.request('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', { method: 'POST', signal,

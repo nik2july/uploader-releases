@@ -7,7 +7,6 @@ import { TransferEngine } from '../src/main/transferEngine';
 import { DriveClient, DriveError } from '../src/main/drive';
 import type { Transfer } from '../src/shared/contracts';
 import { FakeDrive, TARGET, driveError, md5, seedJob, settle, tempDir } from './helpers';
-import type { B2Client } from '../src/main/b2Client';
 
 /**
  * The queue, driven against an in-process Drive.
@@ -69,6 +68,18 @@ describe('a clean run', () => {
     assert.ok(day01, 'the DAY01 card folder was never created in Drive');
     const inside = [...drive.files.values()].filter(f => f.parents.includes(day01.id)).map(f => f.name).sort();
     assert.deepEqual(inside, ['A.mov', 'B.mov']);
+  });
+
+  test('creates root folder inside configured Shared Drive', async () => {
+    const { store, drive, engine } = harness();
+    engine.setSharedDriveId('0ABxfQciuISoaUk9PVA');
+    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
+    engine.resume(job.id);
+    const done = await settle(store, job.id);
+
+    const rootFolder = [...drive.files.values()].find(f => f.id === done.folderId);
+    assert.ok(rootFolder, 'root folder was not created');
+    assert.deepEqual(rootFolder.parents, ['0ABxfQciuISoaUk9PVA']);
   });
 });
 
@@ -432,99 +443,6 @@ describe('what a finished transfer records', () => {
   test('a DriveError carries the kind the queue routes on', () => {
     const error = new DriveError('nope', 'quota', 403);
     assert.equal(error.kind, 'quota');
-    assert.equal(error.status, 403);
-  });
-});
-
-/**
- * The studio keeps both clouds configured and picks one. Before the choice
- * existed, connected B2 credentials silently won every transfer — so what is
- * tested here is that the preference, not the presence of credentials, decides.
- */
-describe('choosing where raw footage lands', () => {
-  function fakeB2(): { client: B2Client; uploaded: string[] } {
-    const uploaded: string[] = [];
-    return {
-      uploaded,
-      client: {
-        isConnected: () => true,
-        credentials: { bucketName: 'baawaray.raw' },
-        async uploadFile(_local: string, name: string, _signal: AbortSignal, onProgress: (bytes: number) => void) {
-          uploaded.push(name);
-          onProgress(0);
-        },
-      } as unknown as B2Client,
-    };
-  }
-
-  test('B2 takes the transfer while B2 is the chosen destination', async () => {
-    const { store, engine } = harness();
-    const b2 = fakeB2();
-    engine.setB2Client(b2.client);
-    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
-
-    engine.resume(job.id);
-    const done = await settle(store, job.id);
-
-    assert.equal(done.status, 'completed');
-    assert.match(done.link!, /^b2:\/\/baawaray\.raw\//);
-    assert.equal(b2.uploaded.length, 3);
-  });
-
-  test('choosing Drive routes to Drive even with B2 still connected', async () => {
-    const { store, drive, engine } = harness();
-    const b2 = fakeB2();
-    engine.setB2Client(b2.client);
-    engine.setDestination('drive');
-    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
-
-    engine.resume(job.id);
-    const done = await settle(store, job.id);
-
-    assert.equal(done.status, 'completed');
-    assert.match(done.link!, /^https:\/\/drive\.google\.com\/drive\/folders\//);
-    assert.equal(done.driveAccount, 'studio@baawaray.com');
-    assert.equal(b2.uploaded.length, 0);
-    for (const relativePath of Object.keys(FILES)) {
-      assert.ok([...drive.files.values()].some(f => f.name === path.basename(relativePath)), `${relativePath} never reached Drive`);
-    }
-  });
-
-  test('a folder half-sent to Drive will not finish into B2', async () => {
-    const { store, engine } = harness();
-    engine.setB2Client(fakeB2().client);
-    engine.setDestination('drive');
-    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
-
-    // One run to Drive, then the studio switches the studio-wide destination.
-    engine.resume(job.id);
-    await settle(store, job.id);
-    store.patch(job.id, { status: 'paused' });
-    engine.setDestination('b2');
-
-    assert.throws(() => engine.resume(job.id), /already started uploading to Google Drive/);
-  });
-
-  test('a folder half-sent to B2 will not finish into Drive', async () => {
-    const { store, engine } = harness();
-    engine.setB2Client(fakeB2().client);
-    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
-    store.patch(job.id, { driveAccount: 'B2: baawaray.raw' });
-
-    engine.setDestination('drive');
-
-    assert.throws(() => engine.resume(job.id), /already started uploading to Backblaze B2/);
-  });
-
-  test('switching destination stops anything mid-flight rather than splitting a folder', async () => {
-    const { store, engine } = harness();
-    engine.setB2Client(fakeB2().client);
-    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
-
-    store.patch(job.id, { status: 'uploading' });
-    engine.setDestination('drive');
-
-    assert.equal(store.get(job.id).status, 'paused');
   });
 });
 

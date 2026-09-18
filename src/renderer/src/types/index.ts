@@ -961,14 +961,6 @@ export interface StudioSettingsConfig {
     appSecret?: string;
     refreshToken?: string;
   };
-  b2?: {
-    keyId?: string;
-    applicationKey?: string;
-    bucketName?: string;
-    bucketId?: string;
-    endpoint?: string;
-    region?: string;
-  };
   tierCategories?: TierCategoryConfig[];
   /** Role groups behind the Events / Deliverables tabs of the quotation builder. */
   roleGroups?: StudioRoleGroup[];

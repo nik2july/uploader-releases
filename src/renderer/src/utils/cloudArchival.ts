@@ -67,7 +67,7 @@ export function extractDriveFolderId(link: string): string | undefined {
 
 /**
  * Categorizes and calculates 30-day cloud archival lifecycles for:
- * 1. Backblaze B2 Raw Footage (multi-editor download check + 30 day countdown)
+ * 1. Google Drive Raw Footage (multi-editor download check + 30 day countdown)
  * 2. Dropbox Deliverables (completed >= 30 days retention check)
  */
 export function calculateCloudArchivalSummary(
@@ -77,7 +77,7 @@ export function calculateCloudArchivalSummary(
   const todayIso = (referenceDate || new Date().toISOString()).slice(0, 10);
   const todayTime = parseDate(todayIso).getTime();
 
-  // --- 1. BACKBLAZE B2 RAW DATA LIFECYCLE ---
+  // --- 1. GOOGLE DRIVE RAW DATA LIFECYCLE ---
   const rawGroupsMap = new Map<string, FreelanceJob[]>();
 
   for (const job of jobs) {

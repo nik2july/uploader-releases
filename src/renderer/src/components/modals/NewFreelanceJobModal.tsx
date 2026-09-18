@@ -100,6 +100,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   // recorded on their team record as how they are paid, and asking for it again here
   // only created a second answer that could contradict the first.
   const [editorError, setEditorError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   /**
    * Why Save did nothing, said next to Save.
    *
@@ -286,6 +287,71 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
       setRateCameFromCard(false);
     }
   }, [cardRate, rate, rateCameFromCard]);
+
+  // Synchronize draft fields whenever initialJob or modal visibility changes
+  useEffect(() => {
+    if (!isOpen) return;
+    if (initialJob) {
+      setTitle(initialJob.title || '');
+      setFreelanceClientId(initialJob.freelanceClientId);
+      setClientName(initialJob.clientName || '');
+      setClientPhone(initialJob.clientPhone || '');
+      setServiceType(initialJob.serviceType || '');
+      setUseManualEditor(Boolean(!initialJob.editorMemberId && initialJob.editorName));
+      setEditorName(initialJob.editorName || '');
+      setEditorPhone(initialJob.editorPhone || '');
+      setEditorMemberId(initialJob.editorMemberId);
+
+      const jobRate = initialJob.pricing?.rate !== undefined && initialJob.pricing.rate > 0
+        ? initialJob.pricing.rate
+        : '';
+      setRate(jobRate);
+      setOutputMinutes(
+        initialJob.pricing?.durationMinutes !== undefined
+          ? initialJob.pricing.durationMinutes
+          : initialJob.rawDurationMinutes !== undefined
+          ? initialJob.rawDurationMinutes
+          : ''
+      );
+      setOutputSeconds(initialJob.pricing?.durationSeconds !== undefined ? initialJob.pricing.durationSeconds : '');
+      setRawHours(
+        initialJob.pricing?.durationHours !== undefined
+          ? initialJob.pricing.durationHours
+          : initialJob.rawDurationHours !== undefined
+          ? initialJob.rawDurationHours
+          : ''
+      );
+      setQuantity(
+        initialJob.pricing?.quantity !== undefined
+          ? initialJob.pricing.quantity
+          : initialJob.rawPhotoCount !== undefined
+          ? initialJob.rawPhotoCount
+          : ''
+      );
+      setManualCharge(
+        !initialJob.pricing && initialJob.clientCharge !== undefined
+          ? initialJob.clientCharge
+          : ''
+      );
+
+      const hrs = initialJob.estimatedEffortHours;
+      if (typeof hrs === 'number' && hrs > 0) {
+        setEffortUnit(hrs % 8 === 0 ? 'days' : 'hours');
+        setEffortValue(hrs % 8 === 0 ? hrs / 8 : hrs);
+      } else {
+        setEffortValue('');
+      }
+
+      setDataReceivedDate(initialJob.dataReceivedDate || todayStr);
+      setDueDate(initialJob.dueDate || '');
+      setDueDateOverridden(Boolean(initialJob.dueDate));
+      setRawDataLink(initialJob.rawDataLink || '');
+      setDescription(initialJob.description || '');
+      setEditingInstructions(initialJob.editingInstructions || '');
+      setFormError('');
+      setEditorError('');
+    }
+  }, [isOpen, initialJob, todayStr]);
 
   if (!isOpen) return null;
 
@@ -491,7 +557,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   // more than the job actually measured.
   const minimumApplied = Boolean(pricingDraft && isMinimumApplied(pricingDraft));
 
-  const handleSubmit = (e: React.FormEvent, addAnother: boolean = false) => {
+  const handleSubmit = async (e: React.FormEvent, addAnother: boolean = false) => {
     e.preventDefault();
     if (!title.trim()) {
       setFormError('Give the project a title (e.g. Couple Name or Project Name).');
@@ -569,28 +635,36 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
       editorPayouts: initialJob?.editorPayouts || [],
     };
 
-    if (initialJob) {
-      updateFreelanceJob(initialJob.id, jobPayload, 'Freelance Job Details Updated');
-      onClose();
-    } else {
-      addFreelanceJob(jobPayload);
-      if (addAnother) {
-        setSuccessBanner(`✓ "${jobPayload.serviceType}" deliverable logged! Add another deliverable for this client below using the same raw rushes.`);
-        setServiceType('');
-        setEditorName('');
-        setEditorPhone('');
-        setEditorMemberId(undefined);
-        setUseManualEditor(false);
-        setRate('');
-        setQuantity('');
-        setOutputMinutes('');
-        setOutputSeconds('');
-        setManualCharge('');
-        setFormError('');
-        setTimeout(() => setSuccessBanner(''), 6000);
-      } else {
+    setIsSubmitting(true);
+    try {
+      if (initialJob) {
+        await updateFreelanceJob(initialJob.id, jobPayload, 'Freelance Job Details Updated');
         onClose();
+      } else {
+        await addFreelanceJob(jobPayload);
+        if (addAnother) {
+          setSuccessBanner(`✓ "${jobPayload.serviceType}" deliverable logged! Add another deliverable for this client below using the same raw rushes.`);
+          setServiceType('');
+          setEditorName('');
+          setEditorPhone('');
+          setEditorMemberId(undefined);
+          setUseManualEditor(false);
+          setRate('');
+          setQuantity('');
+          setOutputMinutes('');
+          setOutputSeconds('');
+          setManualCharge('');
+          setFormError('');
+          setTimeout(() => setSuccessBanner(''), 6000);
+        } else {
+          onClose();
+        }
       }
+    } catch (err: any) {
+      console.error('Failed to save freelance job:', err);
+      setFormError(err?.message || 'Failed to save job. Please check connection and try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1280,7 +1354,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-semibold text-[#111417] mb-1">
-                    Raw Footage Link (Backblaze B2, Google Drive, Dropbox, NAS)
+                    Raw Footage Link (Google Drive, Dropbox, NAS)
                   </label>
                   <div className="relative">
                     <LinkIcon className="absolute left-3.5 top-3 w-4 h-4 text-[#6b6660]" />
@@ -1346,21 +1420,23 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
             {!initialJob && (
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={e => handleSubmit(e, true)}
-                className="flex items-center gap-1.5 px-4 py-2.5 bg-white hover:bg-[#f9f8f6] border border-[#7a2e33] text-[#7a2e33] font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-4 py-2.5 bg-white hover:bg-[#f9f8f6] border border-[#7a2e33] text-[#7a2e33] font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
                 title="Save this deliverable and immediately add another one for the same client using the same raw rushes"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>Save & Add Another Deliverable</span>
+                <span>{isSubmitting ? 'Saving...' : 'Save & Add Another Deliverable'}</span>
               </button>
             )}
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={e => handleSubmit(e, false)}
-              className="flex items-center gap-2 px-6 py-2.5 bg-[#7a2e33] hover:bg-[#5a2226] text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+              className="flex items-center gap-2 px-6 py-2.5 bg-[#7a2e33] hover:bg-[#5a2226] text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{initialJob ? 'Save Changes' : 'Create Freelance Project'}</span>
+              <span>{isSubmitting ? 'Saving...' : initialJob ? 'Save Changes' : 'Create Freelance Project'}</span>
             </button>
           </div>
         </div>

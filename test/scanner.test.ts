@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TransferStore } from '../src/main/store';
-import { scanDirectory } from '../src/main/scanner';
+import { scanDirectory, scanOfflineDirectory } from '../src/main/scanner';
 import type { ScanOptions, ScanSummary, Transfer, WorkTarget } from '../src/shared/contracts';
 import { tempDir } from './helpers';
 
@@ -316,3 +316,32 @@ describe('service-aware scanning', () => {
     assert.equal(albumSummary.billablePhotos, 2);
   });
 });
+
+describe('offline hard drive scanning', () => {
+  test('scanOfflineDirectory counts photos with RAW+JPEG pair deduplication', async () => {
+    const root = await tempDir();
+    await fs.writeFile(path.join(root, 'DSC0001.ARW'), 'arw-content');
+    await fs.writeFile(path.join(root, 'DSC0001.JPG'), 'jpg-content');
+    await fs.writeFile(path.join(root, 'DSC0002.CR3'), 'cr3-content');
+    await fs.writeFile(path.join(root, 'README.txt'), 'notes');
+
+    const result = await scanOfflineDirectory(root, 'Edited Photos', true);
+    assert.equal(result.totalPhotos, 3);
+    assert.equal(result.photoCount, 2, 'DSC0001 pair is counted as 1 billable photo');
+    assert.equal(result.fileCount, 4);
+    assert.ok(result.driveLabel.includes(path.basename(root)));
+  });
+
+  test('scanOfflineDirectory ignores proxy folders', async () => {
+    const root = await tempDir();
+    const proxyDir = path.join(root, 'Proxies');
+    await fs.mkdir(proxyDir, { recursive: true });
+    await fs.writeFile(path.join(proxyDir, 'proxy1.mp4'), 'mock');
+    await fs.writeFile(path.join(root, 'main.mp4'), 'mock video');
+
+    const result = await scanOfflineDirectory(root, 'Short Form');
+    assert.equal(result.videoCount, 1, 'Proxy folder video is excluded');
+    assert.equal(result.fileCount, 1);
+  });
+});
+

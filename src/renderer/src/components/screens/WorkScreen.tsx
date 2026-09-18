@@ -6,6 +6,8 @@ import { NewWorkModal } from '../NewWorkModal';
 import { ManualRawDataModal } from '../ManualRawDataModal';
 import { archiveFinalDelivery, assignEditor, advanceStage, confirmClientFinalDownload, markRevisionShared, saveRawDataLink, sendBaawarayDeliverableToPostProduction, syncEditorAuthUid, updateJobRequiredDays } from '../../lib/studioRepository';
 import { ChangesModal } from '../ChangesModal';
+import { GoogleDriveRequiredModal } from '../common/GoogleDriveRequiredModal';
+import { GoogleDriveConnectBanner } from '../common/GoogleDriveConnectBanner';
 import { getFreelanceStageMeta } from '../../utils/formatters';
 import type { FreelanceJobStage } from '../../types/freelance';
 import { normaliseServices, resolveRoleGroups } from '../../utils/studioRoles';
@@ -79,7 +81,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
   onScanStarted: (id: string | null) => void; onSettings: () => void; onOpen: (id: string) => void;
 }): React.JSX.Element {
   const studio = useApp();
-  const destName = studio.studioSettings?.uploader?.destination === 'b2' ? 'Backblaze B2' : 'Google Drive';
+  const destName = 'Google Drive';
   const [query, setQuery] = useState('');
   const [partnerFilter, setPartnerFilter] = useState('all');
   const [editorFilter, setEditorFilter] = useState('all');
@@ -91,6 +93,19 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
   const [note, setNote] = useState('');
   const [changesFor, setChangesFor] = useState<Row | null>(null);
   const [manualRawFor, setManualRawFor] = useState<Row | null>(null);
+  const [showDriveModal, setShowDriveModal] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
+
+  const triggerScan = async (action: () => Promise<string | null>): Promise<void> => {
+    if (destName === 'Google Drive' && !drive?.connected) {
+      setPendingAction(() => async () => {
+        onScanStarted(await action());
+      });
+      setShowDriveModal(true);
+      return;
+    }
+    onScanStarted(await action());
+  };
 
   const options: ScanOptions = useMemo(() => ({
     excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy', 'Exports'],
@@ -276,6 +291,14 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
           </button>
         </div>
       </header>
+
+      {destName === 'Google Drive' && (
+        <GoogleDriveConnectBanner
+          compact
+          connected={Boolean(drive?.connected)}
+          onConnect={() => setShowDriveModal(true)}
+        />
+      )}
 
       {kind === 'freelance' && (
         <div className="panel" style={{ padding: 12, marginBottom: 14, display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
@@ -554,7 +577,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                           <HardDrive size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Edit drive details
                         </button>
                         <button disabled={busy === row.key} onClick={() => void run(row.key, async () => {
-                          onScanStarted(await window.api.scan(options, row.target));
+                          await triggerScan(() => window.api.scan(options, row.target));
                         })}>
                           <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload to {destName}
                         </button>
@@ -567,9 +590,7 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                         Raw Footage Uploaded
                       </div>
                       <div className="sub" style={{ fontSize: 11.5, color: '#2f6b34', marginTop: 2 }}>
-                        {row.rawDataLink.startsWith('b2://') || row.rawDataLink.includes('backblazeb2.com')
-                          ? '✓ Backblaze B2 · Available for editor direct download'
-                          : '✓ Shared Cloud Link · Available for editor download'}
+                        ✓ Google Drive · Available for editor direct download
                       </div>
                       <div className="link-row" style={{ marginTop: 6 }}>
                         {row.editorPhone && (
@@ -585,12 +606,12 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                           </button>
                         )}
                         <button disabled={busy === row.key} onClick={() => void run(row.key, async () => {
-                          onScanStarted(await window.api.scan(options, row.target));
+                          await triggerScan(() => window.api.scan(options, row.target));
                         })}>
                           <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Replace folder
                         </button>
                         <button disabled={busy === `${row.key}:files`} onClick={() => void run(`${row.key}:files`, async () => {
-                          onScanStarted(await window.api.scanFiles(options, row.target));
+                          await triggerScan(() => window.api.scanFiles(options, row.target));
                         })}>
                           <FilePlus2 size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload files
                         </button>
@@ -603,17 +624,17 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
                       </div>
                       <div className="link-row" style={{ marginTop: 6 }}>
                         <button className="primary" disabled={busy === row.key} onClick={() => void run(row.key, async () => {
-                          onScanStarted(await window.api.scan(options, row.target));
+                          await triggerScan(() => window.api.scan(options, row.target));
                         })}>
                           <Upload size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload folder ({destName})
                         </button>
                         <button disabled={busy === `${row.key}:files`} onClick={() => void run(`${row.key}:files`, async () => {
-                          onScanStarted(await window.api.scanFiles(options, row.target));
+                          await triggerScan(() => window.api.scanFiles(options, row.target));
                         })}>
                           <FilePlus2 size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Upload files ({destName})
                         </button>
                         <button onClick={() => setManualRawFor(row)}>
-                          <HardDrive size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Enter hard drive / link details
+                          <HardDrive size={13} style={{ verticalAlign: -2, marginRight: 5 }} />Share Offline / Drive
                         </button>
                       </div>
                     </>
@@ -671,6 +692,20 @@ export function WorkScreen({ kind, transfers, drive, onScanStarted, onSettings, 
           onSaved={round => { setChangesFor(null); setNote(`Round ${round} logged. Send it to the editor when ready.`); }} />
       )}
       {manualRawFor && <ManualRawDataModal target={manualRawFor.target} title={manualRawFor.title} onClose={() => setManualRawFor(null)} onSaved={() => { setManualRawFor(null); setNote('Physical hard drive details saved.'); }} />}
+      <GoogleDriveRequiredModal
+        isOpen={showDriveModal}
+        onClose={() => {
+          setShowDriveModal(false);
+          setPendingAction(null);
+        }}
+        onConnected={async () => {
+          if (pendingAction) {
+            const act = pendingAction;
+            setPendingAction(null);
+            await act();
+          }
+        }}
+      />
     </div>
   );
 }

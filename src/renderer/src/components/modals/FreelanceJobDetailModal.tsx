@@ -1052,7 +1052,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                       </div>
                       <p className="text-[11px] text-[#6b6660] mt-1.5 leading-snug">
                         {job.rawDataLink
-                          ? "Footage package is stored in Backblaze B2. Assigned editors download directly via their Desktop App."
+                          ? "Footage package is stored in Google Drive. Assigned editors download directly via their Desktop App."
                           : "Upload the project folder directly via the Desktop App to stream files into cloud storage."}
                       </p>
                     </div>
@@ -1299,7 +1299,7 @@ export const FreelanceJobDetailModal: React.FC<FreelanceJobDetailModalProps> = (
                 className="w-full px-3 py-2 text-xs border border-[#d4c1a3] rounded-xl focus:outline-none focus:border-[#7a2e33] font-mono bg-[#f9f8f6]/50"
               />
               <p className="text-[11px] text-[#6b6660] mt-1.5">
-                Supports Google Drive, Dropbox, Backblaze B2, Frame.io, Vimeo, YouTube, or any web URL.
+                Supports Google Drive, Dropbox, Frame.io, Vimeo, YouTube, or any web URL.
               </p>
             </div>
 

@@ -5,11 +5,13 @@ const api: DesktopAPI = {
   authorize: token => ipcRenderer.invoke('studio:authorize', token), signOut: () => ipcRenderer.invoke('studio:signOut'),
   scan: (options, target) => ipcRenderer.invoke('scanner:start', options, target), cancelScan: id => ipcRenderer.invoke('scanner:cancel', id),
   scanFiles: (options, target) => ipcRenderer.invoke('scanner:startFiles', options, target),
+  scanOfflineFolder: target => ipcRenderer.invoke('scanner:scanOfflineFolder', target),
   list: () => ipcRenderer.invoke('transfers:list'), inspect: id => ipcRenderer.invoke('transfers:inspect', id),
   refreshDriveConfiguration: () => ipcRenderer.invoke('drive:configuration'),
   connectDrive: idToken => ipcRenderer.invoke('drive:connect', idToken), driveStatus: () => ipcRenderer.invoke('drive:status'),
   disconnectDrive: () => ipcRenderer.invoke('drive:disconnect'),
   setUploadDestination: destination => ipcRenderer.invoke('transfers:destination', destination),
+  setSharedDriveId: driveId => ipcRenderer.invoke('transfers:sharedDriveId', driveId),
   removeTransfer: (id, keepUploaded) => ipcRenderer.invoke('transfers:remove', id, keepUploaded),
   downloadUpdate: info => ipcRenderer.invoke('updates:download', info),
   installUpdate: () => ipcRenderer.invoke('updates:install'),
@@ -22,10 +24,6 @@ const api: DesktopAPI = {
   dropboxStatus: () => ipcRenderer.invoke('studio:dropboxStatus'),
   connectDropbox: (token) => ipcRenderer.invoke('studio:connectDropbox', token),
   disconnectDropbox: () => ipcRenderer.invoke('studio:disconnectDropbox'),
-  b2Status: () => ipcRenderer.invoke('studio:b2Status'),
-  connectB2: (config) => ipcRenderer.invoke('studio:connectB2', config),
-  disconnectB2: () => ipcRenderer.invoke('studio:disconnectB2'),
-  deleteB2Folder: (prefix) => ipcRenderer.invoke('studio:deleteB2Folder', prefix),
   chooseDeliverableFile: () => ipcRenderer.invoke('dialog:openVideoFile'),
   uploadDeliverable: (jobId, filePath, targetFolder, fileName) => ipcRenderer.invoke('studio:uploadDeliverable', jobId, filePath, targetFolder, fileName),
   onUploadProgress: callback => {
@@ -36,6 +34,8 @@ const api: DesktopAPI = {
   chooseDownloadDirectory: () => ipcRenderer.invoke('studio:chooseDownloadDirectory'),
   downloadRawData: (jobId, rawDataLink, destDir) => ipcRenderer.invoke('studio:downloadRawData', jobId, rawDataLink, destDir),
   cancelDownload: jobId => ipcRenderer.invoke('studio:cancelDownload', jobId),
+  pauseDownload: jobId => ipcRenderer.invoke('studio:pauseDownload', jobId),
+  getActiveDownload: jobId => ipcRenderer.invoke('studio:getActiveDownload', jobId),
   onDownloadProgress: callback => {
     const listener = (_: any, data: any): void => callback(data);
     ipcRenderer.on('download:progress', listener);
@@ -46,6 +46,7 @@ const api: DesktopAPI = {
   forgetDownloadedFolder: jobId => ipcRenderer.invoke('studio:forgetDownloadedFolder', jobId),
   checkDiskSpace: targetPath => ipcRenderer.invoke('studio:checkDiskSpace', targetPath),
   getDownloadSize: rawDataLink => ipcRenderer.invoke('studio:getDownloadSize', rawDataLink),
+  getDownloadDetails: rawDataLink => ipcRenderer.invoke('studio:getDownloadDetails', rawDataLink),
   deleteDriveFolder: folderId => ipcRenderer.invoke('studio:deleteDriveFolder', folderId),
   deleteDropboxFile: dropboxPath => ipcRenderer.invoke('studio:deleteDropboxFile', dropboxPath),
   downloadDropboxFile: (dropboxPath, localPath) => ipcRenderer.invoke('studio:downloadDropboxFile', dropboxPath, localPath),
@@ -63,7 +64,10 @@ const api: DesktopAPI = {
   autoResumeTransfers: () => ipcRenderer.invoke('transfers:autoResume'),
   getAutoStart: () => ipcRenderer.invoke('app:getAutoStart'),
   setAutoStart: enable => ipcRenderer.invoke('app:setAutoStart', enable),
-  checkForUpdate: () => ipcRenderer.invoke('updates:check'), appVersion: () => ipcRenderer.invoke('app:version'), diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
+  checkForUpdate: () => ipcRenderer.invoke('updates:check'),
+  appVersion: () => ipcRenderer.invoke('app:version'),
+  diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
+  copyToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
   onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; }
 };
 contextBridge.exposeInMainWorld('api', api);

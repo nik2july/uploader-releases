@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, ArrowUpDown, BarChart3, Briefcase, Building2, Settings, SlidersHorizontal, Upload, Users } from 'lucide-react';
+import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, Settings, SlidersHorizontal, Upload, Users } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -22,14 +22,20 @@ import { FreelanceDepartmentView } from './freelance/FreelanceDepartmentView';
 import { FreelanceStudioView } from './freelance/FreelanceStudioView';
 import { FreelanceEditorView } from './freelance/FreelanceEditorView';
 import { FreelanceStatsScreen } from './screens/FreelanceStatsScreen';
+import { RecentActivityScreen } from './common/RecentActivityScreen';
+import { GoogleDriveRequiredModal } from './common/GoogleDriveRequiredModal';
+import { GoogleDriveConnectBanner } from './common/GoogleDriveConnectBanner';
+import type { WorkTarget } from '../../../shared/contracts';
 
-type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival';
+type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
   const { transfers, drive, error, loading, refresh } = useTransfers();
   const [view, setView] = useState<View>('uploads');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [showDriveModal, setShowDriveModal] = useState(false);
+  const [pendingScanTarget, setPendingScanTarget] = useState<WorkTarget | null>(null);
   const rawLinkSyncAttempts = useRef(new Set<string>());
 
   // The keep-awake preference is stored with the studio's shared settings but
@@ -37,17 +43,17 @@ export function OwnerDashboard(): React.JSX.Element {
   const keepAwake = studio.studioSettings?.uploader?.keepAwake;
   useEffect(() => { void window.api.setKeepAwake(Boolean(keepAwake)); }, [keepAwake]);
 
-  // Same for the upload destination: stored with the studio, enforced by the queue.
   const destination = studio.studioSettings?.uploader?.destination;
+  const sharedDriveId = studio.studioSettings?.uploader?.sharedDriveId;
   const autoResumedRef = useRef(false);
 
   useEffect(() => {
     if (loading) return;
-    const targetDest: 'drive' | 'b2' = destination === 'drive'
-      ? 'drive'
-      : destination === 'b2'
-      ? 'b2'
-      : (drive?.connected ? 'drive' : 'b2');
+    const targetDest: 'drive' = 'drive';
+
+    if (sharedDriveId && window.api.setSharedDriveId) {
+      void window.api.setSharedDriveId(sharedDriveId);
+    }
 
     void window.api.setUploadDestination(targetDest).then(() => {
       if (!autoResumedRef.current) {
@@ -57,7 +63,7 @@ export function OwnerDashboard(): React.JSX.Element {
         );
       }
     });
-  }, [destination, drive?.connected, loading]);
+  }, [sharedDriveId, drive?.connected, loading]);
 
   /**
    * Record every verified transfer against its work so the assigned editor can
@@ -108,6 +114,33 @@ export function OwnerDashboard(): React.JSX.Element {
   const active = useMemo(() => transfers.filter(job => ACTIVE_STATUSES.includes(job.status)).length, [transfers]);
   const attention = useMemo(() => transfers.filter(job => job.status === 'needs_attention').length, [transfers]);
 
+  // Activity unread count for sidebar badge
+  const activityStorageKey = `baawaray_activity_last_read_${studio.currentUser?.accountType}_${studio.currentUser?.id}`;
+  const activityUnreadCount = useMemo(() => {
+    try {
+      const lastRead = localStorage.getItem(activityStorageKey) || '';
+      const readTime = lastRead ? new Date(lastRead).getTime() : 0;
+      let count = 0;
+      for (const job of studio.freelanceJobs || []) {
+        for (const log of job.activityLogs || []) {
+          if (log.timestamp && new Date(log.timestamp).getTime() > readTime) count++;
+        }
+        for (const rev of job.revisions || []) {
+          const revDate = (rev as any).receivedDate || (rev as any).requestedDate || (rev as any).sharedWithEditorDate;
+          if (revDate && new Date(revDate.includes('T') ? revDate : `${revDate}T12:00:00Z`).getTime() > readTime) {
+            count++;
+          }
+        }
+        for (const d of job.doubts || []) {
+          if (d.resolvedAt && new Date(d.resolvedAt).getTime() > readTime) count++;
+        }
+      }
+      return count;
+    } catch {
+      return 0;
+    }
+  }, [studio.freelanceJobs, studio.currentUser, activityStorageKey]);
+
   // A scan is started from a job row; the folder dialog lives in the main
   // process, so the renderer only learns the new transfer's id once a folder was
   // actually chosen. Cancelling the dialog returns null and changes nothing.
@@ -123,6 +156,18 @@ export function OwnerDashboard(): React.JSX.Element {
         <div className="wordmark"><img src={longLogo} alt="Baawaray" /></div>
         <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
           <Briefcase size={16} /> Active Jobs
+        </button>
+        <button
+          className="nav-item"
+          aria-current={view === 'activity'}
+          onClick={() => go('activity')}
+        >
+          <Bell size={16} /> Recent Activity
+          {activityUnreadCount > 0 && (
+            <span className="count" style={{ background: 'var(--burgundy)', color: '#fff' }}>
+              {activityUnreadCount > 99 ? '99+' : activityUnreadCount}
+            </span>
+          )}
         </button>
         <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
           <ArrowUpDown size={16} /> Up Down Queue
@@ -155,8 +200,19 @@ export function OwnerDashboard(): React.JSX.Element {
 
       <main className="main-area">
         <UpdateBanner />
+        <GoogleDriveConnectBanner
+          connected={Boolean(drive?.connected)}
+          onConnect={() => setShowDriveModal(true)}
+        />
         {open ? (
           <TransferDetail job={open} onBack={() => setOpenId(null)} refresh={refresh} />
+        ) : view === 'activity' ? (
+          <RecentActivityScreen
+            onSelectJob={() => {
+              studio.setActiveView('freelance');
+              go('freelance');
+            }}
+          />
         ) : view === 'uploads' ? (
           <UploadsScreen transfers={transfers} loading={loading} error={error} drive={drive}
             onOpen={setOpenId} onSettings={() => go('settings')} />
@@ -172,6 +228,11 @@ export function OwnerDashboard(): React.JSX.Element {
             ) : (
               <FreelanceDepartmentView
                 onUploadForDeliverable={async target => {
+                  if (!drive?.connected) {
+                    setPendingScanTarget(target);
+                    setShowDriveModal(true);
+                    return;
+                  }
                   // The same scan the deliverables screen starts, reached from the
                   // row on the board instead of from a screen of its own.
                   const options = {
@@ -179,6 +240,13 @@ export function OwnerDashboard(): React.JSX.Element {
                     countPhotoPairsOnce: studio.studioSettings?.uploader?.countPhotoPairsOnce ?? true,
                   };
                   opened(await window.api.scan(options, target));
+                }}
+                onViewTransfer={(transferId) => {
+                  setOpenId(transferId);
+                  setView('uploads');
+                }}
+                onGoToQueue={() => {
+                  go('uploads');
                 }}
               />
             )}
@@ -222,10 +290,29 @@ export function OwnerDashboard(): React.JSX.Element {
         ) : (
           <div className="screen">
             <header><div><span className="eyebrow">SETTINGS</span><h2>Uploader settings</h2>
-              <p>The Backblaze B2, Dropbox, and measurement defaults this Mac uploads with.</p></div></header>
+              <p>The Google Drive, Dropbox, and measurement defaults this Mac uploads with.</p></div></header>
             <UploaderSettings drive={drive ?? undefined} refresh={refresh} />
           </div>
         )}
+        <GoogleDriveRequiredModal
+          isOpen={showDriveModal}
+          onClose={() => {
+            setShowDriveModal(false);
+            setPendingScanTarget(null);
+          }}
+          onConnected={async () => {
+            await refresh();
+            if (pendingScanTarget) {
+              const target = pendingScanTarget;
+              setPendingScanTarget(null);
+              const options = {
+                excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy'],
+                countPhotoPairsOnce: studio.studioSettings?.uploader?.countPhotoPairsOnce ?? true,
+              };
+              opened(await window.api.scan(options, target));
+            }
+          }}
+        />
       </main>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Lock, Phone, Key, Eye, EyeOff } from 'lucide-react'
-import { signInWithCustomToken } from 'firebase/auth'
-import { auth } from '../lib/auth'
+import { signInWithCustomToken, signInWithEmailAndPassword } from 'firebase/auth'
+import { auth, phoneKey, shadowEmailFor, shadowPassword } from '../lib/auth'
 import { BrandLogo } from './common/BrandLogo'
 
 export function Login({ onLogin }: { onLogin: () => void }) {
@@ -17,11 +17,34 @@ export function Login({ onLogin }: { onLogin: () => void }) {
     setLoading(true)
 
     try {
-      const result = await window.api.login(phone.trim(), password)
-      await signInWithCustomToken(auth, result.customToken)
-      onLogin()
+      let loggedIn = false
+      try {
+        const result = await window.api.login(phone.trim(), password)
+        if (result?.customToken) {
+          await signInWithCustomToken(auth, result.customToken)
+          loggedIn = true
+          onLogin()
+        }
+      } catch (remoteErr: any) {
+        console.warn('[Login] Remote cloud login failed, attempting direct shadow auth fallback:', remoteErr)
+      }
+
+      if (!loggedIn) {
+        const digits = phoneKey(phone.trim())
+        if (!digits) throw new Error('Please enter a valid phone number.')
+        const email = shadowEmailFor(digits)
+        const pass = shadowPassword(password)
+        await signInWithEmailAndPassword(auth, email, pass)
+        onLogin()
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to login.')
+      console.error('[Login] Auth error:', err)
+      const msg = err?.message || 'Failed to login.'
+      if (msg.includes('auth/invalid-credential') || msg.includes('auth/user-not-found') || msg.includes('auth/wrong-password')) {
+        setError('Invalid phone number or password. Please try again.')
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -33,7 +56,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
         
         <BrandLogo variant="monogram" theme="burgundy" size="xl" className="mb-6" />
         
-        <h1 className="font-['The_Seasons'] font-bold text-3xl mb-2">Baawaray Admin</h1>
+        <h1 className="font-tan-aegean font-bold text-3xl mb-2 tracking-wide uppercase">BAAWARAY FILMS</h1>
         <p className="text-[#6b6660] mb-8">Desktop Application</p>
 
         {error && (
@@ -47,7 +70,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
             <Phone size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b6660]" />
             <input 
               type="text" 
-              placeholder="Admin Phone Number" 
+              placeholder="Phone Number" 
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="w-full pl-10 pr-4 py-3 bg-[#f9f8f6] border border-[#d4c1a3]/50 rounded-xl focus:outline-none focus:border-[#7a2e33] transition-colors"
@@ -58,7 +81,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
             <Key size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6b6660]" />
             <input 
               type={showPassword ? 'text' : 'password'} 
-              placeholder="Admin Password" 
+              placeholder="Password" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full pl-10 pr-10 py-3 bg-[#f9f8f6] border border-[#d4c1a3]/50 rounded-xl focus:outline-none focus:border-[#7a2e33] transition-colors"
