@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, HardDrive } from 'lucide-react';
+import { ChevronRight, HardDrive, Loader2 } from 'lucide-react';
 import type { InvoiceSnapshot, Transfer } from '../../../../shared/contracts';
 import { useApp } from '../../context/AppContext';
 import { logScannedRawData, saveBilling } from '../../lib/studioRepository';
@@ -416,7 +416,11 @@ export function TransferDetail({ job, onBack, refresh }: {
       <section className="panel">
         <span className="eyebrow">TRANSFER</span>
         <h2 style={{ fontSize: 20 }}>
-          {job.status === 'completed' ? 'Verified and ready to share' : `Upload to ${cloudDestinationName}`}
+          {job.status === 'completed'
+            ? 'Verified and ready to share'
+            : job.status === 'scanning'
+            ? 'Measuring folder from drive…'
+            : `Upload to ${cloudDestinationName}`}
         </h2>
 
         {job.status !== 'scanning' && (
@@ -437,11 +441,47 @@ export function TransferDetail({ job, onBack, refresh }: {
 
         {job.status === 'completed' ? <ShareActions job={job} refresh={refresh} /> : (
           <>
-            <p className="muted" style={{ fontSize: 13 }}>
-              Every file is verified in {cloudDestinationName} by size and checksum after it lands. The folder is only
-              called ready when all of them pass, and re-running it sends nothing that is already verified.
-            </p>
+            {job.status === 'scanning' ? (
+              <div
+                style={{
+                  padding: '14px 16px',
+                  backgroundColor: 'var(--panel, #f8fafc)',
+                  border: '1px solid var(--line, #e2e8f0)',
+                  borderRadius: 10,
+                  marginBottom: 14,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--burgundy)', fontWeight: 600, fontSize: 13.5 }}>
+                  <Loader2 className="spin" size={15} /> Scanning &amp; reading clip durations… ({scan?.fileCount || 0} clips scanned so far)
+                </div>
+                <p className="muted" style={{ fontSize: 12.5, margin: 0, lineHeight: 1.45 }}>
+                  The app is measuring every clip directly from the hard drive so billing &amp; footage stats are 100% exact. Once the scan finishes, both <strong>Start upload</strong> and <strong>Log as received (no upload)</strong> for offline handover will be available below.
+                </p>
+              </div>
+            ) : (
+              <p className="muted" style={{ fontSize: 13 }}>
+                Every file is verified in {cloudDestinationName} by size and checksum after it lands. The folder is only
+                called ready when all of them pass, and re-running it sends nothing that is already verified.
+              </p>
+            )}
             <div className="actions">
+              {job.status === 'scanning' && (
+                <>
+                  <button className="primary" disabled style={{ opacity: 0.55, cursor: 'not-allowed' }}>
+                    Start upload (Scanning…)
+                  </button>
+                  <button disabled style={{ opacity: 0.55, cursor: 'not-allowed' }}>
+                    <HardDrive size={14} style={{ verticalAlign: -2, marginRight: 6 }} />
+                    Log as received (Scanning…)
+                  </button>
+                  <button disabled={busy === 'cancel'} onClick={() => void run('cancel', () => window.api.cancelScan(job.id))}>
+                    Cancel scan
+                  </button>
+                </>
+              )}
               {canUpload && !needsConfirming && (
                 <button className="primary" disabled={busy === 'start'}
                   onClick={() => void run('start', () => window.api.enqueue(job.id, target!, job.invoice ?? (amount > 0 ? snapshot('draft') : undefined)),
@@ -473,9 +513,6 @@ export function TransferDetail({ job, onBack, refresh }: {
               )}
               {job.status === 'needs_attention' && (
                 <button disabled={busy === 'relocate'} onClick={() => void run('relocate', () => window.api.relocate(job.id))}>Locate folder</button>
-              )}
-              {job.status === 'scanning' && (
-                <button disabled={busy === 'cancel'} onClick={() => void run('cancel', () => window.api.cancelScan(job.id))}>Cancel scan</button>
               )}
             </div>
           </>

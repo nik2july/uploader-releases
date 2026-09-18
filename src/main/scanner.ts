@@ -104,7 +104,7 @@ export async function scanDirectory(store: TransferStore, jobId: string, signal:
         }
         store.addFile(jobId, { relativePath, size: stat.size, mtimeMs: stat.mtimeMs, kind, billingIncluded, durationSeconds, error });
         if (kind !== 'other') seenPaths.push({ relativePath });
-        if (result.fileCount % 20 === 0) publish();
+        if (result.fileCount % 5 === 0) publish();
       } catch (err) {
         signal.throwIfAborted(); result.readErrors++;
         warn(`Cannot inventory ${relativePath}: ${err instanceof Error ? err.message : 'Read error'}`);
