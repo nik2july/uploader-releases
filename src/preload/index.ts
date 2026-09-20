@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
-import type { DesktopAPI } from '../shared/contracts';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { ClipRunState, DesktopAPI, PhotoRunState } from '../shared/contracts';
 const api: DesktopAPI = {
   login: (phone, password) => ipcRenderer.invoke('studio:login', phone, password),
   authorize: token => ipcRenderer.invoke('studio:authorize', token), signOut: () => ipcRenderer.invoke('studio:signOut'),
@@ -68,6 +68,50 @@ const api: DesktopAPI = {
   appVersion: () => ipcRenderer.invoke('app:version'),
   diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
   copyToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
-  onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; }
+  onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; },
+  // Utilities — Duration, Missing Clips, Clip Delivery, Photo Delivery.
+  utilityStatus: () => ipcRenderer.invoke('utility:status'),
+  chooseUtilityFolder: (title, buttonLabel) => ipcRenderer.invoke('utility:chooseFolder', title, buttonLabel),
+  folderOfPath: path => ipcRenderer.invoke('utility:folderOf', path),
+  // Electron no longer puts a path on the File object; this is the way to read it.
+  pathForFile: file => webUtils.getPathForFile(file),
+  revealInFinder: path => ipcRenderer.invoke('utility:reveal', path),
+  openPath: path => ipcRenderer.invoke('utility:open', path),
+  saveTextFile: (defaultName, text) => ipcRenderer.invoke('utility:saveText', defaultName, text),
+  scanDurations: (rootPath, kinds) => ipcRenderer.invoke('utility:duration:scan', rootPath, kinds),
+  cancelDurationScan: () => ipcRenderer.invoke('utility:duration:cancel'),
+  onDurationProgress: callback => {
+    const listener = (_: unknown, data: { done: number; total: number }): void => callback(data);
+    ipcRenderer.on('utility:duration:progress', listener);
+    return () => { ipcRenderer.removeListener('utility:duration:progress', listener); };
+  },
+  scanSequences: (rootPath, options) => ipcRenderer.invoke('utility:sequences:scan', rootPath, options),
+  cancelSequenceScan: () => ipcRenderer.invoke('utility:sequences:cancel'),
+  onSequenceProgress: callback => {
+    const listener = (_: unknown, data: { seen: number }): void => callback(data);
+    ipcRenderer.on('utility:sequences:progress', listener);
+    return () => { ipcRenderer.removeListener('utility:sequences:progress', listener); };
+  },
+  clipState: () => ipcRenderer.invoke('utility:clip:state'),
+  clipScan: sourcePath => ipcRenderer.invoke('utility:clip:scan', sourcePath),
+  clipSetDestination: destinationPath => ipcRenderer.invoke('utility:clip:destination', destinationPath),
+  clipStart: (destinationPath, choice) => ipcRenderer.invoke('utility:clip:start', destinationPath, choice),
+  clipCancel: () => ipcRenderer.invoke('utility:clip:cancel'),
+  onClipState: callback => {
+    const listener = (_: unknown, state: ClipRunState): void => callback(state);
+    ipcRenderer.on('utility:clip', listener);
+    return () => { ipcRenderer.removeListener('utility:clip', listener); };
+  },
+  photoState: () => ipcRenderer.invoke('utility:photo:state'),
+  photoScan: sourcePath => ipcRenderer.invoke('utility:photo:scan', sourcePath),
+  photoSetPresets: presetIds => ipcRenderer.invoke('utility:photo:presets', presetIds),
+  photoSetOutputRoot: outputRoot => ipcRenderer.invoke('utility:photo:outputRoot', outputRoot),
+  photoStart: () => ipcRenderer.invoke('utility:photo:start'),
+  photoCancel: () => ipcRenderer.invoke('utility:photo:cancel'),
+  onPhotoState: callback => {
+    const listener = (_: unknown, state: PhotoRunState): void => callback(state);
+    ipcRenderer.on('utility:photo', listener);
+    return () => { ipcRenderer.removeListener('utility:photo', listener); };
+  }
 };
 contextBridge.exposeInMainWorld('api', api);

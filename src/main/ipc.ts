@@ -14,6 +14,7 @@ import { checkForUpdate, downloadUpdate, installUpdate } from './updater';
 import { log, recentLog } from './log';
 import { dropbox } from './dropboxClient';
 import { DriveDownloader } from './driveDownloader';
+import { setupUtilityHandlers } from './utilities/ipc';
 import type { InvoiceSnapshot, ScanOptions, UpdateInfo, WorkTarget } from '../shared/contracts';
 import firebaseConfig from '../renderer/src/lib/firebase-applet-config.json';
 
@@ -605,6 +606,9 @@ export async function setupIpcHandlers(): Promise<() => void> {
   handle('studio:downloadDropboxFile', async (dropboxPath: string, localPath: string) => {
     await dropbox.downloadDeliverable(dropboxPath, localPath);
   });
+  // The Utilities section: Duration, Missing Clips, Clip Delivery, Photo
+  // Delivery. Local folder work only, so any signed-in account may use it.
+  const utilities = setupUtilityHandlers(handle);
   handle('studio:chooseSaveLocation', async (defaultFileName: string) => {
     const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
     const result = await dialog.showSaveDialog(win, {
@@ -615,6 +619,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
     return result.filePath;
   }, false);
   return () => {
+    void utilities.shutdown();
     engine.shutdown();
     for (const c of scans.values()) c.abort();
     if (blocker !== null && powerSaveBlocker.isStarted(blocker)) powerSaveBlocker.stop(blocker);

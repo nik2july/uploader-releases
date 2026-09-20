@@ -18,6 +18,13 @@ asarUnpack:
   # its path to .asar.unpacked, which only resolves if it is unpacked here — miss
   # this and every duration reads as unmeasurable in a packaged build.
   - node_modules/ffprobe-static/**
+  # ffmpeg is spawned the same way by Clip Delivery, and ffTools.ts rewrites its
+  # path to .asar.unpacked in the same manner.
+  - node_modules/ffmpeg-static/**
+  # sharp is a native module: Photo Delivery loads it in the main process, and a
+  # .node binary cannot be opened from inside the asar archive either.
+  - node_modules/sharp/**
+  - node_modules/@img/**
 win:
   executableName: baawaray-uploader
 nsis:

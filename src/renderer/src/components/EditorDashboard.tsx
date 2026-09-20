@@ -55,8 +55,10 @@ import {
 } from '../utils/dynamicScheduling';
 import type { FreelanceJob, TeamMember } from '../types';
 import { RecentActivityScreen } from './common/RecentActivityScreen';
+import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
+import { Wrench } from 'lucide-react';
 
-type View = 'work' | 'payments' | 'activity';
+type View = 'work' | 'payments' | 'activity' | 'utilities';
 type StageFilter = 'all' | EditorWorkflowStage | 'changes_needed';
 
 export function EditorDashboard(): React.JSX.Element {
@@ -873,6 +875,10 @@ export function EditorDashboard(): React.JSX.Element {
           {stageCounts.finalized > 0 && <span className="count">{stageCounts.finalized}</span>}
         </button>
 
+        <button className="nav-item" aria-current={view === 'utilities'} onClick={() => { setView('utilities'); setError(''); }}>
+          <Wrench size={16} /> Utilities
+        </button>
+
         <div className="spacer" />
         <button className="nav-item" onClick={() => { void signOut(auth); }}>
           <LogOut size={16} /> Sign out
@@ -884,7 +890,9 @@ export function EditorDashboard(): React.JSX.Element {
           connected={Boolean(drive?.connected)}
           onConnect={() => setShowDriveModal(true)}
         />
-        {view === 'activity' ? (
+        {view === 'utilities' ? (
+          <UtilitiesScreen />
+        ) : view === 'activity' ? (
           <RecentActivityScreen
             onSelectJob={(jobId) => {
               const target = myJobs.find(j => j.id === jobId);

@@ -1,4 +1,12 @@
 import type { MediaBillingResult } from '../../../WEB APP/src/utils/mediaPricing';
+import type {
+  ClipQuality, ClipRunState, ClipScanResult, DurationKind, DurationProgress, DurationScanResult,
+  PhotoRunState, SequenceScanOptions, SequenceScanResult, UtilityToolsStatus,
+} from './utilities';
+
+// The Utilities section — Duration, Missing Clips, Clip Delivery, Photo
+// Delivery — brought over from the standalone Baawaray Utility app.
+export * from './utilities';
 export type { MediaBillingInput, MediaBillingResult, MediaMeasurement } from '../../../WEB APP/src/utils/mediaPricing';
 
 export type TransferStatus = 'scanning' | 'ready' | 'queued' | 'uploading' | 'verifying' | 'paused' | 'waiting_network' | 'waiting_quota' | 'needs_attention' | 'completed';
@@ -137,6 +145,37 @@ export interface DesktopAPI {
   copyToClipboard(text: string): Promise<boolean>;
   diagnostics(): Promise<string>;
   onChange(callback: () => void): () => void;
+
+  // MARK: Utilities
+  /** Which of ffprobe and ffmpeg this Mac can actually run. */
+  utilityStatus(): Promise<UtilityToolsStatus>;
+  chooseUtilityFolder(title: string, buttonLabel?: string): Promise<string | null>;
+  /** A dropped item may be a file — this returns the folder to work on. */
+  folderOfPath(path: string): Promise<string | null>;
+  /** The path behind a file dropped into the window. */
+  pathForFile(file: File): string;
+  revealInFinder(path: string): Promise<void>;
+  openPath(path: string): Promise<void>;
+  saveTextFile(defaultName: string, text: string): Promise<boolean>;
+  scanDurations(rootPath: string, kinds: DurationKind[]): Promise<DurationScanResult>;
+  cancelDurationScan(): Promise<void>;
+  onDurationProgress(callback: (progress: DurationProgress) => void): () => void;
+  scanSequences(rootPath: string, options: SequenceScanOptions): Promise<SequenceScanResult>;
+  cancelSequenceScan(): Promise<void>;
+  onSequenceProgress(callback: (progress: { seen: number }) => void): () => void;
+  clipState(): Promise<ClipRunState>;
+  clipScan(sourcePath: string): Promise<ClipScanResult>;
+  clipSetDestination(destinationPath: string): Promise<void>;
+  clipStart(destinationPath: string, choice: { mode: 'quality' | 'size'; quality: ClipQuality; targetGB: number }): Promise<void>;
+  clipCancel(): Promise<void>;
+  onClipState(callback: (state: ClipRunState) => void): () => void;
+  photoState(): Promise<PhotoRunState>;
+  photoScan(sourcePath: string): Promise<PhotoRunState>;
+  photoSetPresets(presetIds: string[]): Promise<void>;
+  photoSetOutputRoot(outputRoot: string): Promise<void>;
+  photoStart(): Promise<void>;
+  photoCancel(): Promise<void>;
+  onPhotoState(callback: (state: PhotoRunState) => void): () => void;
 }
 
 export interface DiskSpaceInfo {
