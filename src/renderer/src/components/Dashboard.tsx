@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, Settings, SlidersHorizontal, Upload, Users } from 'lucide-react';
+import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, Settings, SlidersHorizontal, Upload, Users, Wrench } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -23,11 +23,12 @@ import { FreelanceStudioView } from './freelance/FreelanceStudioView';
 import { FreelanceEditorView } from './freelance/FreelanceEditorView';
 import { FreelanceStatsScreen } from './screens/FreelanceStatsScreen';
 import { RecentActivityScreen } from './common/RecentActivityScreen';
+import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
 import { GoogleDriveRequiredModal } from './common/GoogleDriveRequiredModal';
 import { GoogleDriveConnectBanner } from './common/GoogleDriveConnectBanner';
 import type { WorkTarget } from '../../../shared/contracts';
 
-type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity';
+type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
@@ -191,6 +192,9 @@ export function OwnerDashboard(): React.JSX.Element {
         <button className="nav-item" aria-current={view === 'services'} onClick={() => go('services')}>
           <SlidersHorizontal size={16} /> Services
         </button>
+        <button className="nav-item" aria-current={view === 'utilities'} onClick={() => go('utilities')}>
+          <Wrench size={16} /> Utilities
+        </button>
         <div className="spacer" />
         <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
           <Settings size={16} /> Settings
@@ -281,6 +285,8 @@ export function OwnerDashboard(): React.JSX.Element {
               <PostProductionClientsScreen />
             )}
           </div>
+        ) : view === 'utilities' ? (
+          <UtilitiesScreen />
         ) : view === 'services' ? (
           <div className="board-area">
             <PostProductionServicesScreen />
