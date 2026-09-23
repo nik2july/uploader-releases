@@ -68,6 +68,7 @@ const api: DesktopAPI = {
   appVersion: () => ipcRenderer.invoke('app:version'),
   diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
   copyToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
+  createClientFolderStructure: tree => ipcRenderer.invoke('utility:createClientFolderStructure', tree),
   onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; },
   // Utilities — Duration, Missing Clips, Clip Delivery, Photo Delivery.
   utilityStatus: () => ipcRenderer.invoke('utility:status'),

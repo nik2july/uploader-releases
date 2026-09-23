@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, Settings, SlidersHorizontal, Upload, Users, Wrench } from 'lucide-react';
+import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, FolderPlus, Settings, SlidersHorizontal, Upload, Users, Wrench } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -26,9 +26,10 @@ import { RecentActivityScreen } from './common/RecentActivityScreen';
 import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
 import { GoogleDriveRequiredModal } from './common/GoogleDriveRequiredModal';
 import { GoogleDriveConnectBanner } from './common/GoogleDriveConnectBanner';
+import { ClientToolsScreen } from './screens/ClientToolsScreen';
 import type { WorkTarget } from '../../../shared/contracts';
 
-type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities';
+type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
@@ -189,6 +190,9 @@ export function OwnerDashboard(): React.JSX.Element {
         <button className="nav-item" aria-current={view === 'clients' || view === 'partners'} onClick={() => { studio.setSelectedFreelanceClientId(null); go('clients'); }}>
           <Building2 size={16} /> Clients
         </button>
+        <button className="nav-item" aria-current={view === 'client-tools'} onClick={() => go('client-tools')}>
+          <FolderPlus size={16} /> Client Tools
+        </button>
         <button className="nav-item" aria-current={view === 'services'} onClick={() => go('services')}>
           <SlidersHorizontal size={16} /> Services
         </button>
@@ -293,6 +297,8 @@ export function OwnerDashboard(): React.JSX.Element {
           </div>
         ) : view === 'payments' ? (
           <PostProductionPaymentsScreen />
+        ) : view === 'client-tools' ? (
+          <ClientToolsScreen />
         ) : (
           <div className="screen">
             <header><div><span className="eyebrow">SETTINGS</span><h2>Uploader settings</h2>

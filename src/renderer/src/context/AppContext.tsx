@@ -61,6 +61,8 @@ export interface AppContextType {
   projects: ProjectEvent[];
   studioSettings: (Partial<StudioSettingsConfig> & { uploader?: UploaderSettings }) | null;
   studioPriceList: Partial<StudioPriceList> | null;
+  projectCodes: Array<{ key: string; code: string; name?: string; phone?: string; clientIds?: string[]; leadIds?: string[] }>;
+  updateProjectDataLog: (projectId: number, memberId: number, dataGb: string | number, fileCount: string | number) => Promise<void>;
   loading: boolean;
   error: string;
 
@@ -208,6 +210,17 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
         )
       );
 
+      unsubs.push(
+        onSnapshot(
+          collection(db, 'project_codes'),
+          snapshot => setTables(old => ({
+            ...old,
+            project_codes: snapshot.docs.map(d => ({ ...d.data(), key: d.id })),
+          })),
+          fail
+        )
+      );
+
       for (const name of ['billing', 'editor', 'private']) {
         unsubs.push(
           onSnapshot(
@@ -295,6 +308,32 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       return { ...c, dialCode: det.dialCode || c.dialCode || DEFAULT_DIAL_CODE, phone: det.nationalNumber || c.phone };
     });
     const projectsList: ProjectEvent[] = tables.projects || [];
+    const projectCodesList = (tables.project_codes || []) as AppContextType['projectCodes'];
+
+    const updateProjectDataLog = async (projectId: number, memberId: number, dataGb: string | number, fileCount: string | number): Promise<void> => {
+      const existing = projectsList.find(project => Number(project.id) === Number(projectId));
+      if (!existing) throw new Error('Event not found. Refresh the client tools and try again.');
+      const logs = [...(existing.dataLogs || [])];
+      const nextLog = {
+        teamMemberId: memberId,
+        dataGb,
+        fileCount,
+        copied: true,
+        receivedAt: new Date().toISOString(),
+      };
+      const index = logs.findIndex(log => Number(log.teamMemberId) === Number(memberId));
+      if (index >= 0) logs[index] = { ...logs[index], ...nextLog };
+      else logs.push(nextLog);
+      const assigned = existing.assignments || [];
+      const allReceived = assigned.length === 0 || assigned.every(id => logs.some(log => Number(log.teamMemberId) === Number(id) && Boolean(log.receivedAt)));
+      await setDoc(doc(db, 'projects', String(existing.id)), {
+        ...existing,
+        dataLogs: logs,
+        dataCopied: true,
+        dataReceived: allReceived,
+        dataReceivedAt: allReceived ? new Date().toISOString() : existing.dataReceivedAt || null,
+      }, { merge: true });
+    };
 
     const isReady = isOwner
       ? Object.keys(tables).length >= 8 && config !== null
@@ -402,6 +441,8 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       projects: projectsList,
       studioSettings: config?.studioSettings || null,
       studioPriceList: config?.studioPriceList || null,
+      projectCodes: projectCodesList,
+      updateProjectDataLog,
       loading: !isReady,
       error,
 

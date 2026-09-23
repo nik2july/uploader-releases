@@ -143,6 +143,7 @@ export interface DesktopAPI {
   checkForUpdate(): Promise<UpdateInfo | null>;
   appVersion(): Promise<string>;
   copyToClipboard(text: string): Promise<boolean>;
+  createClientFolderStructure(tree: { rootName: string; folders: string[] }): Promise<{ rootPath: string; created: number } | null>;
   diagnostics(): Promise<string>;
   onChange(callback: () => void): () => void;
 
@@ -203,4 +204,3 @@ export interface DownloadProgress {
 }
 
 export interface DropboxStatus { configured: boolean; connected: boolean; email?: string; error?: string }
-

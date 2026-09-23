@@ -444,6 +444,28 @@ export async function setupIpcHandlers(): Promise<() => void> {
     }
     return false;
   }, false);
+  handle('utility:createClientFolderStructure', async (tree: { rootName?: string; folders?: string[] }) => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Choose where to create the client folder structure',
+      buttonLabel: 'Create folders',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const cleanPart = (value: unknown, fallback: string): string => {
+      const cleaned = String(value ?? '').replace(/[\\/\\0]/g, '-').replace(/\.\./g, '-').trim();
+      return cleaned || fallback;
+    };
+    const rootName = cleanPart(tree?.rootName, 'Client');
+    const folders = Array.isArray(tree?.folders)
+      ? tree.folders.map(folder => String(folder).split('/').map(part => cleanPart(part, 'Folder')).join('/')).filter(Boolean)
+      : [];
+    const rootPath = join(result.filePaths[0], rootName);
+    const uniqueFolders = [...new Set(folders)];
+    await fs.mkdir(rootPath, { recursive: true });
+    for (const folder of uniqueFolders) await fs.mkdir(join(rootPath, folder), { recursive: true });
+    return { rootPath, created: uniqueFolders.length + 1 };
+  }, false);
   handle('dialog:openVideoFile', async () => {
     const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
     const result = await dialog.showOpenDialog(win, {

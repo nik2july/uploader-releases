@@ -23,6 +23,7 @@ import {
 } from '../../types';
 import { addDaysToDate, formatDate } from '../../utils/formatters';
 import { formatInternational } from '../../utils/phone';
+import { createExtra, deleteClientDeliverable, updateClientDeliverable } from '../../lib/studioRepository';
 import {
   X,
   Briefcase,
@@ -52,6 +53,8 @@ interface NewFreelanceJobModalProps {
   presetClientId?: string;
 }
 
+const OWN_CLIENT_OPTION = '__own_client_extra__';
+
 export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   isOpen,
   onClose,
@@ -61,6 +64,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   const {
     addFreelanceJob,
     updateFreelanceJob,
+    deleteFreelanceJob,
     team,
     freelanceClients,
     freelanceJobs,
@@ -81,8 +85,9 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
 
   const [title, setTitle] = useState(initialJob?.title || '');
   const [freelanceClientId, setFreelanceClientId] = useState<string | undefined>(
-    initialJob?.freelanceClientId || presetClient?.id
+    initialJob?.freelanceClientId || (initialJob?.sourceCompany === 'baawaray-films' ? OWN_CLIENT_OPTION : presetClient?.id)
   );
+  const [ownClientId, setOwnClientId] = useState(initialJob?.sourceClientId || '');
   const [clientName, setClientName] = useState(initialJob?.clientName || presetClient?.name || '');
   const [clientPhone, setClientPhone] = useState(
     initialJob?.clientPhone || presetClient?.phone || ''
@@ -216,6 +221,10 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
   const selectedStudio = freelanceClientId
     ? freelanceClients.find(c => c.id === freelanceClientId)
     : undefined;
+  const ownClientMode = freelanceClientId === OWN_CLIENT_OPTION;
+  const selectedOwnClient = ownClientMode
+    ? clients.find(c => String(c.id) === ownClientId)
+    : undefined;
 
   const scheduleJobId = initialJob?.id || '__draft__';
   const scheduleJobs = useMemo<FreelanceJob[] | undefined>(() => {
@@ -293,7 +302,8 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
     if (!isOpen) return;
     if (initialJob) {
       setTitle(initialJob.title || '');
-      setFreelanceClientId(initialJob.freelanceClientId);
+      setFreelanceClientId(initialJob.freelanceClientId || (initialJob.sourceCompany === 'baawaray-films' ? OWN_CLIENT_OPTION : undefined));
+      setOwnClientId(initialJob.sourceClientId || '');
       setClientName(initialJob.clientName || '');
       setClientPhone(initialJob.clientPhone || '');
       setServiceType(initialJob.serviceType || '');
@@ -362,14 +372,35 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
    * the roster.
    */
   const handleSelectFreelanceClient = (id: string) => {
+    if (id === OWN_CLIENT_OPTION) {
+      setFreelanceClientId(OWN_CLIENT_OPTION);
+      setOwnClientId('');
+      setClientName('');
+      setClientPhone('');
+      return;
+    }
     if (!id) {
       setFreelanceClientId(undefined);
+      setOwnClientId('');
       return;
     }
     const client = freelanceClients.find(c => c.id === id);
     if (!client) return;
     setFreelanceClientId(id);
+    setOwnClientId('');
     setClientName(client.name);
+    setClientPhone(client.phone || '');
+  };
+
+  const handleSelectOwnClient = (id: string) => {
+    setOwnClientId(id);
+    const client = clients.find(c => String(c.id) === id);
+    if (!client) {
+      setClientName('');
+      setClientPhone('');
+      return;
+    }
+    setClientName(client.name || client.couple || '');
     setClientPhone(client.phone || '');
   };
 
@@ -564,8 +595,12 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
       return;
     }
     // A studio answers for the name; only a one-off client has to type one.
-    if (!selectedStudio && !clientName.trim()) {
+    if (!ownClientMode && !selectedStudio && !clientName.trim()) {
       setFormError('Choose a registered studio, or type who this work is billed to.');
+      return;
+    }
+    if (ownClientMode && !selectedOwnClient) {
+      setFormError('Choose the client profile this extra deliverable belongs to.');
       return;
     }
     if (!serviceType) {
@@ -592,7 +627,10 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
       // and number of its own — it is a financial record that has to survive the
       // studio being removed — but the studio record is what they are copied from.
       clientName: (selectedStudio?.name || clientName).trim(),
-      freelanceClientId,
+      freelanceClientId: ownClientMode ? undefined : freelanceClientId,
+      sourceCompany: ownClientMode ? 'baawaray-films' : initialJob?.sourceCompany,
+      sourceClientId: ownClientMode ? ownClientId : initialJob?.sourceClientId,
+      sourceDeliverableId: initialJob?.sourceDeliverableId,
       clientPhone: (selectedStudio?.phone || clientPhone).trim(),
       clientEmail: initialJob?.clientEmail,
       serviceType: serviceType as FreelanceServiceType,
@@ -639,9 +677,36 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
     try {
       if (initialJob) {
         await updateFreelanceJob(initialJob.id, jobPayload, 'Freelance Job Details Updated');
+        if (ownClientMode && initialJob.sourceDeliverableId) {
+          await updateClientDeliverable(ownClientId, initialJob.sourceDeliverableId, {
+            title: title.trim(), linkedRoleId: serviceType, sellingPrice: clientCharge,
+          });
+        }
         onClose();
       } else {
-        await addFreelanceJob(jobPayload);
+        if (ownClientMode) {
+          const deliverableId = await createExtra(ownClientId, {
+            title: title.trim(), linkedRoleId: serviceType, sellingPrice: clientCharge,
+          });
+          let createdJobId = '';
+          try {
+            createdJobId = await addFreelanceJob(jobPayload);
+            await updateFreelanceJob(createdJobId, {
+              sourceCompany: 'baawaray-films',
+              sourceClientId: ownClientId,
+              sourceDeliverableId: deliverableId,
+            }, 'Linked to an extra client deliverable');
+            await updateClientDeliverable(ownClientId, deliverableId, { postProductionJobIds: [createdJobId] });
+          } catch (error) {
+            await Promise.allSettled([
+              createdJobId ? deleteFreelanceJob(createdJobId) : Promise.resolve(),
+              deleteClientDeliverable(ownClientId, deliverableId),
+            ]);
+            throw error;
+          }
+        } else {
+          await addFreelanceJob(jobPayload);
+        }
         if (addAnother) {
           setSuccessBanner(`✓ "${jobPayload.serviceType}" deliverable logged! Add another deliverable for this client below using the same raw rushes.`);
           setServiceType('');
@@ -682,10 +747,14 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold font-serif tracking-wide text-white">
-                {initialJob ? `Edit Freelance Project #${initialJob.jobCode}` : 'Log New Freelance Work'}
+                {initialJob
+                  ? `Edit Freelance Project #${initialJob.jobCode}`
+                  : ownClientMode ? 'Add Extra Client Deliverable' : 'Log New Freelance Work'}
               </h2>
               <p className="text-xs text-[#d4c1a3]">
-                Track custom editing projects, what the client is charged, and progress
+                {ownClientMode
+                  ? 'Add an extra to the client record and track its billable editing work.'
+                  : 'Track custom editing projects, what the client is charged, and progress'}
               </p>
             </div>
           </div>
@@ -730,10 +799,10 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
                 />
               </div>
 
-              {freelanceClients.length > 0 && (
+              {(freelanceClients.length > 0 || clients.length > 0) && (
                 <div className="md:col-span-2">
                   <label className="block text-xs font-semibold text-[#111417] mb-1">
-                    Registered Studio
+                    {ownClientMode ? 'Work type' : 'Registered Studio'}
                   </label>
                   <select
                     value={freelanceClientId || ''}
@@ -741,6 +810,9 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
                     className="w-full px-3.5 py-2.5 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-sm font-medium text-[#111417] focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all"
                   >
                     <option value="">-- One-off client (type details below) --</option>
+                    {clients.length > 0 && (
+                      <option value={OWN_CLIENT_OPTION}>My client · extra from quotation</option>
+                    )}
                     {freelanceClients
                       .filter(c => c.active !== false || c.id === freelanceClientId)
                       .map(c => (
@@ -751,7 +823,9 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
                       ))}
                   </select>
                   <p className="text-[10px] text-[#6b6660] mt-1">
-                    Linking a studio keeps all their jobs, billing and outstanding balance together.
+                    {ownClientMode
+                      ? 'Creates a client deliverable linked to one billable editing job.'
+                      : 'Linking a studio keeps all their jobs, billing and outstanding balance together.'}
                   </p>
                 </div>
               )}
@@ -764,7 +838,32 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
                 nothing anywhere else — two versions of the same studio, and the wrong
                 one on the statement.
               */}
-              {selectedStudio ? (
+              {ownClientMode ? (
+                <>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-semibold text-[#111417] mb-1">Client Profile *</label>
+                    <select
+                      required
+                      value={ownClientId}
+                      onChange={e => handleSelectOwnClient(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-[#f9f8f6]/50 border border-[#d4c1a3] rounded-xl text-sm font-medium text-[#111417] focus:outline-none focus:border-[#7a2e33] focus:bg-white transition-all"
+                    >
+                      <option value="">Choose your client…</option>
+                      {clients.map(client => (
+                        <option key={client.id} value={String(client.id)}>{client.couple || client.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedOwnClient && (
+                    <div className="md:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-2.5 rounded-xl bg-[#f9f8f6] border border-[#d4c1a3]">
+                      <User className="w-4 h-4 text-[#6b6660]" />
+                      <span className="text-xs font-bold text-[#111417]">{selectedOwnClient.couple || selectedOwnClient.name}</span>
+                      {selectedOwnClient.phone && <span className="text-[11px] text-[#6b6660]">· {selectedOwnClient.phone}</span>}
+                      <span className="text-[10px] text-[#6b6660] basis-full">This extra is linked to the client and priced as a billable work item.</span>
+                    </div>
+                  )}
+                </>
+              ) : selectedStudio ? (
                 <div className="md:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-2.5 rounded-xl bg-[#f9f8f6] border border-[#d4c1a3]">
                   <User className="w-4 h-4 text-[#6b6660]" />
                   <span className="text-xs font-bold text-[#111417]">{selectedStudio.name}</span>
@@ -1436,7 +1535,7 @@ export const NewFreelanceJobModal: React.FC<NewFreelanceJobModalProps> = ({
               className="flex items-center gap-2 px-6 py-2.5 bg-[#7a2e33] hover:bg-[#5a2226] text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>{isSubmitting ? 'Saving...' : initialJob ? 'Save Changes' : 'Create Freelance Project'}</span>
+              <span>{isSubmitting ? 'Saving...' : initialJob ? 'Save Changes' : ownClientMode ? 'Add Deliverable & Bill Client' : 'Create Freelance Project'}</span>
             </button>
           </div>
         </div>

@@ -22,7 +22,9 @@ import type { InvoiceSnapshot, Transfer, WorkTarget } from '../../../shared/cont
 
 const clean = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 export async function createFreelanceJob(job: Partial<FreelanceJob>): Promise<string> {
-  if (!job.title?.trim() || !job.serviceType || !job.freelanceClientId) throw new Error('Choose a partner studio, service and title.');
+  if (!job.title?.trim() || !job.serviceType || (!job.freelanceClientId && !job.clientName?.trim())) {
+    throw new Error('Choose a partner studio or client, service and title.');
+  }
   const ref = doc(collection(db, 'freelance_jobs'));
   const now = new Date();
   const data = { ...job, id: ref.id, jobCode: `FL-${now.getFullYear()}-D${ref.id.slice(0, 8).toUpperCase()}`,
