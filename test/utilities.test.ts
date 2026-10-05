@@ -154,6 +154,18 @@ describe('clip delivery planning', () => {
   const clip = (width: number, duration: number, bytes: number): Clip =>
     ({ path: '/x.mp4', relativePath: 'x.mp4', width, height: 1080, fps: 25, duration, bytes, transfer: '', primaries: '' });
 
+  test('Full HD uses HD bitrate and reduces mixed-resolution estimates', () => {
+    const clips = [clip(3840, 60, 1e9), clip(1920, 60, 1e9)];
+    const capped = planForQuality('balanced', clips, true);
+    assert.equal(bitrateFor(clips[0], capped.uhdBitrate, capped.hdBitrate, true), capped.hdBitrate);
+    assert.ok(capped.estimatedBytes < planForQuality('balanced', clips).estimatedBytes);
+    const target = planForTargetSize(1, clips, true);
+    assert.ok(Math.abs(target.estimatedBytes - 1e9) < 1);
+    const args = ffmpegArgs(clips[0], '/out.mp4', capped.hdBitrate, true);
+    assert.match(args[args.indexOf('-vf') + 1], /scale=.*force_original_aspect_ratio=decrease:force_divisible_by=2/);
+    assert.doesNotMatch(ffmpegArgs(clips[0], '/out.mp4', capped.hdBitrate).join(' '), /scale=/);
+  });
+
   test('HD gets a fraction of the 4K bitrate', () => {
     const plan = planForQuality('balanced', [clip(3840, 60, 1e9)]);
     assert.equal(plan.uhdBitrate, 65_000_000);

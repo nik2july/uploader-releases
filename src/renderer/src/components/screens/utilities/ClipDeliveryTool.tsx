@@ -25,10 +25,10 @@ const QUALITIES: { id: ClipQuality; name: string; blurb: string; recommended?: b
 const HD_RATIO = 0.28;
 const UHD_BITRATE: Record<ClipQuality, number> = { archive: 90_000_000, balanced: 65_000_000, compact: 40_000_000 };
 
-function estimate(clips: { width: number; duration: number; bytes: number }[], uhd: number, hd: number): number {
+function estimate(clips: { width: number; duration: number; bytes: number }[], uhd: number, hd: number, fullHD = false): number {
   let total = 0;
   for (const clip of clips) {
-    const target = clip.width > 2000 ? uhd : hd;
+    const target = !fullHD && clip.width > 2000 ? uhd : hd;
     const source = clip.duration > 0 ? (clip.bytes * 8) / clip.duration : 0;
     const cap = source * 0.9;
     total += ((cap > 0 && cap < target ? cap : target) + 256_000) * clip.duration / 8;
@@ -36,14 +36,14 @@ function estimate(clips: { width: number; duration: number; bytes: number }[], u
   return total;
 }
 
-function estimateForTarget(clips: { width: number; duration: number; bytes: number }[], targetGB: number): number {
+function estimateForTarget(clips: { width: number; duration: number; bytes: number }[], targetGB: number, fullHD = false): number {
   let lo = 2_000_000, hi = 300_000_000;
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
-    if (estimate(clips, mid, mid * HD_RATIO) > targetGB * 1e9) hi = mid; else lo = mid;
+    if (estimate(clips, mid, mid * HD_RATIO, fullHD) > targetGB * 1e9) hi = mid; else lo = mid;
   }
   const uhd = (lo + hi) / 2;
-  return estimate(clips, uhd, uhd * HD_RATIO);
+  return estimate(clips, uhd, uhd * HD_RATIO, fullHD);
 }
 
 export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean }): React.JSX.Element {
@@ -51,18 +51,19 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
   const [quality, setQuality] = useState<ClipQuality>(clipCache.quality);
   const [mode, setMode] = useState<'quality' | 'size'>(clipCache.mode);
   const [targetGB, setTargetGB] = useState(clipCache.targetGB);
+  const [fullHD, setFullHD] = useState(clipCache.fullHD);
   const [error, setError] = useState('');
 
   useEffect(() => { void window.api.clipState().then(setRun); return window.api.onClipState(setRun); }, []);
-  useEffect(() => { clipCache.quality = quality; clipCache.mode = mode; clipCache.targetGB = targetGB; }, [quality, mode, targetGB]);
+  useEffect(() => { clipCache.quality = quality; clipCache.mode = mode; clipCache.targetGB = targetGB; clipCache.fullHD = fullHD; }, [quality, mode, targetGB, fullHD]);
 
   const clips = run?.scan?.clips ?? [];
   const estimated = useMemo(() => {
     if (!clips.length) return 0;
     return mode === 'size'
-      ? estimateForTarget(clips, targetGB)
-      : estimate(clips, UHD_BITRATE[quality], UHD_BITRATE[quality] * HD_RATIO);
-  }, [clips, mode, quality, targetGB]);
+      ? estimateForTarget(clips, targetGB, fullHD)
+      : estimate(clips, UHD_BITRATE[quality], UHD_BITRATE[quality] * HD_RATIO, fullHD);
+  }, [clips, mode, quality, targetGB, fullHD]);
 
   async function chooseSource(): Promise<void> {
     const picked = await window.api.chooseUtilityFolder('Choose the folder of camera masters', 'Read This Folder');
@@ -82,7 +83,7 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
   async function start(): Promise<void> {
     if (!run?.destinationPath) { setError('Choose a destination folder first.'); return; }
     setError('');
-    try { await window.api.clipStart(run.destinationPath, { mode, quality, targetGB }); }
+    try { await window.api.clipStart(run.destinationPath, { mode, quality, targetGB, fullHD }); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   }
 
@@ -122,6 +123,14 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
             </button>
             {run?.destinationPath ? <p className="inline-note" title={run.destinationPath}>{run.destinationPath}</p> : null}
             <p className="inline-note">Originals are never modified. A run can be stopped and picked up again later.</p>
+          </ToolSection>
+
+          <ToolSection title="Delivery resolution">
+            <label className="check-label">
+              <input type="checkbox" checked={fullHD} disabled={running} onChange={event => setFullHD(event.target.checked)} />
+              Cap at Full HD (1080p)
+            </label>
+            <p className="inline-note">{fullHD ? 'Larger clips are reduced to fit 1920 × 1080. Aspect ratio is preserved; smaller clips are never enlarged.' : 'Keep each clip’s original resolution, including 4K.'}</p>
           </ToolSection>
 
           <ToolSection title="How big">

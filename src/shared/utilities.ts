@@ -117,7 +117,7 @@ export interface ClipScanResult {
 export type ClipQuality = 'archive' | 'balanced' | 'compact';
 export type ClipSizeMode = 'quality' | 'size';
 
-export interface ClipPlan { uhdBitrate: number; hdBitrate: number; estimatedBytes: number }
+export interface ClipPlan { fullHD?: boolean; uhdBitrate: number; hdBitrate: number; estimatedBytes: number }
 
 export type ClipEngineState = 'idle' | 'scanning' | 'ready' | 'running' | 'paused' | 'finished';
 

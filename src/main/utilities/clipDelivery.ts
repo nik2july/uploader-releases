@@ -28,8 +28,8 @@ export const QUALITY_BITRATE: Record<ClipQuality, number> = {
 };
 const HD_RATIO = 0.28;
 
-export function bitrateFor(clip: Clip, uhd: number, hd: number): number {
-  const target = clip.width > 2000 ? uhd : hd;
+export function bitrateFor(clip: Clip, uhd: number, hd: number, fullHD = false): number {
+  const target = !fullHD && clip.width > 2000 ? uhd : hd;
   // Never spend more than 90% of the source bitrate — that would inflate clips
   // which are already light.
   const sourceBitrate = clip.duration > 0 ? (clip.bytes * 8) / clip.duration : 0;
@@ -37,28 +37,28 @@ export function bitrateFor(clip: Clip, uhd: number, hd: number): number {
   return cap > 0 && cap < target ? cap : target;
 }
 
-export function estimateBytes(clips: Clip[], uhd: number, hd: number): number {
+export function estimateBytes(clips: Clip[], uhd: number, hd: number, fullHD = false): number {
   let total = 0;
-  for (const clip of clips) total += ((bitrateFor(clip, uhd, hd) + 256_000) * clip.duration) / 8;  // + AAC audio
+  for (const clip of clips) total += ((bitrateFor(clip, uhd, hd, fullHD) + 256_000) * clip.duration) / 8;  // + AAC audio
   return total;
 }
 
-export function planForQuality(quality: ClipQuality, clips: Clip[]): ClipPlan {
+export function planForQuality(quality: ClipQuality, clips: Clip[], fullHD = false): ClipPlan {
   const uhd = QUALITY_BITRATE[quality];
   const hd = uhd * HD_RATIO;
-  return { uhdBitrate: uhd, hdBitrate: hd, estimatedBytes: estimateBytes(clips, uhd, hd) };
+  return { fullHD, uhdBitrate: uhd, hdBitrate: hd, estimatedBytes: estimateBytes(clips, uhd, hd, fullHD) };
 }
 
 /** Solves for the bitrate pair that lands closest to `targetGB`. */
-export function planForTargetSize(targetGB: number, clips: Clip[]): ClipPlan {
+export function planForTargetSize(targetGB: number, clips: Clip[], fullHD = false): ClipPlan {
   const target = targetGB * 1e9;
   let lo = 2_000_000, hi = 300_000_000;
   for (let i = 0; i < 60; i++) {
     const mid = (lo + hi) / 2;
-    if (estimateBytes(clips, mid, mid * HD_RATIO) > target) hi = mid; else lo = mid;
+    if (estimateBytes(clips, mid, mid * HD_RATIO, fullHD) > target) hi = mid; else lo = mid;
   }
   const uhd = (lo + hi) / 2;
-  return { uhdBitrate: uhd, hdBitrate: uhd * HD_RATIO, estimatedBytes: estimateBytes(clips, uhd, uhd * HD_RATIO) };
+  return { fullHD, uhdBitrate: uhd, hdBitrate: uhd * HD_RATIO, estimatedBytes: estimateBytes(clips, uhd, uhd * HD_RATIO, fullHD) };
 }
 
 const needsFPSHalving = (clip: Clip): boolean => clip.fps >= 90;
@@ -122,7 +122,7 @@ async function probeClip(file: string, root: string): Promise<Clip | null> {
  * Per-clip decisions: halve high frame rates, tonemap HLG to Rec.709, and
  * deliver H.264 High / 8-bit 4:2:0 / AAC so it plays anywhere.
  */
-export function ffmpegArgs(clip: Clip, out: string, bitrate: number): string[] {
+export function ffmpegArgs(clip: Clip, out: string, bitrate: number, fullHD = false): string[] {
   const chain: string[] = [];
   if (needsFPSHalving(clip)) chain.push(`fps=${(clip.fps / 2).toFixed(3)}`);
   if (isHLG(clip)) {
@@ -137,6 +137,7 @@ export function ffmpegArgs(clip: Clip, out: string, bitrate: number): string[] {
     }
     chain.push('zscale=t=linear:npl=100', 'tonemap=hable:desat=0', 'zscale=t=bt709:m=bt709:r=tv');
   }
+  if (fullHD) chain.push("scale=w='min(iw,1920)':h='min(ih,1080)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1");
   chain.push('format=yuv420p');
 
   const rate = Math.round(bitrate);
@@ -268,6 +269,17 @@ export class ClipDeliveryEngine {
       alreadyDone = new Set(text.split('\n').map(line => line.trim()).filter(Boolean));
     } catch { /* first run */ }
 
+    if (plan.fullHD) {
+      for (const clip of clips) {
+        if (!alreadyDone.has(clip.relativePath)) continue;
+        const out = path.join(destination, clip.relativePath.replace(/\.[^./]+$/, '') + '.mp4');
+        const existing = await probeClip(out, destination);
+        if (!existing || existing.width > 1920 || existing.height > 1080) alreadyDone.delete(clip.relativePath);
+      }
+      await fs.writeFile(doneFile, [...alreadyDone].join('\n') + '\n');
+      this.say('Delivery capped at Full HD (1920 × 1080).');
+    }
+
     if (alreadyDone.size) {
       this.say(`Resuming — ${alreadyDone.size} clips were already finished.`);
       let duration = 0;
@@ -284,8 +296,8 @@ export class ClipDeliveryEngine {
       const out = path.join(destination, clip.relativePath.replace(/\.[^./]+$/, '') + '.mp4');
       await fs.mkdir(path.dirname(out), { recursive: true });
 
-      const bitrate = bitrateFor(clip, plan.uhdBitrate, plan.hdBitrate);
-      const result = await this.encode(ffmpeg, ffmpegArgs(clip, out, bitrate));
+      const bitrate = bitrateFor(clip, plan.uhdBitrate, plan.hdBitrate, plan.fullHD);
+      const result = await this.encode(ffmpeg, ffmpegArgs(clip, out, bitrate, plan.fullHD));
 
       if (this.cancelled) { await fs.rm(out, { force: true }); break; }
 

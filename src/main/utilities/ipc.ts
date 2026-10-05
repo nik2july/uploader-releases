@@ -144,7 +144,7 @@ export function setupUtilityHandlers(handle: Register): UtilitiesHandlers {
   handle('utility:clip:destination', async (destination: string) => {
     clips.setDestination(await directory(destination));
   }, false);
-  handle('utility:clip:start', async (destination: string, choice: { mode: 'quality' | 'size'; quality: ClipQuality; targetGB: number }) => {
+  handle('utility:clip:start', async (destination: string, choice: { mode: 'quality' | 'size'; quality: ClipQuality; targetGB: number; fullHD?: boolean }) => {
     const resolved = await directory(destination);
     const scan = clips.snapshot().scan;
     if (!scan) throw new Error('Scan a source folder first.');
@@ -152,8 +152,8 @@ export function setupUtilityHandlers(handle: Register): UtilitiesHandlers {
       throw new Error('Choose a destination outside the source folder so the originals are never touched.');
     }
     const plan: ClipPlan = choice?.mode === 'size'
-      ? planForTargetSize(Math.max(1, Math.min(100_000, Number(choice.targetGB) || 500)), scan.clips)
-      : planForQuality(['archive', 'balanced', 'compact'].includes(choice?.quality) ? choice.quality : 'balanced', scan.clips);
+      ? planForTargetSize(Math.max(1, Math.min(100_000, Number(choice.targetGB) || 500)), scan.clips, choice.fullHD === true)
+      : planForQuality(['archive', 'balanced', 'compact'].includes(choice?.quality) ? choice.quality : 'balanced', scan.clips, choice?.fullHD === true);
     clips.start(resolved, plan);
   }, false);
   handle('utility:clip:cancel', () => clips.cancel(), false);
