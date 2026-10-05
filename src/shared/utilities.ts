@@ -133,6 +133,10 @@ export interface ClipRunState {
   totalDuration: number;
   bytesWritten: number;
   currentFile: string;
+  currentDuration?: number;
+  processedDuration?: number;
+  sessionDuration?: number;
+  lastProgressAt?: number | null;
   failures: string[];
   log: string[];
   startedAt: number | null;

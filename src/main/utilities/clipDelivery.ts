@@ -142,7 +142,7 @@ export function ffmpegArgs(clip: Clip, out: string, bitrate: number, fullHD = fa
 
   const rate = Math.round(bitrate);
   return [
-    '-nostdin', '-v', 'error', '-y',
+    '-nostdin', '-v', 'error', '-y', '-progress', 'pipe:1', '-stats_period', '1',
     '-i', clip.path,
     '-map', '0:v:0', '-map', '0:a:0?',
     '-vf', chain.join(','),
@@ -163,7 +163,7 @@ function emptyState(): ClipRunState {
   return {
     state: 'idle', sourcePath: null, destinationPath: null, scan: null, scanProgress: 0,
     completedCount: 0, totalCount: 0, completedDuration: 0, totalDuration: 0, bytesWritten: 0,
-    currentFile: '', failures: [], log: [], startedAt: null,
+    currentFile: '', currentDuration: 0, processedDuration: 0, sessionDuration: 0, lastProgressAt: null, failures: [], log: [], startedAt: null,
   };
 }
 
@@ -238,7 +238,7 @@ export class ClipDeliveryEngine {
     this.cancelled = false;
     this.update({
       state: 'running', destinationPath: destination, completedCount: 0, completedDuration: 0,
-      bytesWritten: 0, failures: [], startedAt: Date.now(),
+      bytesWritten: 0, currentDuration: 0, processedDuration: 0, sessionDuration: 0, lastProgressAt: null, failures: [], startedAt: Date.now(),
     });
     this.running = this.runLoop(ffmpeg, scan.clips, destination, plan).catch(error => {
       this.say(`Stopped: ${error instanceof Error ? error.message : String(error)}`);
@@ -285,19 +285,19 @@ export class ClipDeliveryEngine {
       let duration = 0;
       for (const clip of clips) if (alreadyDone.has(clip.relativePath)) duration += clip.duration;
       // Don't let skipped work distort the rate.
-      this.update({ completedCount: alreadyDone.size, completedDuration: duration, startedAt: Date.now() });
+      this.update({ completedCount: clips.filter(clip => alreadyDone.has(clip.relativePath)).length, completedDuration: duration, processedDuration: duration, startedAt: Date.now() });
     }
 
     for (const clip of clips) {
       if (this.cancelled) break;
       if (alreadyDone.has(clip.relativePath)) continue;
-      this.update({ currentFile: path.basename(clip.path) });
+      this.update({ currentFile: path.basename(clip.path), currentDuration: 0 });
 
       const out = path.join(destination, clip.relativePath.replace(/\.[^./]+$/, '') + '.mp4');
       await fs.mkdir(path.dirname(out), { recursive: true });
 
       const bitrate = bitrateFor(clip, plan.uhdBitrate, plan.hdBitrate, plan.fullHD);
-      const result = await this.encode(ffmpeg, ffmpegArgs(clip, out, bitrate, plan.fullHD));
+      const result = await this.encode(ffmpeg, ffmpegArgs(clip, out, bitrate, plan.fullHD), clip);
 
       if (this.cancelled) { await fs.rm(out, { force: true }); break; }
 
@@ -324,20 +324,35 @@ export class ClipDeliveryEngine {
       this.update({
         completedCount: this.state.completedCount + 1,
         completedDuration: this.state.completedDuration + clip.duration,
+        processedDuration: (this.state.processedDuration ?? 0) + clip.duration,
+        sessionDuration: (this.state.sessionDuration ?? 0) + clip.duration, currentDuration: 0,
         bytesWritten: this.state.bytesWritten + outBytes,
       });
       this.say(`${path.basename(clip.path)}  ${Math.round(clip.bytes / 1_048_576)} MB → ${Math.round(outBytes / 1_048_576)} MB`);
     }
 
-    this.update({ currentFile: '', state: this.cancelled ? 'paused' : 'finished' });
+    this.update({ currentFile: '', currentDuration: 0, state: this.cancelled ? 'paused' : 'finished' });
     if (!this.cancelled) this.say('Finished.');
   }
 
-  private encode(ffmpeg: string, args: string[]): Promise<{ code: number; stderr: string }> {
+  private encode(ffmpeg: string, args: string[], clip: Clip): Promise<{ code: number; stderr: string }> {
     return new Promise(resolve => {
-      const child = spawn(ffmpeg, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       this.child = child;
       let stderr = '';
+      let pending = '';
+      child.stdout?.on('data', chunk => {
+        pending += String(chunk);
+        const lines = pending.split('\n');
+        pending = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('out_time_us=')) continue;
+          const seconds = Number(line.slice('out_time_us='.length)) / 1e6;
+          if (Number.isFinite(seconds) && seconds >= 0) {
+            this.update({ currentDuration: Math.min(clip.duration, seconds), lastProgressAt: Date.now() });
+          }
+        }
+      });
       child.stderr?.on('data', chunk => { stderr += String(chunk); if (stderr.length > 8000) stderr = stderr.slice(-8000); });
       child.on('error', error => { this.child = null; resolve({ code: 1, stderr: String(error.message) }); });
       child.on('close', code => { this.child = null; resolve({ code: code ?? 1, stderr }); });
@@ -346,7 +361,7 @@ export class ClipDeliveryEngine {
 
   private async fail(clip: Clip, reason: string, logsDir: string): Promise<void> {
     await this.append(path.join(logsDir, 'failed.txt'), `${clip.relativePath} | ${reason}\n`);
-    this.update({ failures: [...this.state.failures, `${path.basename(clip.path)}: ${reason}`] });
+    this.update({ processedDuration: (this.state.processedDuration ?? 0) + clip.duration, currentDuration: 0, failures: [...this.state.failures, `${path.basename(clip.path)}: ${reason}`] });
     this.say(`FAILED  ${path.basename(clip.path)} — ${reason}`);
   }
 

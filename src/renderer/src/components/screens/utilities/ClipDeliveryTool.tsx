@@ -89,10 +89,18 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
 
   const running = run?.state === 'running';
   const scanning = run?.state === 'scanning';
-  const fraction = run && run.totalDuration > 0 ? run.completedDuration / run.totalDuration : 0;
-  const elapsed = run?.startedAt ? (Date.now() - run.startedAt) / 1000 : 0;
-  const throughput = elapsed > 0 && run ? run.completedDuration / elapsed : 0;
-  const eta = throughput > 0 && run ? (run.totalDuration - run.completedDuration) / throughput : 0;
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  const progress = (run?.processedDuration ?? run?.completedDuration ?? 0) + (run?.currentDuration ?? 0);
+  const fraction = run && run.totalDuration > 0 ? Math.min(1, progress / run.totalDuration) : 0;
+  const elapsed = run?.startedAt ? Math.max(0, (now - run.startedAt) / 1000) : 0;
+  const throughput = elapsed > 0 ? ((run?.sessionDuration ?? 0) + (run?.currentDuration ?? 0)) / elapsed : 0;
+  const eta = throughput > 0 && run ? Math.max(0, run.totalDuration - progress) / throughput : 0;
+  const quietSeconds = run ? (now - (run.lastProgressAt ?? run.startedAt ?? now)) / 1000 : 0;
 
   return (
     <div className="tool-panel">
@@ -198,10 +206,15 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
 
               {running || run.state === 'paused' ? (
                 <>
+                  <div className="stat-row">
+                    <StatBlock value={`${Math.round(fraction * 100)}%`} label="Progress" />
+                    <StatBlock value={throughput > 0 ? fmtDuration(eta) : 'Calculating…'} label="Estimated time remaining" />
+                    <StatBlock value={fmtDuration(elapsed)} label="Elapsed" />
+                  </div>
                   <ProgressBar fraction={fraction} />
                   <p className="inline-note">
                     {run.currentFile ? `${run.currentFile} · ` : ''}
-                    {throughput > 0 ? `${throughput.toFixed(1)}× realtime · ${fmtDuration(eta)} left` : 'Starting…'}
+                    {quietSeconds > 30 ? 'Waiting for encoder progress — check the log if this continues.' : throughput > 0 ? `${throughput.toFixed(1)}× realtime` : 'Preparing encoder — remaining time appears once frames are processed.'}
                   </p>
                 </>
               ) : null}
