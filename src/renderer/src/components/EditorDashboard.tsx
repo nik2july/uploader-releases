@@ -55,10 +55,11 @@ import {
 } from '../utils/dynamicScheduling';
 import type { FreelanceJob, TeamMember } from '../types';
 import { RecentActivityScreen } from './common/RecentActivityScreen';
+import { PostProductionTasksScreen } from './screens/PostProductionTasksScreen';
 import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
 import { Wrench } from 'lucide-react';
 
-type View = 'work' | 'payments' | 'activity' | 'utilities';
+type View = 'tasks' | 'work' | 'payments' | 'activity' | 'utilities';
 type StageFilter = 'all' | EditorWorkflowStage | 'changes_needed';
 
 export function EditorDashboard(): React.JSX.Element {
@@ -870,6 +871,7 @@ export function EditorDashboard(): React.JSX.Element {
           <Award size={16} /> On Time
           <span className="count">{onTimeReport.onTimeScore}%</span>
         </button>
+        <button className="nav-item" aria-current={view === 'tasks'} onClick={() => setView('tasks')}>My Tasks</button>
         <button className="nav-item" aria-current={view === 'payments'} onClick={() => { setView('payments'); setError(''); }}>
           <IndianRupee size={16} /> Payments
           {stageCounts.finalized > 0 && <span className="count">{stageCounts.finalized}</span>}
@@ -890,7 +892,9 @@ export function EditorDashboard(): React.JSX.Element {
           connected={Boolean(drive?.connected)}
           onConnect={() => setShowDriveModal(true)}
         />
-        {view === 'utilities' ? (
+        {view === 'tasks' ? (
+          <PostProductionTasksScreen />
+        ) : view === 'utilities' ? (
           <UtilitiesScreen />
         ) : view === 'activity' ? (
           <RecentActivityScreen

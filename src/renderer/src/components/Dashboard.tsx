@@ -11,6 +11,7 @@ import { UploadsScreen } from './screens/UploadsScreen';
 import { TransferDetail } from './screens/TransferDetail';
 import { UploaderSettings } from './UploaderSettings';
 import { UpdateBanner } from './UpdateBanner';
+import { PostProductionTasksScreen } from './screens/PostProductionTasksScreen';
 import { EditorDashboard } from './EditorDashboard';
 import { CloudArchivalScreen } from './screens/CloudArchivalScreen';
 import { PostProductionPaymentsScreen } from './screens/PostProductionPaymentsScreen';
@@ -29,7 +30,7 @@ import { GoogleDriveConnectBanner } from './common/GoogleDriveConnectBanner';
 import { ClientToolsScreen } from './screens/ClientToolsScreen';
 import type { WorkTarget } from '../../../shared/contracts';
 
-type View = 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools';
+type View = 'tasks' | 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
@@ -159,6 +160,7 @@ export function OwnerDashboard(): React.JSX.Element {
         <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
           <Briefcase size={16} /> Active Jobs
         </button>
+        <button className="nav-item" aria-current={view === 'tasks'} onClick={() => go('tasks')}>Tasks</button>
         <button
           className="nav-item"
           aria-current={view === 'activity'}
@@ -214,6 +216,8 @@ export function OwnerDashboard(): React.JSX.Element {
         />
         {open ? (
           <TransferDetail job={open} onBack={() => setOpenId(null)} refresh={refresh} />
+        ) : view === 'tasks' ? (
+          <PostProductionTasksScreen />
         ) : view === 'activity' ? (
           <RecentActivityScreen
             onSelectJob={() => {
