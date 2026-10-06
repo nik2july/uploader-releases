@@ -115,9 +115,10 @@ export interface ClipScanResult {
 }
 
 export type ClipQuality = 'archive' | 'balanced' | 'compact';
+export type ClipFPSCap = 'original' | 25 | 30 | 50 | 60;
 export type ClipSizeMode = 'quality' | 'size';
 
-export interface ClipPlan { fullHD?: boolean; uhdBitrate: number; hdBitrate: number; estimatedBytes: number }
+export interface ClipPlan { fullHD?: boolean; fpsCap?: ClipFPSCap; uhdBitrate: number; hdBitrate: number; estimatedBytes: number }
 
 export type ClipEngineState = 'idle' | 'scanning' | 'ready' | 'running' | 'paused' | 'finished';
 
@@ -133,6 +134,7 @@ export interface ClipRunState {
   totalDuration: number;
   bytesWritten: number;
   currentFile: string;
+  fpsCap?: ClipFPSCap;
   currentDuration?: number;
   processedDuration?: number;
   sessionDuration?: number;

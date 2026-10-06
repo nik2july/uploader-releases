@@ -184,14 +184,25 @@ describe('clip delivery planning', () => {
     assert.equal(Math.round(estimateBytes(clips, plan.uhdBitrate, plan.hdBitrate)), Math.round(plan.estimatedBytes));
   });
 
+  test('FPS caps reduce higher rates, preserve lower and fractional rates', () => {
+    for (const cap of [25, 30, 50, 60] as const) {
+      for (const fps of [23.976, 25, 29.97, 30, 50, 59.94, 60, 120]) {
+        const args = ffmpegArgs({ ...clip(1920, 10, 1e8), fps }, '/out.mp4', 18_200_000, false, cap);
+        const filter = args[args.indexOf('-vf') + 1];
+        if (fps > cap) assert.match(filter, new RegExp(`fps=${cap}(,|$)`));
+        else assert.doesNotMatch(filter, /fps=/);
+      }
+    }
+  });
+
   const filtersFor = (subject: Clip): string => {
     const args = ffmpegArgs(subject, '/out.mp4', 65_000_000);
     return args[args.indexOf('-vf') + 1];
   };
 
-  test('high frame rates are halved and HLG is tonemapped', () => {
+  test('original frame rates are preserved and HLG is tonemapped', () => {
     const filters = filtersFor({ ...clip(3840, 10, 1e8), fps: 120, transfer: 'arib-std-b67', primaries: 'bt2020' });
-    assert.match(filters, /fps=60\.000/);
+    assert.doesNotMatch(filters, /fps=/);
     assert.match(filters, /tonemap=hable/);
     assert.match(filters, /format=yuv420p$/);
   });

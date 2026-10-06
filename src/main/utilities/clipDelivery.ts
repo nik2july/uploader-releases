@@ -2,7 +2,7 @@
  * Clip Delivery — camera masters into files clients can actually play.
  *
  * H.264 High / 8-bit 4:2:0 / Rec.709 / AAC in an MP4. Clips at 90fps or faster
- * are halved; HLG is tonemapped to Rec.709 so it does not look washed out on an
+ * can be capped to a chosen frame rate; HLG is tonemapped to Rec.709 so it does not look washed out on an
  * ordinary screen. Every output is length-verified against its source before it
  * is accepted, and a `_logs/done.txt` in the destination makes the run
  * resumable. Originals are never modified.
@@ -16,7 +16,7 @@ import os from 'node:os';
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { ffmpegPath, ffprobePath, run } from './ffTools';
-import type { Clip, ClipPlan, ClipQuality, ClipRunState, ClipScanResult } from '../../shared/contracts';
+import type { Clip, ClipFPSCap, ClipPlan, ClipQuality, ClipRunState, ClipScanResult } from '../../shared/contracts';
 
 const CLIP_EXTENSIONS = new Set(['mp4', 'mov', 'mxf', 'm4v']);
 
@@ -119,12 +119,12 @@ async function probeClip(file: string, root: string): Promise<Clip | null> {
 }
 
 /**
- * Per-clip decisions: halve high frame rates, tonemap HLG to Rec.709, and
+ * Per-clip decisions: cap frame rates when requested, tonemap HLG to Rec.709, and
  * deliver H.264 High / 8-bit 4:2:0 / AAC so it plays anywhere.
  */
-export function ffmpegArgs(clip: Clip, out: string, bitrate: number, fullHD = false): string[] {
+export function ffmpegArgs(clip: Clip, out: string, bitrate: number, fullHD = false, fpsCap: ClipFPSCap = 'original'): string[] {
   const chain: string[] = [];
-  if (needsFPSHalving(clip)) chain.push(`fps=${(clip.fps / 2).toFixed(3)}`);
+  if (fpsCap !== 'original' && clip.fps > fpsCap) chain.push(`fps=${fpsCap}`);
   if (isHLG(clip)) {
     // Some cameras write the HLG transfer but leave the primaries unwritten.
     // zscale then refuses the clip outright — "no path between colorspaces" —
@@ -222,7 +222,7 @@ export class ClipDeliveryEngine {
       this.say(`${result.hlgCount} clips are HLG (HDR) — these will be converted to Rec.709 so they look correct on normal screens.`);
     }
     if (result.highFPSCount > 0) {
-      this.say(`${result.highFPSCount} clips are 90fps or higher — frame rate will be halved so they play on ordinary devices.`);
+      this.say(`${result.highFPSCount} clips are 90fps or higher — choose a frame-rate cap for delivery, or keep Original.`);
     }
     this.update({ state: 'ready', scan: result, totalCount: result.clips.length, totalDuration: result.totalDuration, scanProgress: 1 });
     return result;
@@ -238,7 +238,7 @@ export class ClipDeliveryEngine {
     this.cancelled = false;
     this.update({
       state: 'running', destinationPath: destination, completedCount: 0, completedDuration: 0,
-      bytesWritten: 0, currentDuration: 0, processedDuration: 0, sessionDuration: 0, lastProgressAt: null, failures: [], startedAt: Date.now(),
+      bytesWritten: 0, fpsCap: plan.fpsCap ?? 'original', currentDuration: 0, processedDuration: 0, sessionDuration: 0, lastProgressAt: null, failures: [], startedAt: Date.now(),
     });
     this.running = this.runLoop(ffmpeg, scan.clips, destination, plan).catch(error => {
       this.say(`Stopped: ${error instanceof Error ? error.message : String(error)}`);
@@ -269,15 +269,17 @@ export class ClipDeliveryEngine {
       alreadyDone = new Set(text.split('\n').map(line => line.trim()).filter(Boolean));
     } catch { /* first run */ }
 
-    if (plan.fullHD) {
+    {
       for (const clip of clips) {
         if (!alreadyDone.has(clip.relativePath)) continue;
         const out = path.join(destination, clip.relativePath.replace(/\.[^./]+$/, '') + '.mp4');
         const existing = await probeClip(out, destination);
-        if (!existing || existing.width > 1920 || existing.height > 1080) alreadyDone.delete(clip.relativePath);
+        const targetFPS = plan.fpsCap && plan.fpsCap !== 'original' ? Math.min(clip.fps, plan.fpsCap) : clip.fps;
+        if (!existing || (plan.fullHD && (existing.width > 1920 || existing.height > 1080)) || Math.abs(existing.fps - targetFPS) > 0.05) alreadyDone.delete(clip.relativePath);
       }
       await fs.writeFile(doneFile, [...alreadyDone].join('\n') + '\n');
-      this.say('Delivery capped at Full HD (1920 × 1080).');
+      if (plan.fullHD) this.say('Delivery capped at Full HD (1920 × 1080).');
+      this.say(plan.fpsCap && plan.fpsCap !== 'original' ? `Frame rate capped at ${plan.fpsCap} fps.` : 'Keeping original frame rates.');
     }
 
     if (alreadyDone.size) {
@@ -297,7 +299,7 @@ export class ClipDeliveryEngine {
       await fs.mkdir(path.dirname(out), { recursive: true });
 
       const bitrate = bitrateFor(clip, plan.uhdBitrate, plan.hdBitrate, plan.fullHD);
-      const result = await this.encode(ffmpeg, ffmpegArgs(clip, out, bitrate, plan.fullHD), clip);
+      const result = await this.encode(ffmpeg, ffmpegArgs(clip, out, bitrate, plan.fullHD, plan.fpsCap), clip);
 
       if (this.cancelled) { await fs.rm(out, { force: true }); break; }
 

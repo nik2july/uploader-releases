@@ -1,6 +1,6 @@
 import type { MediaBillingResult } from '../../../WEB APP/src/utils/mediaPricing';
 import type {
-  ClipQuality, ClipRunState, ClipScanResult, DurationKind, DurationProgress, DurationScanResult,
+  ClipFPSCap, ClipQuality, ClipRunState, ClipScanResult, DurationKind, DurationProgress, DurationScanResult,
   PhotoRunState, SequenceScanOptions, SequenceScanResult, UtilityToolsStatus,
 } from './utilities';
 
@@ -167,7 +167,7 @@ export interface DesktopAPI {
   clipState(): Promise<ClipRunState>;
   clipScan(sourcePath: string): Promise<ClipScanResult>;
   clipSetDestination(destinationPath: string): Promise<void>;
-  clipStart(destinationPath: string, choice: { mode: 'quality' | 'size'; quality: ClipQuality; targetGB: number; fullHD?: boolean }): Promise<void>;
+  clipStart(destinationPath: string, choice: { mode: 'quality' | 'size'; quality: ClipQuality; targetGB: number; fullHD?: boolean; fpsCap?: ClipFPSCap }): Promise<void>;
   clipCancel(): Promise<void>;
   onClipState(callback: (state: ClipRunState) => void): () => void;
   photoState(): Promise<PhotoRunState>;

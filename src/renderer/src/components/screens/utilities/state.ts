@@ -46,6 +46,6 @@ export const missingCache: {
   withDuration: false,
 };
 
-export const clipCache: { quality: 'archive' | 'balanced' | 'compact'; mode: 'quality' | 'size'; targetGB: number; fullHD: boolean } = {
-  quality: 'balanced', mode: 'quality', targetGB: 500, fullHD: false,
+export const clipCache: { quality: 'archive' | 'balanced' | 'compact'; mode: 'quality' | 'size'; targetGB: number; fullHD: boolean; fpsCap: 'original' | 25 | 30 | 50 | 60 } = {
+  quality: 'balanced', mode: 'quality', targetGB: 500, fullHD: false, fpsCap: 'original',
 };

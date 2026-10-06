@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { FolderOpen } from 'lucide-react';
-import type { ClipQuality, ClipRunState } from '../../../../../shared/contracts';
+import type { ClipFPSCap, ClipQuality, ClipRunState } from '../../../../../shared/contracts';
 import { fmtBytes, fmtDuration, fmtInt } from '../../../utils/utilityFormat';
 import { DropZone, ProgressBar, StatBlock, ToolSection } from './parts';
 import { clipCache } from './state';
@@ -52,10 +52,11 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
   const [mode, setMode] = useState<'quality' | 'size'>(clipCache.mode);
   const [targetGB, setTargetGB] = useState(clipCache.targetGB);
   const [fullHD, setFullHD] = useState(clipCache.fullHD);
+  const [fpsCap, setFPSCap] = useState<ClipFPSCap>(clipCache.fpsCap);
   const [error, setError] = useState('');
 
   useEffect(() => { void window.api.clipState().then(setRun); return window.api.onClipState(setRun); }, []);
-  useEffect(() => { clipCache.quality = quality; clipCache.mode = mode; clipCache.targetGB = targetGB; clipCache.fullHD = fullHD; }, [quality, mode, targetGB, fullHD]);
+  useEffect(() => { clipCache.quality = quality; clipCache.mode = mode; clipCache.targetGB = targetGB; clipCache.fullHD = fullHD; clipCache.fpsCap = fpsCap; }, [quality, mode, targetGB, fullHD, fpsCap]);
 
   const clips = run?.scan?.clips ?? [];
   const estimated = useMemo(() => {
@@ -83,7 +84,7 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
   async function start(): Promise<void> {
     if (!run?.destinationPath) { setError('Choose a destination folder first.'); return; }
     setError('');
-    try { await window.api.clipStart(run.destinationPath, { mode, quality, targetGB, fullHD }); }
+    try { await window.api.clipStart(run.destinationPath, { mode, quality, targetGB, fullHD, fpsCap }); }
     catch (err) { setError(err instanceof Error ? err.message : String(err)); }
   }
 
@@ -139,6 +140,16 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
               Cap at Full HD (1080p)
             </label>
             <p className="inline-note">{fullHD ? 'Larger clips are reduced to fit 1920 × 1080. Aspect ratio is preserved; smaller clips are never enlarged.' : 'Keep each clip’s original resolution, including 4K.'}</p>
+          </ToolSection>
+
+          <ToolSection title="Frame rate">
+            <div className="segmented">
+              {(['original', 25, 30, 50, 60] as const).map(value => (
+                <button key={value} type="button" disabled={running} aria-current={fpsCap === value}
+                  onClick={() => setFPSCap(value)}>{value === 'original' ? 'Original' : `${value} fps`}</button>
+              ))}
+            </div>
+            <p className="inline-note">{fpsCap === 'original' ? 'Keep each clip’s original frame rate.' : `Limit higher frame rates to ${fpsCap} fps. Lower frame rates stay unchanged.`} Playback speed and duration stay the same.</p>
           </ToolSection>
 
           <ToolSection title="How big">
@@ -200,7 +211,7 @@ export function ClipDeliveryTool({ ffmpegAvailable }: { ffmpegAvailable: boolean
                 <StatBlock value={`${fmtInt(run.completedCount)} / ${fmtInt(run.totalCount)}`} label="Clips converted" />
                 <StatBlock value={fmtBytes(run.bytesWritten)} label="Written" />
                 {run.scan.hlgCount ? <StatBlock value={fmtInt(run.scan.hlgCount)} label="HLG → Rec.709" /> : null}
-                {run.scan.highFPSCount ? <StatBlock value={fmtInt(run.scan.highFPSCount)} label="90fps+ halved" /> : null}
+                {run.scan.highFPSCount ? <StatBlock value={fmtInt(run.scan.highFPSCount)} label="90fps+ source clips" /> : null}
                 {run.failures.length ? <StatBlock value={fmtInt(run.failures.length)} label="Failed" tone="stop" /> : null}
               </div>
 
