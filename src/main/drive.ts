@@ -96,6 +96,11 @@ export class DriveClient {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: 'reader', type: mode === 'anyone' ? 'anyone' : 'user', ...(mode === 'restricted' ? { emailAddress: email } : {}) }) });
   }
+  async tagPackage(id: string, ownerUid: string, transferId: string): Promise<void> {
+    await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ appProperties: { baawarayOwner: ownerUid, baawarayTransfer: transferId } }) });
+  }
   async delete(id: string, signal?: AbortSignal): Promise<void> {
     await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, { method: 'DELETE', signal }, [204, 404]);
   }

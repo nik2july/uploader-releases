@@ -92,7 +92,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
     job => {
       void (async () => {
         try {
-          if (job.folderId && !job.shared) {
+          if (job.folderId && !job.shared && job.target?.kind !== 'team') {
             await drive.share(job.folderId, 'anyone', '');
             store.patch(job.id, { shared: true, sharing: 'anyone' });
             changed();
@@ -251,7 +251,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
   handle('transfers:enqueue', (id: string, target: WorkTarget, invoice?: InvoiceSnapshot) => {
     const job = owned(id);
     if (!['ready', 'paused'].includes(job.status) || !job.scan || job.scan.readErrors) throw new Error('A complete scan is required.');
-    if (!target || !['freelance', 'deliverable'].includes(target.kind) || !['raw', 'delivery'].includes(target.purpose)
+    if (!target || !['freelance', 'deliverable', 'team'].includes(target.kind) || !['raw', 'delivery'].includes(target.purpose)
       || !target.id || !target.title || (target.kind === 'deliverable' && !target.clientId)) throw new Error('Select the work this folder belongs to.');
     if (job.driveAccount && job.target && (job.target.kind !== target.kind || job.target.id !== target.id || job.target.clientId !== target.clientId || job.target.purpose !== target.purpose)) throw new Error('A started transfer cannot be reassigned to another job.');
     if (invoice) invoiceValid(invoice);
@@ -317,6 +317,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
   });
   handle('transfers:rescan', async (id: string) => {
     const job = owned(id);
+    if (job.expiresAt || job.trashedAt) throw new Error('Remove this package’s expiry before adding files, or create a new upload package.');
     if (scans.size) throw new Error('Finish or cancel the current scan first.');
     if (['scanning', 'queued', 'uploading', 'verifying'].includes(job.status)) throw new Error('Wait for this transfer to stop before adding files.');
     const result = await dialog.showOpenDialog({ title: `Add files to ${job.target?.title || job.rootName}`, defaultPath: job.rootPath, properties: ['openDirectory'] });
@@ -376,17 +377,34 @@ export async function setupIpcHandlers(): Promise<() => void> {
     changed();
     return updatedJob;
   });
+  async function packageInfo(id: string, expiresAt?: string | null): Promise<import('../shared/contracts').PackageInfo> {
+    const job = owned(id);
+    if (job.status !== 'completed' || !job.folderId || !job.link) throw new Error('Finish upload verification before creating a package link.');
+    if (job.driveAccount !== google.status().email) throw new Error('Reconnect this transfer’s original Drive account.');
+    if (job.trashedAt && expiresAt === undefined && job.shareLink) return { shareLink: job.shareLink, expiresAt: job.expiresAt || null, expired: true, trashedAt: job.trashedAt, cleanupError: job.cleanupError || null };
+    if (job.trashedAt) throw new Error('This package is in Google Drive Trash.');
+    await drive.tagPackage(job.folderId, job.ownerUid, job.id);
+    const info = await google.package({ op: expiresAt === undefined ? 'get' : 'set', folderId: job.folderId, transferId: job.id, ...(expiresAt === undefined ? {} : { expiresAt }) });
+    store.patch(id, info); changed(); return info;
+  }
+  handle('transfers:packageInfo', (id: string) => packageInfo(id));
+  handle('transfers:setExpiry', (id: string, expiresAt: unknown) => {
+    if (expiresAt !== null && (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now())) throw new Error('Choose a future expiry date and time.');
+    return packageInfo(id, expiresAt as string | null);
+  });
   handle('transfers:share', async (id: string, mode: 'restricted' | 'anyone', email: string) => {
     const job = owned(id);
-    if (job.status !== 'completed' || !job.link) throw new Error('Finish verification before sharing.');
+    if (job.status !== 'completed' || !job.link || job.trashedAt || (job.expiresAt && Date.parse(job.expiresAt) <= Date.now())) throw new Error('This package is incomplete or expired.');
     if (job.driveAccount !== google.status().email) throw new Error('Reconnect this transfer’s original Drive account.');
     if (!['restricted', 'anyone'].includes(mode) || (mode === 'restricted' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new Error('Enter the recipient’s Google account email.');
     if (mode === 'anyone') {
       const confirmation = await dialog.showMessageBox({ type: 'warning', message: 'Allow anyone with this link to view and download the entire folder?', detail: job.target?.title || job.rootName, buttons: ['Keep private', 'Allow link access'], defaultId: 0, cancelId: 0 });
       if (confirmation.response !== 1) throw new Error('Sharing cancelled. The folder remains unchanged.');
     }
+    const info = await packageInfo(id);
+    if (info.expired) throw new Error('This package link has expired. Change or remove its expiry before sharing.');
     if (job.folderId) await drive.share(job.folderId, mode, email.trim());
-    store.patch(id, { shared: true, sharing: mode }); changed(); return job.link;
+    store.patch(id, { shared: true, sharing: mode }); changed(); return info.shareLink;
   });
   handle('transfers:synced', (id: string) => { const job = owned(id); if (job.status !== 'completed') throw new Error('Upload is incomplete.'); store.patch(id, { synced: true }); changed(); });
   handle('transfers:prepared', (id: string) => { const job = owned(id); if (job.status !== 'completed') throw new Error('Upload is incomplete.'); store.patch(id, { messagePreparedAt: new Date().toISOString() }); changed(); });

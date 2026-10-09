@@ -57,7 +57,8 @@ export function editorMessage(job: Transfer, studioName = 'Baawaray Films'): str
     if (scan.totalPhotos > 0) lines.push(`Photos: ${formatCount(scan.totalPhotos)}`);
   }
   lines.push('');
-  lines.push(`Drive link: ${job.link || ''}`);
+  lines.push(`Drive link: ${job.shareLink || job.link || ''}`);
+  if (job.expiresAt) lines.push(`Available until: ${new Date(job.expiresAt).toLocaleString()}`);
   if (target?.brief?.trim()) { lines.push(''); lines.push('Editing brief:'); lines.push(target.brief.trim()); }
   lines.push('');
   lines.push(`— ${studioName}`);

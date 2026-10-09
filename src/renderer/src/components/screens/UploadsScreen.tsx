@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AlertTriangle, Pause, Play, Trash2 } from 'lucide-react';
-import type { DriveStatus, Transfer } from '../../../../shared/contracts';
+import { ShareActions } from './ShareActions';
+import type { DriveStatus, Transfer, WorkTarget } from '../../../../shared/contracts';
 import {
   ACTIVE_STATUSES, formatBytes, formatRetryWait, progressFraction, remainingSummary, statusLabel,
 } from '../../utils/uploadFormat';
@@ -62,7 +63,7 @@ function TransferCard({ job, busy, drive, onOpen, onRun }: {
           <div className="path">{job.rootPath}</div>
           {job.target && (
             <div className="sub muted" style={{ marginTop: 4, fontSize: 13 }}>
-              {job.target.kind === 'freelance' ? 'Partner studio' : 'Client'} · {job.target.clientName}
+              {job.target.kind === 'team' ? 'Team package' : job.target.kind === 'freelance' ? 'Partner studio' : 'Client'} · {job.target.clientName}
               {job.target.serviceType ? ` · ${job.target.serviceType}` : ''}
               {job.target.purpose === 'raw' ? ' · raw data' : ' · final delivery'}
             </div>
@@ -99,6 +100,15 @@ function TransferCard({ job, busy, drive, onOpen, onRun }: {
 
       <div className="actions">
         <button className="primary" onClick={() => onOpen(job.id)}>Open</button>
+        {job.status === 'ready' && job.target && (
+          <button className="primary" disabled={busy === job.id || !drive?.connected || Boolean(job.scan?.readErrors)}
+            onClick={() => void onRun(job.id, async () => {
+              if (((job.scan?.missingClipCount || 0) + (job.scan?.unreadableFiles?.length || 0)) > 0 && !window.confirm('The scan found missing or unreadable files. Upload the available files anyway? Open the package to review details.')) return;
+              await window.api.enqueue(job.id, job.target!);
+            })}>
+            Start upload
+          </button>
+        )}
         <button
           className="text-button"
           disabled={busy === job.id || ACTIVE_STATUSES.includes(job.status)}
@@ -126,6 +136,7 @@ function TransferCard({ job, busy, drive, onOpen, onRun }: {
           <button disabled={busy === job.id} onClick={() => void onRun(job.id, () => window.api.relocate(job.id))}>Locate folder</button>
         )}
       </div>
+      {job.status === 'completed' && <ShareActions job={job} refresh={async () => {}} />}
     </article>
   );
 }
@@ -136,12 +147,30 @@ export function UploadsScreen({ transfers, loading, error, drive, onOpen, onSett
 }): React.JSX.Element {
   const [busy, setBusy] = useState('');
   const [actionError, setActionError] = useState('');
+  const [title, setTitle] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const completed = transfers.filter(job => job.status === 'completed');
   const live = transfers.filter(job => job.status !== 'completed');
 
   async function run(id: string, fn: () => Promise<void>): Promise<void> {
     setBusy(id); setActionError('');
     try { await fn(); } catch (err) { setActionError(err instanceof Error ? err.message : 'That action did not complete.'); }
     finally { setBusy(''); }
+  }
+
+  async function choose(files: boolean): Promise<void> {
+    await run('choose', async () => {
+      if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new Error('Enter a valid editor email or leave it blank.');
+      const target: WorkTarget = {
+        kind: 'team', id: crypto.randomUUID(), title: title.trim() || 'Team package',
+        clientName: 'Team', serviceType: '', purpose: 'raw',
+        recipientEmail: email.trim(), recipientPhone: phone.trim(),
+      };
+      const options = { excludedBillingFolders: [], countPhotoPairsOnce: false };
+      const id = await (files ? window.api.scanFiles(options, target) : window.api.scan(options, target));
+      if (id) { setTitle(''); }
+    });
   }
 
   return (
@@ -162,6 +191,22 @@ export function UploadsScreen({ transfers, loading, error, drive, onOpen, onSett
         </div>
       </header>
 
+      <section className="panel">
+        <h3>Upload and send to your editor</h3>
+        <p className="muted">Choose a folder or multiple files, review the scan, then start the upload. Team packages stay private until you choose their access.</p>
+        <div className="actions">
+          <input aria-label="Package name" placeholder="Package name (optional)" value={title} onChange={e => setTitle(e.target.value)} />
+          <input aria-label="Editor email" type="email" placeholder="Editor Google email (optional)" value={email} onChange={e => setEmail(e.target.value)} />
+          <input aria-label="Editor WhatsApp number" type="tel" placeholder="WhatsApp number (optional)" value={phone} onChange={e => setPhone(e.target.value)} />
+        </div>
+        <div className="actions">
+          <button className="primary" disabled={Boolean(busy) || !drive?.connected || live.some(j => j.status === 'scanning')} onClick={() => void choose(false)}>Upload folder</button>
+          <button disabled={Boolean(busy) || !drive?.connected || live.some(j => j.status === 'scanning')} onClick={() => void choose(true)}>Upload multiple files</button>
+          {!drive?.connected && <button onClick={onSettings}>Connect Google Drive</button>}
+        </div>
+        <p className="muted">Multiple files can be selected from one folder. Folder uploads preserve subfolders.</p>
+      </section>
+
       {error && <p className="error" role="alert">{error}</p>}
       {actionError && <p className="error" role="alert">{actionError}</p>}
 
@@ -169,12 +214,15 @@ export function UploadsScreen({ transfers, loading, error, drive, onOpen, onSett
         : live.length === 0 ? (
           <div className="panel empty">
             <h3>Nothing is uploading</h3>
-            <p>Pick a partner studio job or a client deliverable, choose its folder, and it will
-              appear here with progress you can pause and resume.</p>
+            <p>Choose Upload folder or Upload multiple files above. Your package will appear here with progress you can pause and resume.</p>
           </div>
         ) : live.map(job => (
           <TransferCard key={job.id} job={job} busy={busy} drive={drive} onOpen={onOpen} onRun={run} />
         ))}
+      {completed.length > 0 && <section>
+        <h3>Completed uploads · ready to share</h3>
+        {completed.map(job => <TransferCard key={job.id} job={job} busy={busy} drive={drive} onOpen={onOpen} onRun={run} />)}
+      </section>}
     </div>
   );
 }

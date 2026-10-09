@@ -55,6 +55,8 @@ const api: DesktopAPI = {
   pause: id => ipcRenderer.invoke('transfers:pause', id), resume: id => ipcRenderer.invoke('transfers:resume', id),
   relocate: id => ipcRenderer.invoke('transfers:relocate', id), rescan: id => ipcRenderer.invoke('transfers:rescan', id),
   skipUnreadableFiles: id => ipcRenderer.invoke('transfers:skipUnreadable', id),
+  packageInfo: id => ipcRenderer.invoke('transfers:packageInfo', id),
+  setPackageExpiry: (id, expiresAt) => ipcRenderer.invoke('transfers:setExpiry', id, expiresAt),
   share: (id, mode, email) => ipcRenderer.invoke('transfers:share', id, mode, email),
   markSynced: id => ipcRenderer.invoke('transfers:synced', id),
   markMessagePrepared: id => ipcRenderer.invoke('transfers:prepared', id), saveInvoice: (id, invoice) => ipcRenderer.invoke('invoice:save', id, invoice),

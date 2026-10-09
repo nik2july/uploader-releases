@@ -185,7 +185,7 @@ export function TransferDetail({ job, onBack, refresh }: {
       <header>
         <div>
           <span className="eyebrow">
-            {target ? `${target.kind === 'freelance' ? 'PARTNER STUDIO' : 'CLIENT'} · ${target.purpose === 'raw' ? 'RAW DATA' : 'FINAL DELIVERY'}` : 'FOLDER'}
+            {target ? `${target.kind === 'team' ? 'TEAM PACKAGE' : target.kind === 'freelance' ? 'PARTNER STUDIO' : 'CLIENT'} · ${target.purpose === 'raw' ? 'RAW DATA' : 'FINAL DELIVERY'}` : 'FOLDER'}
           </span>
           <h2>{target?.title || job.rootName}</h2>
           <p className="mono" style={{ fontSize: 12.5 }}>{job.rootPath}</p>
@@ -308,7 +308,7 @@ export function TransferDetail({ job, onBack, refresh }: {
       </section>
 
       {/* ----------------------------------------------------------- billing */}
-      {scan && target && (
+      {scan && target && target.kind !== 'team' && (
         <section className="panel">
           <span className="eyebrow">BILLING PREVIEW</span>
           <h2 style={{ fontSize: 20 }}>{service ? service.name : target.serviceType || 'This deliverable'}</h2>
@@ -499,7 +499,7 @@ export function TransferDetail({ job, onBack, refresh }: {
                 typed off the Finder's info panel — then the scan is done with, and
                 the queue has no reason to keep it.
               */}
-              {canUpload && (
+              {canUpload && target?.kind !== 'team' && (
                 <button disabled={busy === 'log'}
                   onClick={() => void run('log', async () => {
                     await logScannedRawData(job);

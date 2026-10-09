@@ -5,6 +5,7 @@ directories:
 # Ad-hoc signs the bundle so macOS does not report an unsigned build as damaged.
 afterPack: build/afterPack.cjs
 files:
+  - '!dist/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

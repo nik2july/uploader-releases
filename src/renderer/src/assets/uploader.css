@@ -676,3 +676,7 @@ button.danger { color: var(--burgundy); border-color: color-mix(in srgb, var(--b
   color: var(--muted);
 }
 
+
+/* Direct queue upload and recipient controls. */
+.screen .actions > input { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--paper); color: var(--ink); font: inherit; min-width: 200px; flex: 1; }
+.screen .actions > input:focus { outline: none; border-color: var(--burgundy); }

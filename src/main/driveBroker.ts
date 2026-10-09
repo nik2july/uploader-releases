@@ -5,9 +5,9 @@ export interface BrokerGrant { uid: string; clientId: string; accessToken: strin
 
 export class DriveBroker {
   constructor(private fetcher: typeof fetch = fetch) {}
-  private async request(body?: object, idToken?: string): Promise<any> {
+  private async request(body?: object, idToken?: string, endpoint = ENDPOINT): Promise<any> {
     let response: Response;
-    try { response = await this.fetcher(ENDPOINT, { method: body ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(60000),
+    try { response = await this.fetcher(endpoint, { method: body ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(60000),
       headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}) }); }
     catch { throw new DriveError('Cannot reach the studio Google connection service. Your upload will retry when the connection returns.', 'retry', 0); }
@@ -16,6 +16,11 @@ export class DriveBroker {
     if (!response.ok) throw new DriveError(typeof json.error === 'string' ? json.error : 'The studio Google connection service refused the request.',
       response.status === 401 || response.status === 403 ? 'auth' : response.status >= 500 || response.status === 429 ? 'retry' : 'fatal', response.status);
     return json;
+  }
+  async package(body: object): Promise<import('../shared/contracts').PackageInfo> {
+    const info = await this.request(body, undefined, 'https://app.baawaray.com/api/desktop-package');
+    if (typeof info.shareLink !== 'string' || !info.shareLink.startsWith('https://app.baawaray.com/api/desktop-package?key=') || typeof info.expired !== 'boolean') throw new Error('Invalid package sharing response.');
+    return info;
   }
   async configuration(): Promise<BrokerConfig> {
     const result = await this.request();

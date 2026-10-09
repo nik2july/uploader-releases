@@ -1,80 +1,98 @@
-import { useState } from 'react';
-import { Check, Copy, ExternalLink, MessageCircle, Share2 } from 'lucide-react';
-import type { Transfer } from '../../../../shared/contracts';
+import { useEffect, useState } from 'react';
+import { Copy, ExternalLink, MessageCircle, Share2 } from 'lucide-react';
+import type { PackageInfo, Transfer } from '../../../../shared/contracts';
 import { useApp } from '../../context/AppContext';
-import { attachVerifiedTransfer, saveRawDataLink } from '../../lib/studioRepository';
+import { attachVerifiedTransfer } from '../../lib/studioRepository';
 import { editorMessage, whatsappUrl } from '../../utils/editorMessage';
 
-/**
- * What you can do with a folder once every file in it has been checksum-verified.
- *
- * The order here is the order it matters in: the link is useless to the person
- * receiving it until they have access, so sharing sits alongside copying rather
- * than behind it, and the transfer is not described as ready to send until the
- * access it needs has actually been granted.
- */
+function localDate(iso?: string | null): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
 export function ShareActions({ job, refresh }: { job: Transfer; refresh: () => Promise<void> }): React.JSX.Element {
   const studio = useApp();
-  const [busy, setBusy] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [email, setEmail] = useState(job.target?.recipientEmail || '');
-
-  async function run(key: string, fn: () => Promise<void>, success = ''): Promise<void> {
-    setBusy(key); setError(''); setNote('');
-    try { await fn(); await refresh(); if (success) setNote(success); }
+  const [expiry, setExpiry] = useState(localDate(job.expiresAt));
+  const [info, setInfo] = useState<PackageInfo | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const savedExpiry = info ? info.expiresAt : job.expiresAt;
+  const expired = Boolean(info?.expired || job.trashedAt || (savedExpiry && Date.parse(savedExpiry) <= now));
+  useEffect(() => {
+    let disposed = false;
+    const check = async (): Promise<void> => {
+      setNow(Date.now());
+      try {
+        const current = await window.api.packageInfo(job.id);
+        if (!disposed) { setInfo(current); setError(''); }
+      } catch (err) { if (!disposed) setError(err instanceof Error ? err.message : 'Could not refresh the package link.'); }
+    };
+    void check();
+    const timer = setInterval(() => void check(), 60000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [job.id]);
+  useEffect(() => { setExpiry(localDate(info ? info.expiresAt : job.expiresAt)); }, [info?.expiresAt, job.expiresAt]);
+  async function run(fn: () => Promise<void>, success: string): Promise<void> {
+    setBusy(true); setError(''); setNote('');
+    try { await fn(); await refresh(); setNote(success); }
     catch (err) { setError(err instanceof Error ? err.message : 'That did not complete.'); }
-    finally { setBusy(''); }
+    finally { setBusy(false); }
   }
-
-  const message = editorMessage(job, studio.studioSettings?.studioName || 'Baawaray Films');
-
-  return (
-    <>
+  async function copy(link: string): Promise<void> {
+    if (!await window.api.copyToClipboard(link)) throw new Error('Could not copy the link.');
+  }
+  async function currentLink(): Promise<string> {
+    const current = await window.api.packageInfo(job.id); setInfo(current);
+    if (current.expired) throw new Error('This package link has expired.');
+    return current.shareLink;
+  }
+  return <>
+    <div className="actions">
+      <button className="primary" disabled={busy || expired || !job.link} onClick={() => void run(async () => copy(await currentLink()), job.shared ? 'Link copied.' : 'Private link copied. Grant your editor access before sending it.')}><Copy size={15} />Copy link</button>
+      <button disabled={busy || expired || !job.link} onClick={() => void run(async () => {
+        await copy(await window.api.share(job.id, 'anyone', ''));
+      }, 'Anyone with this link can view and download until its expiry. Link copied.')}><Share2 size={15} />Create share link & copy</button>
+      <button disabled={busy || expired || !job.link} onClick={() => void run(async () => window.api.openExternal(await currentLink()), '')}><ExternalLink size={15} />Open link</button>
+      <button disabled={busy || expired || !job.shared} onClick={() => void run(async () => {
+        const link = await currentLink();
+        const message = editorMessage({ ...job, shareLink: link, expiresAt: info ? info.expiresAt : job.expiresAt }, studio.studioSettings?.studioName || 'Baawaray Films');
+        await window.api.openExternal(whatsappUrl(message, job.target?.recipientPhone));
+        await window.api.markMessagePrepared(job.id);
+      }, 'WhatsApp message prepared. Press Send in WhatsApp to send it.')}><MessageCircle size={15} />Share with team / editor</button>
+      {job.target && job.target.kind !== 'team' && <button disabled={busy || expired || job.synced} onClick={() => void run(async () => {
+        await attachVerifiedTransfer(job); await window.api.markSynced(job.id);
+      }, 'Link saved onto the job in Studio OS.')}>{job.synced ? 'Saved to Studio OS' : 'Save link to Studio OS'}</button>}
+    </div>
+    <p className="muted">{job.sharing === 'anyone' ? 'Anyone with the link can view and download.' : job.shared ? 'Access granted to a Google account. Other team members need their own access.' : 'Private package. Create a share link or grant your editor access below.'}</p>
+    <div className="actions">
+      <input type="email" aria-label="Recipient Google email" placeholder="Team member’s Google email" value={email} onChange={e => setEmail(e.target.value)} />
+      <button disabled={busy || expired || !email.trim()} onClick={() => void run(async () => {
+        await copy(await window.api.share(job.id, 'restricted', email.trim()));
+      }, 'Team member granted access. Link copied; send it to notify them.')}>Grant team access & copy link</button>
+    </div>
+    <div className="panel" style={{ marginTop: 14, background: 'var(--paper)' }}>
+      <h3>Link expiry (optional)</h3>
+      <p className="muted">{info?.trashedAt || job.trashedAt ? 'Expired · package moved to Google Drive Trash.' : expired ? 'Link expired · cloud cleanup is pending.' : savedExpiry ? `Expires ${new Date(savedExpiry).toLocaleString()}` : 'No expiry · package remains available until you remove it.'}</p>
       <div className="actions">
-        <button className="primary" disabled={!job.link} onClick={() => {
-          void navigator.clipboard.writeText(job.link || '');
-          setCopied(true); setTimeout(() => setCopied(false), 2500);
-        }}>
-          {copied ? <Check size={15} style={{ verticalAlign: -3, marginRight: 6 }} /> : <Copy size={15} style={{ verticalAlign: -3, marginRight: 6 }} />}
-          {copied ? 'Link copied' : 'Copy cloud link'}
+        <input type="datetime-local" aria-label="Link expiry date and time" value={expiry} min={localDate(new Date(Date.now() + 60000).toISOString())} onChange={e => setExpiry(e.target.value)} />
+        <button disabled={busy || !expiry || Boolean(info?.trashedAt || job.trashedAt)} onClick={() => void run(async () => {
+          const date = new Date(expiry);
+          if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) throw new Error('Choose a future expiry date and time.');
+          setInfo(await window.api.setPackageExpiry(job.id, date.toISOString()));
+        }, 'Expiry saved. The link stops working at that time; cloud cleanup moves the uploaded package to Trash.')}>
+          Save expiry
         </button>
-
-        <button disabled={!job.link} onClick={() => void window.api.openExternal(job.link!)}>
-          <ExternalLink size={15} style={{ verticalAlign: -3, marginRight: 6 }} />Open link
-        </button>
-
-        <button disabled={busy === 'whatsapp'} onClick={() => void run('whatsapp', async () => {
-          await window.api.openExternal(whatsappUrl(message, job.target?.recipientPhone));
-          await window.api.markMessagePrepared(job.id);
-        }, 'WhatsApp opened with the message written. It is not sent until you send it.')}>
-          <MessageCircle size={15} style={{ verticalAlign: -3, marginRight: 6 }} />
-          WhatsApp {job.target?.recipientName || 'recipient'}
-        </button>
-
-        <button disabled={busy === 'sync' || job.synced} onClick={() => void run('sync', async () => {
-          await attachVerifiedTransfer(job);
-          await window.api.markSynced(job.id);
-        }, 'Link saved onto the job in Studio OS.')}>
-          {job.synced ? 'Saved to Studio OS' : 'Save link to Studio OS'}
-        </button>
+        <button disabled={busy || !savedExpiry || Boolean(info?.trashedAt || job.trashedAt)} onClick={() => void run(async () => {
+          setInfo(await window.api.setPackageExpiry(job.id, null));
+        }, 'Expiry removed. Automatic cleanup cancelled.')}>Remove expiry</button>
       </div>
-
-      {Boolean(job.link) && (
-        <div className="panel" style={{ background: 'var(--paper)', border: 0, marginTop: 4 }}>
-          <h3><Share2 size={14} style={{ verticalAlign: -2, marginRight: 6 }} />Cloud Footage Package</h3>
-          <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-            Package uploaded and synchronized to Google Drive. Assigned editors download raw footage directly in their Studio OS Desktop App.
-          </p>
-        </div>
-      )}
-
-      {job.messagePreparedAt && !note && (
-        <p className="notice">WhatsApp message prepared {new Date(job.messagePreparedAt).toLocaleString()}. Preparing is not sending.</p>
-      )}
-      {note && <p className="success" role="status">{note}</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-    </>
-  );
+      <p className="muted">Time zone: {Intl.DateTimeFormat().resolvedOptions().timeZone}. Cloud cleanup checks every 5 minutes, even with the app closed. Only the uploaded package is moved to Drive Trash; files on your computer stay untouched.</p>
+      {(info?.cleanupError || job.cleanupError) && <p className="warning">{info?.cleanupError || job.cleanupError}</p>}
+    </div>
+    {note && <p className="success" role="status">{note}</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+  </>;
 }

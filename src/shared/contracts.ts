@@ -36,7 +36,7 @@ export interface OfflineScanResult {
   fileCount: number;
 }
 export interface WorkTarget {
-  kind: 'freelance' | 'deliverable'; id: string; clientId?: string; title: string; clientName: string;
+  kind: 'freelance' | 'deliverable' | 'team'; id: string; clientId?: string; title: string; clientName: string;
   serviceType: string; purpose: 'raw' | 'delivery'; jobCode?: string; dueDate?: string;
   recipientName?: string; recipientPhone?: string; recipientEmail?: string; brief?: string;
 }
@@ -51,6 +51,7 @@ export interface Transfer {
   /** Relative files explicitly selected by the owner. Omitted for a whole-folder scan. */
   sourceFiles?: string[];
   target?: WorkTarget; scan?: ScanSummary; options: ScanOptions; createdAt: string; updatedAt: string;
+  shareLink?: string; expiresAt?: string | null; expired?: boolean; trashedAt?: string | null; cleanupError?: string | null;
   folderId?: string; driveAccount?: string; link?: string; error?: string; retryAt?: number;
   invoice?: InvoiceSnapshot; synced?: boolean; shared?: boolean; sharing?: 'restricted' | 'anyone';
   /** When the recipient's WhatsApp message was last opened. Preparing a message is not sending it. */
@@ -79,6 +80,7 @@ export interface UpdateInfo {
 /** Where raw-footage transfers land. Chosen once in Uploader settings, shared by the studio. */
 export type UploadDestination = 'drive';
 export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
+export interface PackageInfo { shareLink: string; expiresAt: string | null; expired: boolean; trashedAt: string | null; cleanupError: string | null }
 export interface DesktopAPI {
   login(phone: string, password: string): Promise<{ customToken: string; accountType: string }>;
   authorize(idToken: string): Promise<{ uid: string; isOwner: boolean }>;
@@ -130,6 +132,8 @@ export interface DesktopAPI {
   rescan(id: string): Promise<boolean>;
   /** Skip and remove corrupted or 0-byte unreadable files from the transfer. */
   skipUnreadableFiles(id: string): Promise<Transfer>;
+  packageInfo(id: string): Promise<PackageInfo>;
+  setPackageExpiry(id: string, expiresAt: string | null): Promise<PackageInfo>;
   share(id: string, mode: 'restricted' | 'anyone', email: string): Promise<string>;
   markSynced(id: string): Promise<void>;
   markMessagePrepared(id: string): Promise<void>;

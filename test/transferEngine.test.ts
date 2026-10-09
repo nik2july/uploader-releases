@@ -38,6 +38,24 @@ const FOLDERS = ['', 'DAY01'];
 const TOTAL_BYTES = 5000;
 
 describe('a clean run', () => {
+  test('a standalone team package uploads and verifies without a client or freelance job', async () => {
+    const { store, drive, engine } = harness();
+    const job = await seedJob(store, await tempDir(), FILES, FOLDERS);
+    store.patch(job.id, { target: { kind: 'team', id: 'team-package', title: 'Editor handover',
+      clientName: 'Team', serviceType: '', purpose: 'raw', recipientEmail: 'editor@example.com' } });
+    engine.resume(job.id);
+    const done = await settle(store, job.id);
+    assert.equal(done.status, 'completed');
+    assert.equal(done.completedFiles, 3);
+    assert.equal(done.uploadedBytes, TOTAL_BYTES);
+    assert.equal(done.target?.kind, 'team');
+    assert.equal(done.target?.clientId, undefined);
+    assert.ok(done.link);
+    const day = [...drive.files.values()].find(f => f.name === 'DAY01');
+    assert.ok(day);
+    assert.deepEqual([...drive.files.values()].filter(f => f.parents.includes(day.id)).map(f => f.name).sort(), ['A.mov', 'B.mov']);
+  });
+
   test('uploads every file, verifies each one, and only then says ready', async () => {
     const { store, drive, engine } = harness();
     const job = await seedJob(store, await tempDir(), FILES, FOLDERS);

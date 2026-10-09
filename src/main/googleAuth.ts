@@ -99,6 +99,10 @@ export class GoogleAuth {
     this.refreshing = refreshing;
     try { return await refreshing; } finally { if (this.refreshing === refreshing) this.refreshing = undefined; }
   }
+  async package(body: object): Promise<import('../shared/contracts').PackageInfo> {
+    await this.token();
+    return this.broker.package({ ...body, refreshToken: this.credentials.refreshToken, refreshTicket: this.credentials.refreshTicket, driveEmail: this.credentials.email });
+  }
   async connect(idToken: string): Promise<DriveStatus> {
     if (this.connecting) throw new Error('Google sign-in is already open.');
     if (!this.owner || typeof idToken !== 'string' || !idToken) throw new Error('Sign in to the studio first.');
