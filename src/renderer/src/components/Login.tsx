@@ -1,10 +1,16 @@
 import { useState } from 'react'
-import { Lock, Phone, Key, Eye, EyeOff } from 'lucide-react'
+import { Lock, Phone, Key, Eye, EyeOff, Wrench } from 'lucide-react'
 import { signInWithCustomToken, signInWithEmailAndPassword } from 'firebase/auth'
 import { auth, phoneKey, shadowEmailFor, shadowPassword } from '../lib/auth'
 import { BrandLogo } from './common/BrandLogo'
 
-export function Login({ onLogin }: { onLogin: () => void }) {
+export function Login({
+  onLogin,
+  onContinueToUtilities
+}: {
+  onLogin: () => void
+  onContinueToUtilities?: () => void
+}) {
   const [phone, setPhone] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -100,12 +106,28 @@ export function Login({ onLogin }: { onLogin: () => void }) {
         <button 
           type="submit"
           disabled={loading}
-          className="w-full bg-[#7a2e33] hover:bg-[#5a2226] disabled:opacity-50 text-white py-3.5 rounded-xl font-medium transition-colors flex justify-center items-center gap-3"
+          className="w-full bg-[#7a2e33] hover:bg-[#5a2226] disabled:opacity-50 text-white py-3.5 rounded-xl font-medium transition-colors flex justify-center items-center gap-3 cursor-pointer"
         >
           {loading ? 'Authenticating...' : 'Sign In securely'}
         </button>
 
-        <div className="mt-8 pt-6 border-t border-[#d4c1a3]/30 w-full flex items-center justify-center gap-2 text-sm text-[#6b6660]">
+        {onContinueToUtilities && (
+          <div className="w-full mt-4 pt-4 border-t border-[#d4c1a3]/30">
+            <button
+              type="button"
+              onClick={onContinueToUtilities}
+              className="w-full py-3 px-4 bg-[#f4ece1] hover:bg-[#ebdcc8] text-[#552024] font-medium text-sm rounded-xl transition-all border border-[#d4c1a3]/50 flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+            >
+              <Wrench size={16} />
+              <span>Use Utilities Without Sign-In</span>
+            </button>
+            <p className="text-[11px] text-[#8c827a] mt-1.5 text-center">
+              Duration · Missing Clips · Clip Delivery · Photo Delivery · Gallery Uploader
+            </p>
+          </div>
+        )}
+
+        <div className="mt-6 pt-4 border-t border-[#d4c1a3]/30 w-full flex items-center justify-center gap-2 text-sm text-[#6b6660]">
           <Lock size={14} />
           Encrypted Auth via Firebase
         </div>

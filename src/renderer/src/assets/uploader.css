@@ -16,7 +16,9 @@ body { margin: 0; }
 
 /* Fixed height, not min-height: the sidebar must stay put while a long list of
    transfers scrolls inside .screen, rather than the whole page moving. */
-.app-shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; background: var(--paper); }
+.app-shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; background: var(--paper); transition: grid-template-columns 0.2s ease; }
+.app-shell.sidebar-collapsed { grid-template-columns: 0px 1fr; }
+.app-shell.sidebar-collapsed .sidebar { display: none; }
 
 .sidebar {
   display: flex; overflow-y: auto; flex-direction: column; gap: 4px; padding: 22px 14px;

@@ -10,7 +10,7 @@
  * otherwise leave the studio with no encoder at all).
  */
 import { execFile } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 import { app } from 'electron';
@@ -24,7 +24,29 @@ function unpacked(path: string): string {
 }
 
 function executable(path: string): boolean {
-  try { accessSync(path, constants.X_OK); return true; } catch { return false; }
+  try {
+    accessSync(path, constants.X_OK);
+    // On Apple Silicon (darwin arm64), reject x86_64-only Mach-O binaries that fail without Rosetta 2
+    if (process.platform === 'darwin' && process.arch === 'arm64') {
+      const fd = openSync(path, 'r');
+      try {
+        const hdr = Buffer.alloc(8);
+        if (readSync(fd, hdr, 0, 8, 0) === 8) {
+          const magic = hdr.readUInt32LE(0);
+          const cpuType = hdr.readUInt32LE(4);
+          // MH_MAGIC_64 (0xfeedfacf) with CPU_TYPE_X86_64 (0x01000007)
+          if (magic === 0xfeedfacf && cpuType === 0x01000007) {
+            return false;
+          }
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function ffprobePath(): string {
@@ -72,12 +94,16 @@ export interface RunResult { stdout: string; stderr: string; code: number }
 /** Runs a tool and returns what it said. Never throws for a non-zero exit. */
 export function run(binary: string, args: string[], options: { timeout?: number; signal?: AbortSignal } = {}): Promise<RunResult> {
   return new Promise(resolve => {
-    execFile(binary, args, { timeout: options.timeout ?? 60_000, maxBuffer: 4 * 1024 * 1024, signal: options.signal },
-      (error, stdout, stderr) => {
-        const code = error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === 'number'
-          ? Number((error as { code?: number }).code) : error ? 1 : 0;
-        resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code });
-      });
+    try {
+      execFile(binary, args, { timeout: options.timeout ?? 60_000, maxBuffer: 4 * 1024 * 1024, signal: options.signal },
+        (error, stdout, stderr) => {
+          const code = error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === 'number'
+            ? Number((error as { code?: number }).code) : error ? 1 : 0;
+          resolve({ stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code });
+        });
+    } catch (err) {
+      resolve({ stdout: '', stderr: String(err), code: 1 });
+    }
   });
 }
 

@@ -57,9 +57,10 @@ import type { FreelanceJob, TeamMember } from '../types';
 import { RecentActivityScreen } from './common/RecentActivityScreen';
 import { PostProductionTasksScreen } from './screens/PostProductionTasksScreen';
 import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
-import { Wrench } from 'lucide-react';
+import { Wrench, Film } from 'lucide-react';
+import { GalleryUploaderScreen } from './screens/GalleryUploaderScreen';
 
-type View = 'tasks' | 'work' | 'payments' | 'activity' | 'utilities';
+type View = 'tasks' | 'work' | 'payments' | 'activity' | 'utilities' | 'gallery-uploader';
 type StageFilter = 'all' | EditorWorkflowStage | 'changes_needed';
 
 export function EditorDashboard(): React.JSX.Element {
@@ -881,6 +882,10 @@ export function EditorDashboard(): React.JSX.Element {
           <Wrench size={16} /> Utilities
         </button>
 
+        <button className="nav-item" aria-current={view === 'gallery-uploader'} onClick={() => { setView('gallery-uploader'); setError(''); }}>
+          <Film size={16} /> Gallery Uploader
+        </button>
+
         <div className="spacer" />
         <button className="nav-item" onClick={() => { void signOut(auth); }}>
           <LogOut size={16} /> Sign out
@@ -896,6 +901,10 @@ export function EditorDashboard(): React.JSX.Element {
           <PostProductionTasksScreen />
         ) : view === 'utilities' ? (
           <UtilitiesScreen />
+        ) : view === 'gallery-uploader' ? (
+          <div className="board-area bg-[#0D0C0A] min-h-screen">
+            <GalleryUploaderScreen />
+          </div>
         ) : view === 'activity' ? (
           <RecentActivityScreen
             onSelectJob={(jobId) => {

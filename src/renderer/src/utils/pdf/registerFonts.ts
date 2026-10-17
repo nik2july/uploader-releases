@@ -9,18 +9,15 @@ import {
   MADA_BOLD,
   MADA_LIGHT,
   TAN_MERINGUE,
-  THE_SEASONS_REGULAR
 } from './fonts';
 
-export const DISPLAY = 'The Seasons';
-export const HEADING = 'The Seasons';
+export const DISPLAY = 'Editors Note';
+export const HEADING = 'Editors Note';
 export const SUBTITLE = 'Satoshi';
 export const BODY = 'Mada';
 export const WORDMARK = 'Tan Meringue';
 
 export function registerStudioFonts(doc: jsPDF): void {
-  doc.addFileToVFS('TheSeasons-Regular.otf', THE_SEASONS_REGULAR);
-  doc.addFont('TheSeasons-Regular.otf', 'The Seasons', 'normal');
   // Editor's Note
   doc.addFileToVFS('EditorsNote-Regular.otf', EDITORS_NOTE_REGULAR);
   doc.addFont('EditorsNote-Regular.otf', DISPLAY, 'normal');

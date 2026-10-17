@@ -1,53 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Roboto+Mono:ital,wght@0,100..700;1,100..700&family=Tenor+Sans&family=Vidaloka&display=swap');
 
 
-@font-face {
-  font-family: 'The Seasons';
-  src: url('/fonts/the-seasons/theseasons-lt.otf') format('opentype');
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'The Seasons';
-  src: url('/fonts/the-seasons/theseasons-ltit.otf') format('opentype');
-  font-weight: 300;
-  font-style: italic;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'The Seasons';
-  src: url('/fonts/the-seasons/theseasons-reg.otf') format('opentype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'The Seasons';
-  src: url('/fonts/the-seasons/theseasons-it.otf') format('opentype');
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'The Seasons';
-  src: url('/fonts/the-seasons/theseasons-bd.otf') format('opentype');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'The Seasons';
-  src: url('/fonts/the-seasons/theseasons-bdit.otf') format('opentype');
-  font-weight: 700;
-  font-style: italic;
-  font-display: swap;
-}
 @import "tailwindcss";
 
 
@@ -151,7 +104,7 @@
     
     --font-title: 'Vidaloka', serif;
     --font-subtitle: 'Tenor Sans', sans-serif;
-    --font-heading: 'The Seasons', 'Vidaloka', serif;
+    --font-heading: 'Editors Note', 'Vidaloka', serif;
     --font-subheading: 'DM Sans', sans-serif;
     --font-section: 'Roboto Mono', monospace;
     --font-body: 'Inter', sans-serif;
@@ -237,7 +190,7 @@
 }
 
 .font-tan-aegean {
-  font-family: 'TAN Aegean', 'Tan Aegean', 'TAN Meringue', 'The Seasons', serif;
+  font-family: 'TAN Aegean', 'Tan Aegean', 'TAN Meringue', 'Editors Note', serif;
 }
 
 /* Custom Scrollbar */

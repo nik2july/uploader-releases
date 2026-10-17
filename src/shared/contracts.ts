@@ -1,4 +1,4 @@
-import type { MediaBillingResult } from '../../../WEB APP/src/utils/mediaPricing';
+import type { MediaBillingResult } from '../../../COMMON/Shared Code & Contracts/utils/mediaPricing';
 import type {
   ClipFPSCap, ClipQuality, ClipRunState, ClipScanResult, DurationKind, DurationProgress, DurationScanResult,
   PhotoRunState, SequenceScanOptions, SequenceScanResult, UtilityToolsStatus,
@@ -7,7 +7,7 @@ import type {
 // The Utilities section — Duration, Missing Clips, Clip Delivery, Photo
 // Delivery — brought over from the standalone Baawaray Utility app.
 export * from './utilities';
-export type { MediaBillingInput, MediaBillingResult, MediaMeasurement } from '../../../WEB APP/src/utils/mediaPricing';
+export type { MediaBillingInput, MediaBillingResult, MediaMeasurement } from '../../../COMMON/Shared Code & Contracts/utils/mediaPricing';
 
 export type TransferStatus = 'scanning' | 'ready' | 'queued' | 'uploading' | 'verifying' | 'paused' | 'waiting_network' | 'waiting_quota' | 'needs_attention' | 'completed';
 export interface ScanOptions { excludedBillingFolders: string[]; countPhotoPairsOnce: boolean }
@@ -181,6 +181,32 @@ export interface DesktopAPI {
   photoStart(): Promise<void>;
   photoCancel(): Promise<void>;
   onPhotoState(callback: (state: PhotoRunState) => void): () => void;
+  // Gallery Uploader API (Apple Silicon Hardware Transcoding & Direct Cloud Run Ingestion)
+  galleryFetchGalleries(): Promise<GallerySummary[]>;
+  galleryCreateGallery(payload: CreateGalleryPayload): Promise<GallerySummary | null>;
+  galleryUpdateGallery(galleryId: string, updates: Partial<GallerySummary>): Promise<GallerySummary | null>;
+  galleryDeleteGallery(galleryId: string): Promise<boolean>;
+  galleryCreateScene(galleryId: string, name: string): Promise<any>;
+  galleryUpdateScene(galleryId: string, sceneId: string, name: string): Promise<GallerySummary | null>;
+  galleryDeleteScene(galleryId: string, sceneId: string): Promise<GallerySummary | null>;
+  galleryChooseFiles(mode: 'files' | 'folder' | 'photos' | 'videos'): Promise<string[] | null>;
+  galleryStartUpload(galleryId: string, sceneId: string, filePaths: string[], autoTranscode?: boolean, isAutoplayLoop?: boolean): Promise<void>;
+  galleryPauseUpload(): Promise<void>;
+  galleryResumeUpload(): Promise<void>;
+  galleryCancelUpload(): Promise<void>;
+  galleryRetryFailed(): Promise<void>;
+  galleryClearCompleted(): Promise<void>;
+  galleryGetState(): Promise<GalleryUploadSessionState>;
+  onGalleryUploadState(callback: (state: GalleryUploadSessionState) => void): () => void;
+  galleryFetchMedia(galleryId: string): Promise<GalleryMediaItem[]>;
+  galleryReorderMedia(galleryId: string, itemIds: string[]): Promise<boolean>;
+  galleryUpdateMedia(mediaId: string, updates: Partial<GalleryMediaItem>): Promise<GalleryMediaItem | null>;
+  galleryDeleteMedia(mediaId: string): Promise<boolean>;
+  galleryBatchDeleteMedia(galleryId: string, itemIds: string[]): Promise<boolean>;
+  gallerySetCover(galleryId: string, coverUrl?: string, coverVideoUrl?: string): Promise<GallerySummary | null>;
+  galleryFetchSongs(): Promise<GallerySongItem[]>;
+  gallerySetSong(galleryId: string, backgroundMusicUrl: string, backgroundMusicTitle: string): Promise<GallerySummary | null>;
+  galleryChooseAndUploadSong(galleryId: string): Promise<{ song: GallerySongItem; gallery: GallerySummary | null } | null>;
 }
 
 export interface DiskSpaceInfo {
@@ -208,3 +234,102 @@ export interface DownloadProgress {
 }
 
 export interface DropboxStatus { configured: boolean; connected: boolean; email?: string; error?: string }
+
+// ---------------------------------------------------------------------------
+// Gallery Portal Desktop Uploader Contracts
+// ---------------------------------------------------------------------------
+
+export interface GalleryItemProgress {
+  id: string;
+  filePath: string;
+  fileName: string;
+  fileSize: number; // original size in bytes
+  mediaType: 'photo' | 'video';
+  status: 'queued' | 'transcoding' | 'uploading' | 'completed' | 'failed';
+  transcodeProgress: number; // 0 - 100
+  uploadProgress: number; // 0 - 100
+  optimizedSize?: number;
+  speedBytesPerSec?: number;
+  error?: string;
+  isAutoplayLoop?: boolean;
+}
+
+export interface GalleryUploadSessionState {
+  status: 'idle' | 'running' | 'paused' | 'completed';
+  galleryId: string;
+  galleryTitle: string;
+  sceneId: string;
+  sceneName: string;
+  items: GalleryItemProgress[];
+  totalBytes: number;
+  uploadedBytes: number;
+  overallProgress: number; // 0 - 100
+  speedBytesPerSec: number;
+  etaSeconds: number;
+  autoTranscode: boolean;
+}
+
+export interface GallerySummary {
+  id: string;
+  title: string;
+  clientName: string;
+  slug: string;
+  scenes?: { id: string; name: string; order: number }[];
+  coverImage?: string;
+  coverVideo?: string;
+  backgroundMusicUrl?: string;
+  backgroundMusicTitle?: string;
+  isPublished?: boolean;
+  mediaCount?: { photos: number; videos: number; loops?: number };
+  eventDate?: string;
+  category?: string;
+  description?: string;
+}
+
+export interface CreateGalleryPayload {
+  title: string;
+  clientName: string;
+  eventDate?: string;
+  category?: string;
+  slug?: string;
+  description?: string;
+  isPublished?: boolean;
+  scenes?: { id: string; name: string; order: number }[];
+}
+
+export interface GalleryMediaItem {
+  id: string;
+  galleryId: string;
+  type: 'photo' | 'video';
+  isAutoplayLoop: boolean;
+  sceneId?: string;
+  gridSpan?: 'normal' | 'wide';
+  title?: string;
+  originalFilename: string;
+  originalSize: number;
+  optimizedSize: number;
+  savedPercentage: number;
+  urls: {
+    thumbnail?: string;
+    grid?: string;
+    full?: string;
+    video?: string;
+    poster?: string;
+  };
+  width?: number;
+  height?: number;
+  duration?: number;
+  aspectRatio?: number;
+  order: number;
+  createdAt: string;
+}
+
+export interface GallerySongItem {
+  id: string;
+  title: string;
+  originalFilename: string;
+  url: string;
+  size: number;
+  createdAt: string;
+}
+

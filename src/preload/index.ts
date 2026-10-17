@@ -76,8 +76,13 @@ const api: DesktopAPI = {
   utilityStatus: () => ipcRenderer.invoke('utility:status'),
   chooseUtilityFolder: (title, buttonLabel) => ipcRenderer.invoke('utility:chooseFolder', title, buttonLabel),
   folderOfPath: path => ipcRenderer.invoke('utility:folderOf', path),
-  // Electron no longer puts a path on the File object; this is the way to read it.
-  pathForFile: file => webUtils.getPathForFile(file),
+  pathForFile: file => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return (file as any).path || '';
+    }
+  },
   revealInFinder: path => ipcRenderer.invoke('utility:reveal', path),
   openPath: path => ipcRenderer.invoke('utility:open', path),
   saveTextFile: (defaultName, text) => ipcRenderer.invoke('utility:saveText', defaultName, text),
@@ -115,6 +120,41 @@ const api: DesktopAPI = {
     const listener = (_: unknown, state: PhotoRunState): void => callback(state);
     ipcRenderer.on('utility:photo', listener);
     return () => { ipcRenderer.removeListener('utility:photo', listener); };
-  }
+  },
+  // Gallery Uploader API
+  galleryFetchGalleries: () => ipcRenderer.invoke('gallery:list'),
+  galleryCreateGallery: (payload) => ipcRenderer.invoke('gallery:createGallery', payload),
+  galleryUpdateGallery: (galleryId, updates) => ipcRenderer.invoke('gallery:updateGallery', galleryId, updates),
+  galleryDeleteGallery: galleryId => ipcRenderer.invoke('gallery:deleteGallery', galleryId),
+  galleryCreateScene: (galleryId, name) => ipcRenderer.invoke('gallery:createScene', galleryId, name),
+  galleryUpdateScene: (galleryId, sceneId, name) => ipcRenderer.invoke('gallery:updateScene', galleryId, sceneId, name),
+  galleryDeleteScene: (galleryId, sceneId) => ipcRenderer.invoke('gallery:deleteScene', galleryId, sceneId),
+  galleryChooseFiles: mode => ipcRenderer.invoke('gallery:chooseFiles', mode),
+  galleryStartUpload: (galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop) =>
+    ipcRenderer.invoke('gallery:startUpload', galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop),
+  galleryPauseUpload: () => ipcRenderer.invoke('gallery:pauseUpload'),
+  galleryResumeUpload: () => ipcRenderer.invoke('gallery:resumeUpload'),
+  galleryCancelUpload: () => ipcRenderer.invoke('gallery:cancelUpload'),
+  galleryRetryFailed: () => ipcRenderer.invoke('gallery:retryFailed'),
+  galleryClearCompleted: () => ipcRenderer.invoke('gallery:clearCompleted'),
+  galleryGetState: () => ipcRenderer.invoke('gallery:getState'),
+  onGalleryUploadState: callback => {
+    const listener = (_: unknown, state: any): void => callback(state);
+    ipcRenderer.on('gallery:state', listener);
+    return () => { ipcRenderer.removeListener('gallery:state', listener); };
+  },
+  galleryFetchMedia: galleryId => ipcRenderer.invoke('gallery:fetchMedia', galleryId),
+  galleryReorderMedia: (galleryId, itemIds) => ipcRenderer.invoke('gallery:reorderMedia', galleryId, itemIds),
+  galleryUpdateMedia: (mediaId, updates) => ipcRenderer.invoke('gallery:updateMedia', mediaId, updates),
+  galleryDeleteMedia: mediaId => ipcRenderer.invoke('gallery:deleteMedia', mediaId),
+  galleryBatchDeleteMedia: (galleryId, itemIds) => ipcRenderer.invoke('gallery:batchDeleteMedia', galleryId, itemIds),
+  gallerySetCover: (galleryId, coverUrl, coverVideoUrl) =>
+    ipcRenderer.invoke('gallery:setCover', galleryId, coverUrl, coverVideoUrl),
+  galleryFetchSongs: () => ipcRenderer.invoke('gallery:fetchSongs'),
+  gallerySetSong: (galleryId, backgroundMusicUrl, backgroundMusicTitle) =>
+    ipcRenderer.invoke('gallery:setSong', galleryId, backgroundMusicUrl, backgroundMusicTitle),
+  galleryChooseAndUploadSong: galleryId => ipcRenderer.invoke('gallery:chooseAndUploadSong', galleryId),
 };
 contextBridge.exposeInMainWorld('api', api);
+
+

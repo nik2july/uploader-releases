@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from 'firebase/auth';
-import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, FolderPlus, Settings, SlidersHorizontal, Upload, Users, Wrench } from 'lucide-react';
+import { Archive, ArrowUpDown, BarChart3, Bell, Briefcase, Building2, Film, FolderPlus, PanelLeftClose, PanelLeftOpen, Settings, SlidersHorizontal, Upload, Users, Wrench } from 'lucide-react';
 import { auth } from '../lib/auth';
 import { useApp } from '../context/AppContext';
 import longLogo from '../assets/baawaray-long.svg';
@@ -28,9 +28,10 @@ import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
 import { GoogleDriveRequiredModal } from './common/GoogleDriveRequiredModal';
 import { GoogleDriveConnectBanner } from './common/GoogleDriveConnectBanner';
 import { ClientToolsScreen } from './screens/ClientToolsScreen';
+import { GalleryUploaderScreen } from './screens/GalleryUploaderScreen';
 import type { WorkTarget } from '../../../shared/contracts';
 
-type View = 'tasks' | 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools';
+type View = 'tasks' | 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools' | 'gallery-uploader';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
@@ -40,6 +41,37 @@ export function OwnerDashboard(): React.JSX.Element {
   const [showDriveModal, setShowDriveModal] = useState(false);
   const [pendingScanTarget, setPendingScanTarget] = useState<WorkTarget | null>(null);
   const rawLinkSyncAttempts = useRef(new Set<string>());
+
+  // Sidebar toggle state (open by default, persisted across sessions)
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('baawaray_sidebar_open') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleSidebar = (): void => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('baawaray_sidebar_open', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Keyboard shortcut: ⌘B / Ctrl+B to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // The keep-awake preference is stored with the studio's shared settings but
   // enforced by the queue, so it is pushed down whenever it changes.
@@ -154,61 +186,87 @@ export function OwnerDashboard(): React.JSX.Element {
   function go(next: View): void { setOpenId(null); setView(next); }
 
   return (
-    <div className="app-shell">
-      <nav className="sidebar">
-        <div className="wordmark"><img src={longLogo} alt="Baawaray" /></div>
-        <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
-          <Briefcase size={16} /> Active Jobs
-        </button>
-        <button className="nav-item" aria-current={view === 'tasks'} onClick={() => go('tasks')}>Tasks</button>
-        <button
-          className="nav-item"
-          aria-current={view === 'activity'}
-          onClick={() => go('activity')}
-        >
-          <Bell size={16} /> Recent Activity
-          {activityUnreadCount > 0 && (
-            <span className="count" style={{ background: 'var(--burgundy)', color: '#fff' }}>
-              {activityUnreadCount > 99 ? '99+' : activityUnreadCount}
-            </span>
-          )}
-        </button>
-        <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
-          <ArrowUpDown size={16} /> Up Down Queue
-          {active + attention > 0 && <span className="count">{active + attention}</span>}
-        </button>
-        <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
-          <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments
-        </button>
-        <button className="nav-item" aria-current={view === 'stats'} onClick={() => go('stats')}>
-          <BarChart3 size={16} /> Stats
-        </button>
-        <button className="nav-item" aria-current={view === 'archival'} onClick={() => go('archival')}>
-          <Archive size={16} /> Cloud Archival
-        </button>
-        <button className="nav-item" aria-current={view === 'team'} onClick={() => { studio.setSelectedFreelanceEditorId(null); go('team'); }}>
-          <Users size={16} /> Team
-        </button>
-        <button className="nav-item" aria-current={view === 'clients' || view === 'partners'} onClick={() => { studio.setSelectedFreelanceClientId(null); go('clients'); }}>
-          <Building2 size={16} /> Clients
-        </button>
-        <button className="nav-item" aria-current={view === 'client-tools'} onClick={() => go('client-tools')}>
-          <FolderPlus size={16} /> Client Tools
-        </button>
-        <button className="nav-item" aria-current={view === 'services'} onClick={() => go('services')}>
-          <SlidersHorizontal size={16} /> Services
-        </button>
-        <button className="nav-item" aria-current={view === 'utilities'} onClick={() => go('utilities')}>
-          <Wrench size={16} /> Utilities
-        </button>
-        <div className="spacer" />
-        <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
-          <Settings size={16} /> Settings
-        </button>
-        <button className="nav-item" onClick={() => { void signOut(auth); }}>Sign out</button>
-      </nav>
+    <div className={`app-shell ${!sidebarOpen ? 'sidebar-collapsed' : ''}`}>
+      {sidebarOpen && (
+        <nav className="sidebar">
+          <div className="wordmark flex items-center justify-between gap-2">
+            <img src={longLogo} alt="Baawaray" className="max-w-[145px]" />
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="p-1 rounded-md hover:bg-stone-200 dark:hover:bg-white/10 text-stone-500 hover:text-stone-900 dark:text-stone-400 dark:hover:text-white transition-colors cursor-pointer"
+              title="Close sidebar (⌘B)"
+            >
+              <PanelLeftClose size={16} />
+            </button>
+          </div>
+          <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
+            <Briefcase size={16} /> Active Jobs
+          </button>
+          <button className="nav-item" aria-current={view === 'tasks'} onClick={() => go('tasks')}>Tasks</button>
+          <button
+            className="nav-item"
+            aria-current={view === 'activity'}
+            onClick={() => go('activity')}
+          >
+            <Bell size={16} /> Recent Activity
+            {activityUnreadCount > 0 && (
+              <span className="count" style={{ background: 'var(--burgundy)', color: '#fff' }}>
+                {activityUnreadCount > 99 ? '99+' : activityUnreadCount}
+              </span>
+            )}
+          </button>
+          <button className="nav-item" aria-current={view === 'uploads' && !openId} onClick={() => go('uploads')}>
+            <ArrowUpDown size={16} /> Up Down Queue
+            {active + attention > 0 && <span className="count">{active + attention}</span>}
+          </button>
+          <button className="nav-item" aria-current={view === 'payments'} onClick={() => go('payments')}>
+            <span style={{ width: 16, textAlign: 'center' }}>₹</span> Payments
+          </button>
+          <button className="nav-item" aria-current={view === 'stats'} onClick={() => go('stats')}>
+            <BarChart3 size={16} /> Stats
+          </button>
+          <button className="nav-item" aria-current={view === 'archival'} onClick={() => go('archival')}>
+            <Archive size={16} /> Cloud Archival
+          </button>
+          <button className="nav-item" aria-current={view === 'team'} onClick={() => { studio.setSelectedFreelanceEditorId(null); go('team'); }}>
+            <Users size={16} /> Team
+          </button>
+          <button className="nav-item" aria-current={view === 'clients' || view === 'partners'} onClick={() => { studio.setSelectedFreelanceClientId(null); go('clients'); }}>
+            <Building2 size={16} /> Clients
+          </button>
+          <button className="nav-item" aria-current={view === 'client-tools'} onClick={() => go('client-tools')}>
+            <FolderPlus size={16} /> Client Tools
+          </button>
+          <button className="nav-item" aria-current={view === 'gallery-uploader'} onClick={() => go('gallery-uploader')}>
+            <Film size={16} /> Gallery Uploader
+          </button>
+          <button className="nav-item" aria-current={view === 'services'} onClick={() => go('services')}>
+            <SlidersHorizontal size={16} /> Services
+          </button>
+          <button className="nav-item" aria-current={view === 'utilities'} onClick={() => go('utilities')}>
+            <Wrench size={16} /> Utilities
+          </button>
+          <div className="spacer" />
+          <button className="nav-item" aria-current={view === 'settings'} onClick={() => go('settings')}>
+            <Settings size={16} /> Settings
+          </button>
+          <button className="nav-item" onClick={() => { void signOut(auth); }}>Sign out</button>
+        </nav>
+      )}
 
-      <main className="main-area">
+      <main className="main-area relative">
+        {!sidebarOpen && (
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            className="fixed top-3 left-3 z-40 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#141310]/95 hover:bg-[#201D17] border border-[#E8A317]/50 text-[#FBFAF7] text-xs font-semibold shadow-2xl backdrop-blur-md transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            title="Open sidebar (⌘B)"
+          >
+            <PanelLeftOpen size={15} className="text-[#E8A317]" />
+            <span>Sidebar</span>
+          </button>
+        )}
         <UpdateBanner />
         <GoogleDriveConnectBanner
           connected={Boolean(drive?.connected)}
@@ -303,6 +361,10 @@ export function OwnerDashboard(): React.JSX.Element {
           <PostProductionPaymentsScreen />
         ) : view === 'client-tools' ? (
           <ClientToolsScreen />
+        ) : view === 'gallery-uploader' ? (
+          <div className="board-area min-h-screen bg-[var(--paper)]">
+            <GalleryUploaderScreen />
+          </div>
         ) : (
           <div className="screen">
             <header><div><span className="eyebrow">SETTINGS</span><h2>Uploader settings</h2>
