@@ -71,6 +71,7 @@ export interface ClientDeliverable {
   paidToEditor?: boolean;
   paidAt?: string;
   link?: string;
+  deliveryLink?: string;
   /**
    * Where the raw data for this deliverable sits — uploaded by the studio, or
    * pasted in when whoever holds the footage sent a link instead.

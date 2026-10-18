@@ -17,8 +17,9 @@ body { margin: 0; }
 /* Fixed height, not min-height: the sidebar must stay put while a long list of
    transfers scrolls inside .screen, rather than the whole page moving. */
 .app-shell { display: grid; grid-template-columns: 232px 1fr; height: 100vh; background: var(--paper); transition: grid-template-columns 0.2s ease; }
-.app-shell.sidebar-collapsed { grid-template-columns: 0px 1fr; }
+.app-shell.sidebar-collapsed { grid-template-columns: 1fr; }
 .app-shell.sidebar-collapsed .sidebar { display: none; }
+.app-shell.sidebar-collapsed .main-area { grid-column: 1 / -1; width: 100%; min-width: 0; }
 
 .sidebar {
   display: flex; overflow-y: auto; flex-direction: column; gap: 4px; padding: 22px 14px;
@@ -42,7 +43,38 @@ body { margin: 0; }
   border-radius: 999px; padding: 1px 7px;
 }
 
-.main-area { display: flex; flex-direction: column; overflow: hidden; }
+.main-area { display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+.sidebar-collapsed-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
+  flex-shrink: 0;
+  z-index: 30;
+}
+
+.sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px !important;
+  font-size: 12px !important;
+  font-weight: 600;
+  border-radius: 8px;
+  background: var(--paper) !important;
+  border: 1px solid color-mix(in srgb, var(--line) 65%, transparent) !important;
+  color: var(--ink) !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sidebar-toggle-btn:hover {
+  background: color-mix(in srgb, var(--burgundy) 8%, var(--paper)) !important;
+  border-color: var(--burgundy) !important;
+  color: var(--burgundy) !important;
+}
 
 .update-banner {
   display: flex; align-items: center; gap: 12px; flex-shrink: 0;

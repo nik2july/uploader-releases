@@ -6,6 +6,7 @@ directories:
 afterPack: build/afterPack.cjs
 files:
   - '!dist/**'
+  - '!Backups/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'

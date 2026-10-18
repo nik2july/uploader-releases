@@ -59,6 +59,9 @@ export const EditDeliverableModal: React.FC<EditDeliverableModalProps> = ({
   const [sellingPrice, setSellingPrice] = useState<number | ''>(
     deliverable?.sellingPrice !== undefined ? deliverable.sellingPrice : ''
   );
+  const [isZeroAmount, setIsZeroAmount] = useState<boolean>(
+    deliverable?.sellingPrice === 0
+  );
   const [costPrice, setCostPrice] = useState<number | ''>(
     deliverable?.costPrice !== undefined ? deliverable.costPrice : ''
   );
@@ -78,8 +81,11 @@ export const EditDeliverableModal: React.FC<EditDeliverableModalProps> = ({
       );
       setNotes(deliverable.notes || '');
       setSellingPrice(deliverable.sellingPrice !== undefined ? deliverable.sellingPrice : '');
+      setIsZeroAmount(deliverable.sellingPrice === 0);
       setCostPrice(deliverable.costPrice !== undefined ? deliverable.costPrice : '');
-      setStatus(deliverable.status || 'pending');
+      const rawStatus = (deliverable.status as any) || 'pending';
+      const normalizedStatus = rawStatus === 'in_progress' ? 'in-progress' : rawStatus === 'completed' ? 'delivered' : rawStatus;
+      setStatus(normalizedStatus);
       setError('');
     }
   }, [deliverable, isOpen]);
@@ -109,7 +115,7 @@ export const EditDeliverableModal: React.FC<EditDeliverableModalProps> = ({
         dueDate: dueDate || undefined,
         billableQuantity: billableQuantity === '' ? undefined : Number(billableQuantity),
         notes: notes.trim() || undefined,
-        sellingPrice: sellingPrice === '' ? undefined : Number(sellingPrice),
+        sellingPrice: isZeroAmount ? 0 : (sellingPrice === '' ? undefined : Number(sellingPrice)),
         costPrice: costPrice === '' ? undefined : Number(costPrice),
         status,
       });
@@ -276,35 +282,66 @@ export const EditDeliverableModal: React.FC<EditDeliverableModalProps> = ({
           </div>
 
           {/* Pricing Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-            <div>
-              <label className="block text-xs font-bold text-[#111417] uppercase tracking-wider mb-1 flex items-center gap-1">
+          <div className="p-3.5 rounded-xl bg-[#f9f8f6] border border-[#d4c1a3] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#111417] uppercase tracking-wider flex items-center gap-1">
                 <IndianRupee className="w-3.5 h-3.5 text-[#7a2e33]" />
-                Client Selling Price (₹)
+                Deliverable Billing & Price
+              </span>
+
+              <label className="flex items-center gap-1.5 cursor-pointer bg-white px-2 py-0.5 rounded-lg border border-[#d4c1a3] hover:border-[#7a2e33] transition-colors">
+                <input
+                  type="checkbox"
+                  checked={isZeroAmount}
+                  onChange={(e) => {
+                    setIsZeroAmount(e.target.checked);
+                    if (e.target.checked) setSellingPrice(0);
+                    else if (sellingPrice === 0) setSellingPrice('');
+                  }}
+                  className="rounded border-[#d4c1a3] text-[#7a2e33] focus:ring-[#7a2e33]"
+                />
+                <span className="text-[11px] font-bold text-[#111417]">
+                  Zero Amount (₹0) / Complimentary
+                </span>
               </label>
-              <input
-                type="number"
-                min="0"
-                value={sellingPrice}
-                onChange={(e) => setSellingPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                placeholder="0"
-                className="w-full px-3.5 py-2 text-sm bg-white border border-[#d4c1a3] rounded-xl focus:outline-none focus:border-[#7a2e33] focus:ring-1 focus:ring-[#7a2e33]"
-              />
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-[#111417] uppercase tracking-wider mb-1 flex items-center gap-1">
-                <IndianRupee className="w-3.5 h-3.5 text-[#7a2e33]" />
-                Studio Cost Price (₹)
-              </label>
-              <input
-                type="number"
-                min="0"
-                value={costPrice}
-                onChange={(e) => setCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                placeholder="0"
-                className="w-full px-3.5 py-2 text-sm bg-white border border-[#d4c1a3] rounded-xl focus:outline-none focus:border-[#7a2e33] focus:ring-1 focus:ring-[#7a2e33]"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-[#111417] mb-1">
+                  Client Selling Price (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  disabled={isZeroAmount}
+                  value={isZeroAmount ? 0 : sellingPrice}
+                  onChange={(e) => setSellingPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="0"
+                  className={`w-full px-3.5 py-2 text-sm border rounded-xl focus:outline-none focus:border-[#7a2e33] focus:ring-1 focus:ring-[#7a2e33] ${
+                    isZeroAmount ? 'bg-stone-100 text-stone-500 border-[#d4c1a3] cursor-not-allowed' : 'bg-white border-[#d4c1a3]'
+                  }`}
+                />
+                {isZeroAmount && (
+                  <span className="text-[10px] text-emerald-700 font-semibold block mt-1">
+                    ✓ Billed at ₹0 (Complimentary deliverable)
+                  </span>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#111417] mb-1">
+                  Studio Cost Price (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={costPrice}
+                  onChange={(e) => setCostPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder="0"
+                  className="w-full px-3.5 py-2 text-sm bg-white border border-[#d4c1a3] rounded-xl focus:outline-none focus:border-[#7a2e33] focus:ring-1 focus:ring-[#7a2e33]"
+                />
+              </div>
             </div>
           </div>
 
@@ -319,8 +356,9 @@ export const EditDeliverableModal: React.FC<EditDeliverableModalProps> = ({
               className="w-full px-3.5 py-2 text-sm bg-white border border-[#d4c1a3] rounded-xl focus:outline-none focus:border-[#7a2e33] focus:ring-1 focus:ring-[#7a2e33] cursor-pointer"
             >
               <option value="pending">Pending (Awaiting Footage / Selection)</option>
-              <option value="in_progress">In Progress</option>
-              <option value="completed">Completed / Final Master</option>
+              <option value="in-progress">In Progress (Editing)</option>
+              <option value="review">Review / Changes</option>
+              <option value="sent">Sent to Client</option>
               <option value="delivered">Delivered to Client</option>
             </select>
           </div>

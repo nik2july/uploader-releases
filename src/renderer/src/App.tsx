@@ -214,15 +214,20 @@ export default function App() {
 
         <main className="main-area relative">
           {!sidebarOpen && (
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              className="fixed top-3 left-3 z-40 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#141310]/95 hover:bg-[#201D17] border border-[#E8A317]/50 text-[#FBFAF7] text-xs font-semibold shadow-2xl backdrop-blur-md transition-all hover:scale-105 active:scale-95 cursor-pointer"
-              title="Open sidebar (⌘B)"
-            >
-              <PanelLeftOpen size={15} className="text-[#E8A317]" />
-              <span>Sidebar</span>
-            </button>
+            <div className="sidebar-collapsed-bar">
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="sidebar-toggle-btn"
+                title="Open sidebar (⌘B)"
+              >
+                <PanelLeftOpen size={15} className="text-[#E8A317]" />
+                <span>Sidebar</span>
+              </button>
+              <div className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted)]">
+                Offline Tools • Press ⌘B to expand sidebar
+              </div>
+            </div>
           )}
           {guestTab === 'utilities' ? (
             <UtilitiesScreen />

@@ -261,6 +261,57 @@ export async function createExtra(clientId: string, extra: Pick<ClientDeliverabl
   return id;
 }
 
+export interface AddDeliverableInput {
+  title: string;
+  category: string;
+  sellingPrice?: number;
+  costPrice?: number;
+  dueDate?: string;
+  billableQuantity?: number;
+  notes?: string;
+  assignedMemberId?: number;
+  linkedRoleId?: string;
+  isExtra?: boolean;
+}
+
+export async function addClientDeliverable(
+  clientId: string | number,
+  deliverable: AddDeliverableInput
+): Promise<string> {
+  const cId = String(clientId);
+  if (!cId || !deliverable.title?.trim()) {
+    throw new Error('Client and deliverable title are required.');
+  }
+
+  const id = `deliv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const ref = doc(db, 'clients', cId);
+
+  const cleanDeliverable: ClientDeliverable = clean({
+    id,
+    title: deliverable.title.trim(),
+    category: deliverable.category || 'Video',
+    status: 'pending',
+    sellingPrice: deliverable.sellingPrice !== undefined ? Number(deliverable.sellingPrice) : 0,
+    costPrice: deliverable.costPrice !== undefined ? Number(deliverable.costPrice) : undefined,
+    dueDate: deliverable.dueDate || undefined,
+    billableQuantity: deliverable.billableQuantity !== undefined ? Number(deliverable.billableQuantity) : undefined,
+    notes: deliverable.notes?.trim() || undefined,
+    assignedMemberId: deliverable.assignedMemberId !== undefined ? Number(deliverable.assignedMemberId) : undefined,
+    linkedRoleId: deliverable.linkedRoleId || undefined,
+    isExtra: deliverable.isExtra !== undefined ? deliverable.isExtra : true,
+    addedAt: new Date().toISOString(),
+  });
+
+  await runTransaction(db, async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Client no longer exists.');
+    const existing = (snap.data().deliverables || []) as ClientDeliverable[];
+    tx.update(ref, { deliverables: [...existing, cleanDeliverable] });
+  });
+
+  return id;
+}
+
 export async function updateClientDeliverable(
   clientId: string,
   deliverableId: string,

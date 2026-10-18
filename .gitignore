@@ -9,3 +9,8 @@ out
 # the project — but nothing should be able to arrive here by accident either.
 .env*
 *.bak*
+
+# Local Backups (30-day retention)
+Backups/
+*.bak
+*.bak_*

@@ -20,6 +20,9 @@ import {
   deleteFreelanceEditorPayoutRecord,
   createTeamMember,
   updateTeamMember,
+  addClientDeliverable,
+  updateClientDeliverable,
+  deleteClientDeliverable,
 } from '../lib/studioRepository';
 import { cloudErrorMessage } from '../utils/cloudErrors';
 import { buildStudioAccount, buildEditorAccount, StudioAccount, EditorAccount } from '../utils/freelanceAccount';
@@ -104,6 +107,11 @@ export interface AppContextType {
   // Team member mutations
   addTeamMember: (data: Omit<TeamMember, 'id'>) => Promise<TeamMember>;
   updateTeamMember: (id: number, data: Partial<TeamMember>) => Promise<void>;
+
+  // Client Deliverable mutations
+  addClientDeliverable: typeof addClientDeliverable;
+  updateClientDeliverable: typeof updateClientDeliverable;
+  deleteClientDeliverable: typeof deleteClientDeliverable;
 
   // Accounting helpers
   freelanceJobPayment: (job: FreelanceJob) => { paid: number; balance: number };
@@ -463,6 +471,9 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       deleteFreelanceEditorPayoutRecord,
       addTeamMember: createTeamMember,
       updateTeamMember: updateTeamMemberWrapper,
+      addClientDeliverable,
+      updateClientDeliverable,
+      deleteClientDeliverable,
 
       freelanceJobPayment,
       freelanceJobEditorCost,

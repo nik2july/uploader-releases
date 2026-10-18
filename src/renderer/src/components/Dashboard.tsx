@@ -16,11 +16,8 @@ import { EditorDashboard } from './EditorDashboard';
 import { CloudArchivalScreen } from './screens/CloudArchivalScreen';
 import { PostProductionPaymentsScreen } from './screens/PostProductionPaymentsScreen';
 import { PostProductionTeamScreen } from './screens/PostProductionTeamScreen';
-import { PostProductionClientsScreen } from './screens/PostProductionClientsScreen';
 import { PostProductionServicesScreen } from './screens/PostProductionServicesScreen';
-import { PartnerStudiosScreen } from './screens/PartnerStudiosScreen';
-import { FreelanceDepartmentView } from './freelance/FreelanceDepartmentView';
-import { FreelanceStudioView } from './freelance/FreelanceStudioView';
+import { DeliverablesScreen } from './screens/DeliverablesScreen';
 import { FreelanceEditorView } from './freelance/FreelanceEditorView';
 import { FreelanceStatsScreen } from './screens/FreelanceStatsScreen';
 import { RecentActivityScreen } from './common/RecentActivityScreen';
@@ -31,12 +28,12 @@ import { ClientToolsScreen } from './screens/ClientToolsScreen';
 import { GalleryUploaderScreen } from './screens/GalleryUploaderScreen';
 import type { WorkTarget } from '../../../shared/contracts';
 
-type View = 'tasks' | 'uploads' | 'freelance' | 'partners' | 'team' | 'payments' | 'stats' | 'settings' | 'clients' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools' | 'gallery-uploader';
+type View = 'deliverables' | 'tasks' | 'uploads' | 'team' | 'payments' | 'stats' | 'settings' | 'services' | 'archival' | 'activity' | 'utilities' | 'client-tools' | 'gallery-uploader';
 
 export function OwnerDashboard(): React.JSX.Element {
   const studio = useApp();
   const { transfers, drive, error, loading, refresh } = useTransfers();
-  const [view, setView] = useState<View>('uploads');
+  const [view, setView] = useState<View>('deliverables');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showDriveModal, setShowDriveModal] = useState(false);
   const [pendingScanTarget, setPendingScanTarget] = useState<WorkTarget | null>(null);
@@ -200,8 +197,8 @@ export function OwnerDashboard(): React.JSX.Element {
               <PanelLeftClose size={16} />
             </button>
           </div>
-          <button className="nav-item" aria-current={view === 'freelance'} onClick={() => { studio.setActiveView('freelance'); go('freelance'); }}>
-            <Briefcase size={16} /> Active Jobs
+          <button className="nav-item" aria-current={view === 'deliverables'} onClick={() => { studio.setActiveView('deliverables'); go('deliverables'); }}>
+            <Film size={16} /> Deliverables
           </button>
           <button className="nav-item" aria-current={view === 'tasks'} onClick={() => go('tasks')}>Tasks</button>
           <button
@@ -232,9 +229,6 @@ export function OwnerDashboard(): React.JSX.Element {
           <button className="nav-item" aria-current={view === 'team'} onClick={() => { studio.setSelectedFreelanceEditorId(null); go('team'); }}>
             <Users size={16} /> Team
           </button>
-          <button className="nav-item" aria-current={view === 'clients' || view === 'partners'} onClick={() => { studio.setSelectedFreelanceClientId(null); go('clients'); }}>
-            <Building2 size={16} /> Clients
-          </button>
           <button className="nav-item" aria-current={view === 'client-tools'} onClick={() => go('client-tools')}>
             <FolderPlus size={16} /> Client Tools
           </button>
@@ -257,15 +251,20 @@ export function OwnerDashboard(): React.JSX.Element {
 
       <main className="main-area relative">
         {!sidebarOpen && (
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            className="fixed top-3 left-3 z-40 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#141310]/95 hover:bg-[#201D17] border border-[#E8A317]/50 text-[#FBFAF7] text-xs font-semibold shadow-2xl backdrop-blur-md transition-all hover:scale-105 active:scale-95 cursor-pointer"
-            title="Open sidebar (⌘B)"
-          >
-            <PanelLeftOpen size={15} className="text-[#E8A317]" />
-            <span>Sidebar</span>
-          </button>
+          <div className="sidebar-collapsed-bar">
+            <button
+              type="button"
+              onClick={toggleSidebar}
+              className="sidebar-toggle-btn"
+              title="Open sidebar (⌘B)"
+            >
+              <PanelLeftOpen size={15} className="text-[#E8A317]" />
+              <span>Sidebar</span>
+            </button>
+            <div className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted)]">
+              Baawaray Films • Press ⌘B to expand sidebar
+            </div>
+          </div>
         )}
         <UpdateBanner />
         <GoogleDriveConnectBanner
@@ -279,41 +278,30 @@ export function OwnerDashboard(): React.JSX.Element {
         ) : view === 'activity' ? (
           <RecentActivityScreen
             onSelectJob={() => {
-              studio.setActiveView('freelance');
-              go('freelance');
+              studio.setActiveView('deliverables');
+              go('deliverables');
             }}
           />
         ) : view === 'uploads' ? (
           <UploadsScreen transfers={transfers} loading={loading} error={error} drive={drive}
             onOpen={setOpenId} onSettings={() => go('settings')} />
-        ) : view === 'freelance' ? (
-          // All three bring their own Tailwind spacing rather than .screen, so the
-          // scroller belongs out here around whichever one is showing — a studio
-          // or editor page runs past the window just as readily as the board.
+        ) : view === 'deliverables' ? (
           <div className="board-area">
-            {studio.activeView === 'freelanceStudio' && studio.selectedFreelanceClientId ? (
-              <FreelanceStudioView />
-            ) : studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
+            {studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (
               <FreelanceEditorView />
             ) : (
-              <FreelanceDepartmentView
+              <DeliverablesScreen
                 onUploadForDeliverable={async target => {
                   if (!drive?.connected) {
                     setPendingScanTarget(target);
                     setShowDriveModal(true);
                     return;
                   }
-                  // The same scan the deliverables screen starts, reached from the
-                  // row on the board instead of from a screen of its own.
                   const options = {
                     excludedBillingFolders: studio.studioSettings?.uploader?.excludedBillingFolders ?? ['Proxies', 'Proxy'],
                     countPhotoPairsOnce: studio.studioSettings?.uploader?.countPhotoPairsOnce ?? true,
                   };
                   opened(await window.api.scan(options, target));
-                }}
-                onViewTransfer={(transferId) => {
-                  setOpenId(transferId);
-                  setView('uploads');
                 }}
                 onGoToQueue={() => {
                   go('uploads');
@@ -341,14 +329,6 @@ export function OwnerDashboard(): React.JSX.Element {
                 studio.setSelectedFreelanceEditorId(id);
                 studio.setActiveView('freelanceEditor');
               }} />
-            )}
-          </div>
-        ) : view === 'clients' || view === 'partners' ? (
-          <div className="board-area">
-            {studio.activeView === 'freelanceStudio' && studio.selectedFreelanceClientId ? (
-              <FreelanceStudioView />
-            ) : (
-              <PostProductionClientsScreen />
             )}
           </div>
         ) : view === 'utilities' ? (

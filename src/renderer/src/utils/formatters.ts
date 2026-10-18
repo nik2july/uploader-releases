@@ -679,12 +679,84 @@ export function isClientDeliverablesCompleted(client: Client): boolean {
   return client.deliverables.every(d => d.status === 'delivered');
 }
 
+export interface ClientEventsStatus {
+  hasEvents: boolean;
+  allEventsPassed: boolean;
+  anyEventPassed: boolean;
+  earliestDate?: string;
+  latestDate?: string;
+  eventCount: number;
+  events: ProjectEvent[];
+}
+
 /**
- * Checks if a client's deliverables are eligible to appear in the Post-Production panel.
+ * Resolves all scheduled project events linked to a client.
+ */
+export function getClientEvents(client: Client, projects: ProjectEvent[] = []): ProjectEvent[] {
+  if (!client || !projects || projects.length === 0) return [];
+  const cName = (client.name || '').trim().toLowerCase();
+  const cCouple = (client.couple || '').trim().toLowerCase();
+  const cId = client.id !== undefined ? String(client.id) : '';
+
+  return projects.filter(project => {
+    if (cId && project.clientId !== undefined && String(project.clientId) === cId) return true;
+    const pCouple = (project.couple || '').trim().toLowerCase();
+    if (cCouple && pCouple && (pCouple === cCouple || pCouple.includes(cCouple) || cCouple.includes(pCouple))) return true;
+    if (cName && pCouple && (pCouple === cName || pCouple.includes(cName) || cName.includes(pCouple))) return true;
+    if (client.brideName && client.groomName) {
+      const b = client.brideName.toLowerCase();
+      const g = client.groomName.toLowerCase();
+      if (pCouple.includes(b) && pCouple.includes(g)) return true;
+    }
+    return false;
+  });
+}
+
+/**
+ * Returns summary status of a client's events (whether dates have passed).
+ */
+export function getClientEventsStatus(
+  _client: Client,
+  clientEvents: ProjectEvent[] = [],
+  now: number = Date.now()
+): ClientEventsStatus {
+  if (!clientEvents || clientEvents.length === 0) {
+    return {
+      hasEvents: false,
+      allEventsPassed: true,
+      anyEventPassed: true,
+      eventCount: 0,
+      events: [],
+    };
+  }
+
+  const todayStr = new Date(now).toISOString().slice(0, 10);
+  const sorted = [...clientEvents].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const passedEvents = sorted.filter(e => {
+    if (isEventEnded(e, now)) return true;
+    if (e.date && e.date <= todayStr) return true;
+    return false;
+  });
+
+  return {
+    hasEvents: true,
+    allEventsPassed: passedEvents.length === sorted.length,
+    anyEventPassed: passedEvents.length > 0,
+    earliestDate: sorted[0]?.date,
+    latestDate: sorted[sorted.length - 1]?.date,
+    eventCount: sorted.length,
+    events: sorted,
+  };
+}
+
+/**
+ * Checks if a client's deliverables are eligible to appear in the Deliverables panel:
  * - Excludes active inquiries, new leads, or lost clients.
- * - If client has shoot events, checks whether any shoot event has already occurred (past or today).
- *   Clients whose events are all in the future are excluded because their footage/data has not been created yet.
- * - If a client already has raw footage linked/uploaded on any deliverable, they are considered eligible.
+ * - Enforces that deliverables are ONLY shown when their shoot event dates have passed.
+ * - If client has shoot events, at least one event date must have passed (<= today).
+ *   If all events are in the future, the shoot has not happened yet, so deliverables are strictly excluded.
+ * - If client has no scheduled events in projects (e.g. post-production only or direct booking),
+ *   they are eligible if client status is 'booked', 'shoot done', or 'completed'.
  */
 export function isClientPostProductionEligible(
   client: Client,
@@ -692,32 +764,27 @@ export function isClientPostProductionEligible(
   now: number = Date.now()
 ): boolean {
   const s = (client.status || '').toLowerCase();
-  if (s === 'new_enquiry' || s === 'new lead' || s === 'lost') return false;
+  if (s === 'new_enquiry' || s === 'new lead' || s === 'lost' || s === 'inquiry') return false;
 
-  // If client already has raw rushes data linked or uploaded on any deliverable, they are eligible
-  const hasRawData = (client.deliverables || []).some(
-    d => Boolean(d.rawDataLink) || d.rawDataSource === 'hard_drive' || Object.keys(d.desktopTransfers || {}).length > 0
-  );
-  if (hasRawData) return true;
+  const todayStr = new Date(now).toISOString().slice(0, 10);
 
-  // If client status is marked 'shoot done' or 'completed', shoot is definitely done
-  if (s === 'shoot done' || s === 'completed') return true;
-
-  // If client has scheduled shoot events, verify that at least one event has occurred
+  // If client has scheduled shoot events, strictly verify that their event date has passed
   if (clientEvents && clientEvents.length > 0) {
-    const todayStr = new Date(now).toISOString().slice(0, 10);
     const hasPastOrTodayEvent = clientEvents.some(event => {
       if (isEventEnded(event, now)) return true;
       if (event.date && event.date <= todayStr) return true;
       return false;
     });
-    // If all events are in the future, data cannot exist yet
+
+    // If all events are in the future, data/footage cannot exist yet -> DO NOT SHOW
     if (!hasPastOrTodayEvent) {
       return false;
     }
+    return true;
   }
 
-  return true;
+  // If client has no scheduled events in projects (e.g. post-production only or direct booking)
+  return s === 'booked' || s === 'shoot done' || s === 'completed';
 }
 
 /**
