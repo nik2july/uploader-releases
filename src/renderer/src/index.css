@@ -1,0 +1,216 @@
+@import "tailwindcss";
+@source "../index.html";
+@source "./**/*.{js,ts,jsx,tsx}";
+@source "../../**/*.{js,ts,jsx,tsx}";
+
+/* ------------------------------------------------------------- */
+/* BAAWARAY FILMS AUTHENTIC BRAND FONTS                          */
+/* ------------------------------------------------------------- */
+@font-face {
+  font-family: 'TAN Meringue';
+  src: url('./fonts/TAN-Meringue.woff2') format('woff2'),
+       url('/fonts/TAN-Meringue.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TAN Aegean';
+  src: url('./fonts/TAN-Aegean.woff2') format('woff2'),
+       url('/fonts/TAN-Aegean.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Editors Note';
+  src: url('./fonts/editors-note/EditorsNote-Regular.otf') format('opentype'),
+       url('/fonts/editors-note/EditorsNote-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Editors Note';
+  src: url('./fonts/editors-note/EditorsNote-Bold.otf') format('opentype'),
+       url('/fonts/editors-note/EditorsNote-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Editors Note';
+  src: url('./fonts/editors-note/EditorsNote-Italic.otf') format('opentype'),
+       url('/fonts/editors-note/EditorsNote-Italic.otf') format('opentype');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/satoshi/Satoshi-Regular.woff2') format('woff2'),
+       url('/fonts/satoshi/Satoshi-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/satoshi/Satoshi-Medium.woff2') format('woff2'),
+       url('/fonts/satoshi/Satoshi-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ------------------------------------------------------------- */
+/* TAILWIND V4 BRAND THEME DEFINITIONS                           */
+/* ------------------------------------------------------------- */
+@theme {
+  /* Authentic Brand Color Palette */
+  --color-sindoor: #9B2226;
+  --color-sindoor-light: #B82B30;
+  --color-sindoor-dark: #7A1A1D;
+  --color-marigold: #E8A317;
+  --color-marigold-light: #F4BA38;
+  --color-marigold-dark: #C8860B;
+  --color-mehendi: #4A6741;
+  --color-mehendi-light: #5D8052;
+  --color-obsidian: #0D0C0A;
+  --color-ink: #1A1814;
+  --color-surface-elevated: #F7F5F0;
+  --color-border-dark: #E5DFD7;
+  --color-paper: #FBFAF7;
+  --color-cream: #F3EFEA;
+  --color-rule: #D6D0C6;
+  --color-muted: #6B655C;
+  --color-subtle: #8C857B;
+
+  /* Authentic Brand Typography */
+  --font-serif: "Editors Note", "TAN Meringue", Georgia, serif;
+  --font-sans: "Satoshi", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "TAN Meringue", "Editors Note", Georgia, serif;
+  --font-wordmark: "TAN Meringue", "Editors Note", Georgia, serif;
+}
+
+:root {
+  --sindoor: #9B2226;
+  --sindoor-light: #B82B30;
+  --sindoor-dark: #7A1A1D;
+  --marigold: #E8A317;
+  --marigold-light: #F4B942;
+  --marigold-dark: #C8860B;
+  --mehendi: #4A6741;
+  --obsidian: #0D0C0A;
+  --ink: #1A1814;
+  --paper: #FBFAF7;
+  --cream: #F3EFEA;
+  --surface: #FFFFFF;
+  --surface-elevated: #F7F5F0;
+  --surface-card: #FFFFFF;
+  --border: #E5DFD7;
+  --border-light: #D6D0C6;
+  --muted: #6B655C;
+  --subtle: #8C857B;
+  --success: #4A6741;
+  --font-serif: "Editors Note", "TAN Meringue", Georgia, serif;
+  --font-display: "TAN Meringue", "Editors Note", Georgia, serif;
+  --font-sans: "Satoshi", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  font-family: "Satoshi", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--paper);
+  color: var(--ink);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  letter-spacing: -0.01em;
+  user-select: none;
+}
+
+::selection {
+  background-color: #9B2226;
+  color: #FBFAF7;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Editors Note", "TAN Meringue", Georgia, serif;
+  color: #1A1814;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #D6D0C6;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #8C857B;
+}
+
+/* App Header Drag Region for macOS Frameless Window */
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Buttons & Inputs */
+input, select, textarea {
+  user-select: text;
+  font-family: inherit;
+}
+
+/* Custom Card & Glass effects for Light Theme */
+.panel-card {
+  background: #FFFFFF;
+  border: 1px solid #E5DFD7;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(26, 24, 20, 0.04);
+}
+
+.panel-card:hover {
+  border-color: #D6D0C6;
+}
+
+.gold-gradient-text {
+  background: linear-gradient(135deg, #E8A317 0%, #C8860B 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.sindoor-gradient-btn {
+  background: linear-gradient(135deg, #B82B30 0%, #9B2226 100%);
+  color: #FBFAF7;
+  transition: all 0.2s ease;
+}
+
+.sindoor-gradient-btn:hover {
+  background: linear-gradient(135deg, #C5353A 0%, #A82529 100%);
+  box-shadow: 0 4px 14px rgba(155, 34, 38, 0.25);
+}
+
+.gold-outline-btn {
+  border: 1px solid var(--marigold);
+  color: var(--marigold-dark);
+  transition: all 0.2s ease;
+}
+
+.gold-outline-btn:hover {
+  background: rgba(232, 163, 23, 0.1);
+}

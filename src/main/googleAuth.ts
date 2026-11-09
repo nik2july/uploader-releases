@@ -53,77 +53,60 @@ export class GoogleAuth {
   }
 
   async load(owner = 'local', idToken = ''): Promise<void> {
-    this.clear();
     this.owner = owner || 'local';
     const generation = this.generation;
-    this.filename = this.owner === 'local'
-      ? join(this.directory, 'drive-personal.bin')
-      : join(this.directory, 'drive-' + createHash('sha256').update(this.owner).digest('hex') + '.bin');
+    const sharedFile = join(this.directory, 'drive-personal.bin');
+    const legacyFile = join(this.directory, 'drive-' + createHash('sha256').update(this.owner).digest('hex') + '.bin');
+    this.filename = sharedFile;
 
     let loaded = false;
-    try {
-      const bytes = await fs.readFile(this.filename);
-      if (generation !== this.generation) return;
-      const data = JSON.parse(this.native.storage.decryptString(bytes));
-      if (data?.refreshToken) {
-        this.credentials = {
-          clientId: data.clientId || DEFAULT_CLIENT_ID,
-          refreshToken: data.refreshToken,
-          refreshTicket: data.refreshTicket,
-          accessToken: data.accessToken,
-          expiresAt: data.expiresAt,
-          email: data.email,
-          displayName: data.displayName,
-          photoLink: data.photoLink,
-          quota: data.quota,
-          targetFolderId: data.targetFolderId,
-          targetFolderName: data.targetFolderName,
-        };
-        loaded = true;
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.warn('[GoogleAuth] Could not unlock saved Drive credentials:', error);
+    for (const candidate of [sharedFile, legacyFile]) {
+      try {
+        const bytes = await fs.readFile(candidate);
+        if (generation !== this.generation) return;
+        const data = JSON.parse(this.native.storage.decryptString(bytes));
+        if (data?.refreshToken) {
+          this.credentials = {
+            clientId: data.clientId || DEFAULT_CLIENT_ID,
+            refreshToken: data.refreshToken,
+            refreshTicket: data.refreshTicket,
+            accessToken: data.accessToken,
+            expiresAt: data.expiresAt,
+            email: data.email,
+            displayName: data.displayName,
+            photoLink: data.photoLink,
+            quota: data.quota,
+            targetFolderId: data.targetFolderId,
+            targetFolderName: data.targetFolderName,
+          };
+          loaded = true;
+          if (candidate !== sharedFile) {
+            await this.save().catch(() => {});
+          }
+          break;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.warn('[GoogleAuth] Could not unlock saved Drive credentials:', error);
+        }
       }
     }
-
     if (!loaded) {
       this.credentials = { clientId: DEFAULT_CLIENT_ID };
     }
     await this.refreshConfiguration();
     if (generation !== this.generation) return;
-
-    if (
-      this.configuration?.configured &&
-      this.credentials.refreshToken &&
-      !this.credentials.refreshTicket &&
-      this.credentials.clientId === this.configuration.clientId &&
-      idToken
-    ) {
-      try {
-        await this.acceptGrant(
-          await this.broker.grant({ op: 'migrate', refreshToken: this.credentials.refreshToken }, owner, idToken),
-          generation
-        );
-      } catch (error) {
-        if (generation === this.generation) {
-          this.configurationError = error instanceof Error ? error.message : 'Reconnect Google Drive to complete the update.';
-        }
-      }
-    }
-
-    if (this.credentials.refreshToken && this.credentials.email) {
+    if (this.credentials.refreshToken) {
       void this.fetchAboutAndQuota().catch(() => {});
     }
     void idToken;
   }
 
   clear(): void {
-    this.generation++;
+    // Keep personal Google Drive session active when switching between guest/studio tabs;
+    // explicit disconnect() clears the Google Drive account when requested by the user.
     this.cancelConnect?.();
     this.cancelConnect = undefined;
-    this.credentials = { clientId: DEFAULT_CLIENT_ID };
-    this.refreshing = undefined;
   }
 
   status(): DriveStatus {
@@ -310,27 +293,31 @@ export class GoogleAuth {
     const generation = this.generation;
     const owner = this.owner;
     const refreshing = (async () => {
-      if (this.credentials.refreshTicket) {
-        const grant = await this.broker.grant(
-          { op: 'refresh', refreshToken: this.credentials.refreshToken, refreshTicket: this.credentials.refreshTicket },
-          owner
-        );
-        await this.acceptGrant(grant, generation);
-        return grant.accessToken;
+      try {
+        const direct = await this.directTokenExchange({
+          grant_type: 'refresh_token',
+          refresh_token: this.credentials.refreshToken!,
+        });
+        this.credentials = {
+          ...this.credentials,
+          accessToken: direct.accessToken,
+          refreshToken: direct.refreshToken,
+          expiresAt: direct.expiresAt,
+        };
+        await this.save().catch(() => {});
+        this.configurationError = '';
+        return direct.accessToken;
+      } catch (directErr) {
+        if (this.credentials.refreshTicket) {
+          const grant = await this.broker.grant(
+            { op: 'refresh', refreshToken: this.credentials.refreshToken, refreshTicket: this.credentials.refreshTicket },
+            owner
+          );
+          await this.acceptGrant(grant, generation);
+          return grant.accessToken;
+        }
+        throw directErr;
       }
-      const direct = await this.directTokenExchange({
-        grant_type: 'refresh_token',
-        refresh_token: this.credentials.refreshToken!,
-      });
-      this.credentials = {
-        ...this.credentials,
-        accessToken: direct.accessToken,
-        refreshToken: direct.refreshToken,
-        expiresAt: direct.expiresAt,
-      };
-      await this.save().catch(() => {});
-      this.configurationError = '';
-      return direct.accessToken;
     })();
     this.refreshing = refreshing;
     try {

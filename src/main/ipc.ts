@@ -1,835 +1,482 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, shell, net, clipboard } from 'electron';
-import type { IpcMainInvokeEvent } from 'electron';
+import { dialog, ipcMain } from 'electron';
+import type { BrowserWindow } from 'electron';
+import path from 'node:path';
 import fs from 'node:fs/promises';
-import { join, basename, dirname, resolve } from 'node:path';
-import { execSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
-import { scanDirectory, scanOfflineDirectory } from './scanner';
-import { TransferStore } from './store';
-import { GoogleAuth } from './googleAuth';
-import { DriveClient } from './drive';
-import { TransferEngine } from './transferEngine';
-import { checkForUpdate, downloadUpdate, installUpdate } from './updater';
-import { log, recentLog } from './log';
-import { dropbox } from './dropboxClient';
-import { DriveDownloader } from './driveDownloader';
-import { setupUtilityHandlers } from './utilities/ipc';
-import { GalleryUploaderEngine } from './galleryUploader';
-import type { InvoiceSnapshot, ScanOptions, UpdateInfo, WorkTarget } from '../shared/contracts';
-import firebaseConfig from '../renderer/src/lib/firebase-applet-config.json';
+import { existsSync } from 'node:fs';
+import { app } from 'electron';
+import { LutConverterEngine } from './lutConverter';
+import { createProjectFolderStructure, revealFolderInFinder } from './folderStructure';
+import { scanFootageFolder, getFootageFolderStats, autoDetectTranscodedFolder } from './folderScanner';
+import { whatsappService } from './whatsappNotifier';
+import { GDriveSyncManager } from './gdriveSync';
+import { ClipDeliveryEngine } from './clipDelivery';
+import { dropboxManager } from './dropboxManager';
+import { RevisionsManager } from './revisionsManager';
+import { EditorManager } from './editorManager';
+import { StudioDataService } from './studioDataService';
+import { resolveSmartProjectContext } from '../shared/smartPathResolver';
+import { transferManager } from './transferManager';
+import { b2Client } from './b2Client';
+import { clipDeliveryEngineRef, dropboxManagerRef, lutEngineRef } from './engineReferences';
+import type {
+  ActiveStudioProject,
+  ClipDeliverySettings,
+  DataHandoffRecord,
+  DropboxDeliverableConfig,
+  DropboxRawClipsConfig,
+  EventFolderPlan,
+  GDriveSyncConfig,
+  LutConversionOptions,
+  ResolvedProjectContext
+} from '../shared/contracts';
 
-export function allowedExternal(url: string): boolean {
-  try {
-    const u = new URL(url);
-    if (u.protocol !== 'https:' || u.username || u.password) return false;
-    const h = u.hostname.toLowerCase();
-    const isDomain = (d: string): boolean => h === d || h.endsWith('.' + d);
-    return (
-      isDomain('baawaray.com') ||
-      isDomain('run.app') ||
-      isDomain('web.app') ||
-      isDomain('google.com') ||
-      isDomain('googleusercontent.com') ||
-      isDomain('goo.gl') ||
-      isDomain('dropbox.com') ||
-      isDomain('wetransfer.com') ||
-      isDomain('vimeo.com') ||
-      isDomain('frame.io') ||
-      isDomain('box.com') ||
-      isDomain('youtube.com') ||
-      isDomain('whatsapp.com') ||
-      isDomain('github.com') ||
-      isDomain('githubusercontent.com') ||
-      h === 'wa.me' ||
-      h === 'we.tl' ||
-      h === 'youtu.be'
-    );
-  } catch {
-    return false;
-  }
-}
+export function registerIpcHandlers(mainWindow: BrowserWindow): void {
+  const userDataDir = app.getPath('userData');
+  const resourcesDir = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), 'resources');
+  const b2ConfigFile = path.join(userDataDir, 'b2_config.json');
 
-export async function setupIpcHandlers(): Promise<() => void> {
-  const directory = join(app.getPath('userData'), 'transfers');
-  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
-  const store = new TransferStore(join(directory, 'queue.sqlite'));
-  const google = new GoogleAuth(directory);
-  let owner = 'local';
-  let isStudioSignedIn = false;
-  let sessionIsOwner = false;
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
-
-  /**
-   * A 1-2 TB folder outlives any amount of time the Mac is left alone, and macOS
-   * will suspend a backgrounded app long before that. So the queue holds a power
-   * blocker for exactly as long as something is actually moving, and drops it the
-   * moment nothing is — a transfer left paused overnight must not keep the machine
-   * from sleeping. 'prevent-app-suspension' is the quiet default: it stops App Nap
-   * and system sleep without keeping the screen lit. The studio can opt into
-   * 'prevent-display-sleep' when the Mac is set to sleep aggressively.
-   */
-  let keepAwake = false;
-  let blocker: number | null = null;
-  let holding: 'prevent-app-suspension' | 'prevent-display-sleep' | null = null;
-  const evaluatePower = (): void => {
-    const busy = store.all().some(job => ['queued', 'uploading', 'verifying'].includes(job.status));
-    const wanted = busy ? (keepAwake ? 'prevent-display-sleep' : 'prevent-app-suspension') : null;
-    if (wanted === holding) return;
-    if (blocker !== null && powerSaveBlocker.isStarted(blocker)) powerSaveBlocker.stop(blocker);
-    blocker = null; holding = wanted;
-    if (wanted) blocker = powerSaveBlocker.start(wanted);
-  };
-
-  const changed = (): void => {
-    evaluatePower();
-    if (noticeTimer) return;
-    noticeTimer = setTimeout(() => { noticeTimer = undefined; for (const window of BrowserWindow.getAllWindows()) window.webContents.send('transfers:changed'); }, 150);
-  };
-  const drive = new DriveClient(force => google.token(force));
-  const downloader = new DriveDownloader(google);
-  const engine = new TransferEngine(
-    store,
-    drive,
-    () => (google.status().connected ? google.status().email : undefined),
-    changed,
-    job => {
-      void (async () => {
-        try {
-          if (job.folderId && !job.shared && job.target?.kind !== 'team') {
-            await drive.share(job.folderId, 'anyone', '');
-            store.patch(job.id, { shared: true, sharing: 'anyone' });
-            changed();
-          }
-        } catch {
-          /* the studio can still share by hand from the job */
+  // Load B2 config if available
+  (async () => {
+    try {
+      if (existsSync(b2ConfigFile)) {
+        const raw = await fs.readFile(b2ConfigFile, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed.keyId && parsed.applicationKey) {
+          b2Client.configure(parsed);
         }
-      })();
-      if (Notification.isSupported()) {
-        new Notification({
-          title: 'Upload verified',
-          body: `${job.target?.title || job.rootName} is ready to send.`
-        }).show();
       }
+    } catch (e) {
+      console.warn('[B2] Failed to read cached b2_config.json:', e);
     }
+  })();
+
+  transferManager.setMainWindow(mainWindow);
+
+  const lutEngine = new LutConverterEngine(progress => {
+    mainWindow.webContents.send('lut:progress', progress);
+    transferManager.syncLutConversion(progress);
+  });
+  lutEngineRef.current = lutEngine;
+
+  const gdriveSync = new GDriveSyncManager(
+    status => mainWindow.webContents.send('gdrive:status', status),
+    config => mainWindow.webContents.send('gdrive:config', config)
   );
-  await google.load('local', '').catch(() => {});
-  engine.setOwner(owner);
-  engine.setSharedDriveId(google.status().targetFolderId || '');
 
-  const scans = new Map<string, AbortController>();
-  /** Path to the unpacked update waiting to replace this app, once downloaded. */
-  let staged = '';
-  function trusted(event: IpcMainInvokeEvent): void {
-    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted IPC frame.');
-    const url = new URL(event.senderFrame.url);
-    const dev = process.env.ELECTRON_RENDERER_URL;
-    const ok = !app.isPackaged && dev ? url.origin === new URL(dev).origin
-      : url.protocol === 'file:' && resolve(fileURLToPath(url)) === resolve(__dirname, '../renderer/index.html');
-    if (!ok) throw new Error('Untrusted IPC origin.');
-  }
-  function handle(channel: string, fn: (...args: any[]) => unknown, requiresOwner = false): void {
-    ipcMain.handle(channel, (event, ...args) => { trusted(event); if (requiresOwner && (!owner || !sessionIsOwner)) throw new Error('Sign in with the studio owner account first.'); return fn(...args); });
-  }
-  function owned(id: string): ReturnType<TransferStore['get']> {
-    if (typeof id !== 'string') throw new Error('Invalid transfer ID.');
-    return store.get(id);
-  }
-  function invoiceValid(invoice: InvoiceSnapshot): void {
-    if (!invoice || !invoice.id || !['draft', 'issued'].includes(invoice.status)
-      || ![invoice.quantity, invoice.rate, invoice.subtotal, invoice.tax, invoice.total, invoice.taxPercent].every(n => Number.isFinite(n) && n >= 0)
-      || invoice.taxPercent > 100) throw new Error('Invalid invoice.');
-  }
-  let authorizationGeneration = 0;
-  const signOut = (invalidate = true): void => {
-    if (invalidate) authorizationGeneration++;
-    owner = 'local';
-    isStudioSignedIn = false;
-    sessionIsOwner = false;
-    engine.setOwner('local');
-    google.clear();
-    changed();
-  };
-  handle('studio:login', async (phone: string, password: string) => {
-    if (typeof phone !== 'string' || typeof password !== 'string' || phone.length > 40 || password.length > 256) throw new Error('Invalid login fields.');
-    console.log('[studio:login] Attempting studio login');
-    const start = Date.now();
-
-    const response = await net.fetch('https://app.baawaray.com/api/login', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, password }) });
-    console.log(`[studio:login] Got response with status ${response.status} in ${Date.now() - start}ms`);
-
-    const body = await response.json() as { ok?: boolean; accountType?: string; customToken?: string; error?: string };
-    if (!response.ok || !body.ok || !body.customToken) throw new Error(body.error || 'Studio sign-in failed.');
-    if (body.accountType !== 'owner' && body.accountType !== 'team' && body.accountType !== 'partner') throw new Error('This desktop app requires a studio, team, or partner account.');
-    return { customToken: body.customToken, accountType: body.accountType };
-  }, false);
-  const authCache = new Map<string, { isOwner: boolean; timestamp: number }>();
-  handle('studio:authorize', async (idToken: string) => {
-    const attempt = ++authorizationGeneration;
-    if (typeof idToken !== 'string' || idToken.length > 20000) throw new Error('Invalid studio session.');
-
-    let subject = '';
-    try {
-      const parts = idToken.split('.');
-      if (parts.length >= 2) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
-        subject = payload.sub || '';
-      }
-    } catch {
-      throw new Error('Invalid studio session token format.');
-    }
-    if (!subject) throw new Error('Invalid studio session.');
-
-    const database = firebaseConfig.firestoreDatabaseId || '(default)';
-    let isOwner = false;
-    let verified = false;
-
-    try {
-      const response = await net.fetch(
-        `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/${database}/documents/studio_config/main`,
-        { headers: { Authorization: `Bearer ${idToken}` } }
-      );
-      if (response.ok) {
-        const config = (await response.json()) as { fields: { ownerUid?: { stringValue?: string } } };
-        // Firestore verified the token above; compare its subject with the protected owner record.
-        isOwner = subject === config.fields.ownerUid?.stringValue;
-        authCache.set(subject, { isOwner, timestamp: Date.now() });
-        verified = true;
-      } else if (response.status === 429) {
-        console.warn('[ipc] Firestore quota limit encountered during authorize');
-        if (authCache.has(subject)) {
-          isOwner = authCache.get(subject)!.isOwner;
-          verified = true;
-        } else if (subject === 'JMnxRLup81WXng7VPKzcL9Ms4xx2' || (subject === owner && sessionIsOwner)) {
-          isOwner = true;
-          verified = true;
-        } else {
-          isOwner = false;
-          verified = true;
-        }
-      }
-    } catch (netErr) {
-      console.warn('[ipc] Network unreachable during studio:authorize:', netErr);
-    }
-
-    if (!verified) {
-      if (authCache.has(subject)) {
-        isOwner = authCache.get(subject)!.isOwner;
-        console.log(`[ipc] Using cached authorization for ${subject} (isOwner=${isOwner})`);
-      } else if (subject === owner) {
-        isOwner = sessionIsOwner;
-        console.log(`[ipc] Preserving active session for ${subject} (isOwner=${isOwner})`);
-      } else if (subject === 'JMnxRLup81WXng7VPKzcL9Ms4xx2') {
-        isOwner = true;
-        console.log('[ipc] Fallback for primary owner UID while offline');
-      } else {
-        if (owner && subject === owner) {
-          isOwner = sessionIsOwner;
-        } else {
-          throw new Error('Cannot verify the studio session. Check your connection and sign in again.');
-        }
-      }
-    }
-
-    if (attempt !== authorizationGeneration) throw new Error('Studio session changed during sign-in.');
-    if (subject !== owner) {
-      try {
-        await google.load(subject, idToken);
-      } catch (gErr) {
-        console.warn('[ipc] Google Drive credentials load error (offline or unconfigured):', gErr);
-      }
-      if (attempt !== authorizationGeneration) throw new Error('Studio session changed during sign-in.');
-      owner = subject;
-      engine.setOwner(owner);
-      engine.setSharedDriveId(google.status().targetFolderId || '');
-    }
-    isStudioSignedIn = true;
-    sessionIsOwner = isOwner;
-    try {
-      engine.autoResumeAll();
-    } catch (err) {
-      console.warn('[ipc] Auto-resume failed on authorization:', err);
-    }
-    return { uid: owner, isOwner };
-  }, false);
-  handle('studio:signOut', () => signOut(), false);
-  handle('transfers:list', () => store.all(), false);
-  handle('transfers:autoResume', () => engine.autoResumeAll(), false);
-  handle('transfers:inspect', (id: string) => { owned(id); return { files: store.problems(id) }; }, false);
-  handle('scanner:start', async (options: ScanOptions, target?: WorkTarget) => {
-    if (scans.size) throw new Error('Finish or cancel the current scan first.');
-    if (!options || !Array.isArray(options.excludedBillingFolders) || options.excludedBillingFolders.length > 50
-      || options.excludedBillingFolders.some(s => typeof s !== 'string' || s.length > 200)) throw new Error('Invalid scan options.');
-    const result = await dialog.showOpenDialog({ title: 'Choose the project folder to upload', properties: ['openDirectory'] });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const rootPath = result.filePaths[0]; const id = randomUUID(); const now = new Date().toISOString();
-    store.save({ id, ownerUid: owner || 'local', rootPath, rootName: basename(rootPath), status: 'scanning', options, target,
-      createdAt: now, updatedAt: now, completedFiles: 0, uploadedBytes: 0 });
-    const controller = new AbortController(); scans.set(id, controller); changed();
-    void scanDirectory(store, id, controller.signal, changed).catch(error => {
-      store.patch(id, { status: 'needs_attention', error: controller.signal.aborted ? 'Scan cancelled. Select the folder again when ready.' : String(error.message || error) });
-    }).finally(() => { scans.delete(id); changed(); });
-    return id;
-  }, false);
-  handle('scanner:startFiles', async (options: ScanOptions, target?: WorkTarget) => {
-    if (scans.size) throw new Error('Finish or cancel the current scan first.');
-    if (!options || !Array.isArray(options.excludedBillingFolders) || options.excludedBillingFolders.length > 50
-      || options.excludedBillingFolders.some(s => typeof s !== 'string' || s.length > 200)) throw new Error('Invalid scan options.');
-    const result = await dialog.showOpenDialog({
-      title: 'Choose files to upload',
-      properties: ['openFile', 'multiSelections']
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    const rootPath = dirname(result.filePaths[0]);
-    if (result.filePaths.some(filePath => dirname(filePath) !== rootPath)) {
-      throw new Error('Choose files from one folder at a time so their original names and structure stay unambiguous.');
-    }
-    const sourceFiles = [...new Set(result.filePaths.map(filePath => basename(filePath)))];
-    const id = randomUUID(); const now = new Date().toISOString();
-    store.save({ id, ownerUid: owner || 'local', rootPath, rootName: sourceFiles.length === 1 ? sourceFiles[0] : `${sourceFiles.length} selected files`,
-      sourceFiles, status: 'scanning', options, target, createdAt: now, updatedAt: now, completedFiles: 0, uploadedBytes: 0 });
-    const controller = new AbortController(); scans.set(id, controller); changed();
-    void scanDirectory(store, id, controller.signal, changed).catch(error => {
-      store.patch(id, { status: 'needs_attention', error: controller.signal.aborted ? 'Scan cancelled. Select the files again when ready.' : String(error.message || error) });
-    }).finally(() => { scans.delete(id); changed(); });
-    return id;
-  }, false);
-  handle('scanner:scanOfflineFolder', async (target?: WorkTarget) => {
-    const result = await dialog.showOpenDialog({
-      title: 'Choose raw footage / photo folder on hard drive',
-      properties: ['openDirectory'],
-      buttonLabel: 'Select & Scan Folder'
-    });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const rootPath = result.filePaths[0];
-    return await scanOfflineDirectory(rootPath, target?.serviceType);
-  }, false);
-  handle('scanner:cancel', (id: string) => { owned(id); scans.get(id)?.abort(); }, false);
-  handle('drive:status', () => google.status(), false);
-  handle('drive:configuration', () => google.refreshConfiguration(), false);
-  handle('drive:connect', async (idToken?: string) => {
-    engine.pauseAll();
-    try {
-      const status = await google.connect(idToken);
-      engine.setSharedDriveId(status.targetFolderId || '');
-      changed();
-      return status;
-    }
-    catch (error) { log('drive:connect failed', error); throw error; }
-  }, false);
-  handle('drive:disconnect', async () => {
-    engine.pauseAll();
-    engine.setSharedDriveId('');
-    const status = await google.disconnect();
-    changed();
-    return status;
-  }, false);
-  handle('drive:quota', async () => {
-    const quota = await google.fetchAboutAndQuota();
-    changed();
-    return quota;
-  }, false);
-  handle('drive:listFiles', async (parentId?: string, query?: string) => {
-    return await drive.listFiles(parentId || 'root', query || '');
-  }, false);
-  handle('drive:createFolder', async (name: string, parentId?: string) => {
-    return await drive.createFolder(name, parentId || 'root');
-  }, false);
-  handle('drive:renameFile', async (id: string, newName: string) => {
-    return await drive.renameFile(id, newName);
-  }, false);
-  handle('drive:trashFile', async (id: string, permanent?: boolean) => {
-    await drive.trashFile(id, Boolean(permanent));
-    void google.fetchAboutAndQuota().then(() => changed()).catch(() => {});
-  }, false);
-  handle('drive:emptyTrash', async () => {
-    await drive.emptyTrash();
-    await google.fetchAboutAndQuota().catch(() => {});
-    changed();
-  }, false);
-  handle('drive:shareItem', async (id: string, mode: 'anyone' | 'restricted', email?: string) => {
-    return await drive.shareItem(id, mode, email || '');
-  }, false);
-  handle('drive:setTargetFolder', async (folderId: string, folderName?: string) => {
-    const cleanId = typeof folderId === 'string' ? folderId.trim() : '';
-    const status = await google.setTargetFolder(cleanId, folderName);
-    engine.setSharedDriveId(cleanId);
-    changed();
-    return status;
-  }, false);
-  // Shared studio preference, held by the queue because only the queue can act on it.
-  handle('transfers:destination', (_destination: string) => {
-    engine.setDestination('drive');
-  }, false);
-  handle('transfers:sharedDriveId', (driveId: string) => {
-    const targetFolder = google.status().targetFolderId;
-    if (targetFolder) {
-      engine.setSharedDriveId(targetFolder);
-    } else {
-      engine.setSharedDriveId(typeof driveId === 'string' ? driveId : '');
-    }
-  }, false);
-  handle('transfers:enqueue', (id: string, target: WorkTarget, invoice?: InvoiceSnapshot) => {
-    const job = owned(id);
-    if (!['ready', 'paused'].includes(job.status) || !job.scan || job.scan.readErrors) throw new Error('A complete scan is required.');
-    if (!target || !['freelance', 'deliverable', 'team'].includes(target.kind) || !['raw', 'delivery'].includes(target.purpose)
-      || !target.id || !target.title || (target.kind === 'deliverable' && !target.clientId)) throw new Error('Select the work this folder belongs to.');
-    if (job.driveAccount && job.target && (job.target.kind !== target.kind || job.target.id !== target.id || job.target.clientId !== target.clientId || job.target.purpose !== target.purpose)) throw new Error('A started transfer cannot be reassigned to another job.');
-    if (invoice) invoiceValid(invoice);
-    store.patch(id, { target, invoice: job.invoice?.status === 'issued' ? job.invoice : invoice ?? job.invoice }); engine.resume(id);
+  const clipDelivery = new ClipDeliveryEngine(state => {
+    mainWindow.webContents.send('clips:state', state);
+    transferManager.syncClipDelivery(state);
   });
-  /**
-   * Take a transfer out of the queue.
-   *
-   * `keepUploaded` is the difference between abandoning a folder and cleaning
-   * it up: kept, whatever already reached the cloud stays where it is and its
-   * link is returned so the studio can still reach it; otherwise the partial
-   * folder is deleted first, and a failure to delete stops the removal rather
-   * than leaving bytes behind that nothing on this Mac remembers.
-   */
-  handle('transfers:remove', async (id: string, keepUploaded = true) => {
-    const job = owned(id);
-    engine.pause(id);
-    const partial = job.link && job.uploadedBytes > 0 ? job.link : undefined;
-    if (!keepUploaded && job.folderId) {
-      await drive.delete(job.folderId);
-    }
-    store.remove(id);
-    changed();
-    return { removed: true, keptLink: keepUploaded ? partial : undefined };
-  });
-  handle('transfers:pause', (id: string) => { owned(id); engine.pause(id); });
-  handle('transfers:resume', (id: string) => { owned(id); engine.resume(id); });
-  handle('transfers:relocate', async (id: string) => {
-    const job = owned(id); engine.pause(id);
-    const defaultSearchDir = job.rootPath ? dirname(job.rootPath) : undefined;
-    const result = await dialog.showOpenDialog({
-      title: `Locate the original ${job.rootName} folder`,
-      defaultPath: defaultSearchDir,
-      properties: ['openDirectory']
-    });
-    if (!result.canceled && result.filePaths[0]) {
-      let chosenPath = result.filePaths[0];
-      // If user selected parent directory containing job.rootName (e.g. project folder instead of "Clips")
-      if (basename(chosenPath).toLowerCase() !== job.rootName.toLowerCase()) {
-        const potentialSub = join(chosenPath, job.rootName);
-        try {
-          const s = await fs.stat(potentialSub);
-          if (s.isDirectory()) chosenPath = potentialSub;
-        } catch { /* ignore */ }
-      }
+  clipDeliveryEngineRef.current = clipDelivery;
 
-      // Verify that at least one pending or verified file exists in the chosen directory
-      const pending = store.next(id);
-      if (pending) {
-        const expectedFile = join(chosenPath, pending.relativePath);
-        try {
-          await fs.stat(expectedFile);
-        } catch {
-          throw new Error(
-            `The selected folder does not contain files for "${job.rootName}" (could not find "${pending.relativePath}"). Please select the "${job.rootName}" folder directly.`
-          );
-        }
-      }
+  const revisionsManager = new RevisionsManager(userDataDir);
+  const editorManager = new EditorManager(userDataDir);
+  StudioDataService.init(userDataDir);
+  void dropboxManager.init(userDataDir);
+  dropboxManagerRef.current = dropboxManager;
 
-      store.patch(id, { rootPath: chosenPath, status: 'paused', error: undefined });
-      changed();
-    }
-  });
-  handle('transfers:rescan', async (id: string) => {
-    const job = owned(id);
-    if (job.expiresAt || job.trashedAt) throw new Error('Remove this package’s expiry before adding files, or create a new upload package.');
-    if (scans.size) throw new Error('Finish or cancel the current scan first.');
-    if (['scanning', 'queued', 'uploading', 'verifying'].includes(job.status)) throw new Error('Wait for this transfer to stop before adding files.');
-    const result = await dialog.showOpenDialog({ title: `Add files to ${job.target?.title || job.rootName}`, defaultPath: job.rootPath, properties: ['openDirectory'] });
-    if (result.canceled || !result.filePaths[0]) return false;
-    // Files already verified keep their rows and are not sent again; the fresh
-    // summary counts the folder as it stands now, so reconciliation still holds.
-    store.patch(id, { rootPath: result.filePaths[0], sourceFiles: undefined, status: 'scanning', error: undefined });
-    const controller = new AbortController(); scans.set(id, controller); changed();
-    void scanDirectory(store, id, controller.signal, changed).catch(error => {
-      store.patch(id, { status: 'needs_attention', error: controller.signal.aborted ? 'Scan cancelled.' : String(error.message || error) });
-    }).finally(() => { scans.delete(id); changed(); });
-    return true;
-  });
-  handle('transfers:skipUnreadable', (id: string) => {
-    const job = owned(id);
-    if (!job.scan || !job.scan.unreadableFiles || job.scan.unreadableFiles.length === 0) {
-      return job;
-    }
-    const unreadablePaths = job.scan.unreadableFiles.map(f => f.path);
-    const filesToRemove = store.getFilesByPaths(id, unreadablePaths);
-    const totalRemovedBytes = filesToRemove.reduce((sum, f) => sum + (f.size || 0), 0);
-    const removedCount = filesToRemove.length || unreadablePaths.length;
-
-    let removedVideos = 0;
-    let removedPhotos = 0;
-    let removedBillablePhotos = 0;
-
-    for (const f of filesToRemove) {
-      if (f.kind === 'video') removedVideos++;
-      if (f.kind === 'photo') {
-        removedPhotos++;
-        if (f.billingIncluded) removedBillablePhotos++;
-      }
-    }
-
-    if (['uploading', 'verifying'].includes(job.status)) {
-      engine.pause(id);
-    }
-
-    store.removeFiles(id, unreadablePaths);
-
-    const updatedScan = {
-      ...job.scan,
-      fileCount: Math.max(0, (job.scan.fileCount || 0) - removedCount),
-      totalBytes: Math.max(0, (job.scan.totalBytes || 0) - totalRemovedBytes),
-      totalVideos: Math.max(0, (job.scan.totalVideos || 0) - removedVideos),
-      totalPhotos: Math.max(0, (job.scan.totalPhotos || 0) - removedPhotos),
-      billablePhotos: Math.max(0, (job.scan.billablePhotos || 0) - removedBillablePhotos),
-      unknownVideoCount: 0,
-      unreadableFiles: []
-    };
-
-    const updatedJob = store.patch(id, {
-      scan: updatedScan,
-      error: undefined
-    });
-    changed();
-    return updatedJob;
-  });
-  async function packageInfo(id: string, expiresAt?: string | null): Promise<import('../shared/contracts').PackageInfo> {
-    const job = owned(id);
-    if (job.status !== 'completed' || !job.folderId || !job.link) throw new Error('Finish upload verification before creating a package link.');
-    if (job.driveAccount !== google.status().email) throw new Error('Reconnect this transfer’s original Drive account.');
-    if (job.trashedAt && expiresAt === undefined && job.shareLink) return { shareLink: job.shareLink, expiresAt: job.expiresAt || null, expired: true, trashedAt: job.trashedAt, cleanupError: job.cleanupError || null };
-    if (job.trashedAt) throw new Error('This package is in Google Drive Trash.');
-    await drive.tagPackage(job.folderId, job.ownerUid, job.id);
-    const info = await google.package({ op: expiresAt === undefined ? 'get' : 'set', folderId: job.folderId, transferId: job.id, ...(expiresAt === undefined ? {} : { expiresAt }) });
-    store.patch(id, info); changed(); return info;
-  }
-  handle('transfers:packageInfo', (id: string) => packageInfo(id));
-  handle('transfers:setExpiry', (id: string, expiresAt: unknown) => {
-    if (expiresAt !== null && (typeof expiresAt !== 'string' || !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now())) throw new Error('Choose a future expiry date and time.');
-    return packageInfo(id, expiresAt as string | null);
-  });
-  handle('transfers:share', async (id: string, mode: 'restricted' | 'anyone', email: string) => {
-    const job = owned(id);
-    if (job.status !== 'completed' || !job.link || job.trashedAt || (job.expiresAt && Date.parse(job.expiresAt) <= Date.now())) throw new Error('This package is incomplete or expired.');
-    if (job.driveAccount !== google.status().email) throw new Error('Reconnect this transfer’s original Drive account.');
-    if (!['restricted', 'anyone'].includes(mode) || (mode === 'restricted' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) throw new Error('Enter the recipient’s Google account email.');
-    if (mode === 'anyone') {
-      const confirmation = await dialog.showMessageBox({ type: 'warning', message: 'Allow anyone with this link to view and download the entire folder?', detail: job.target?.title || job.rootName, buttons: ['Keep private', 'Allow link access'], defaultId: 0, cancelId: 0 });
-      if (confirmation.response !== 1) throw new Error('Sharing cancelled. The folder remains unchanged.');
-    }
-    const info = await packageInfo(id);
-    if (info.expired) throw new Error('This package link has expired. Change or remove its expiry before sharing.');
-    if (job.folderId) await drive.share(job.folderId, mode, email.trim());
-    store.patch(id, { shared: true, sharing: mode }); changed(); return info.shareLink;
-  });
-  handle('transfers:synced', (id: string) => { const job = owned(id); if (job.status !== 'completed') throw new Error('Upload is incomplete.'); store.patch(id, { synced: true }); changed(); });
-  handle('transfers:prepared', (id: string) => { const job = owned(id); if (job.status !== 'completed') throw new Error('Upload is incomplete.'); store.patch(id, { messagePreparedAt: new Date().toISOString() }); changed(); });
-  handle('invoice:save', (id: string, invoice: InvoiceSnapshot) => {
-    const job = owned(id); invoiceValid(invoice);
-    if (job.invoice?.status === 'issued' && JSON.stringify(job.invoice) !== JSON.stringify(invoice)) throw new Error('Issued invoices are immutable. Create a separate adjustment.');
-    store.patch(id, { invoice }); changed();
-  });
-  handle('invoice:pdf', async (bytes: Uint8Array, filename: string) => {
-    if (!(bytes instanceof Uint8Array) || bytes.length > 20 * 1024 * 1024 || Buffer.from(bytes.subarray(0, 5)).toString() !== '%PDF-') throw new Error('Invalid PDF.');
-    const result = await dialog.showSaveDialog({ defaultPath: basename(filename), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
-    if (result.canceled || !result.filePath) return false;
-    await fs.writeFile(result.filePath, bytes); return true;
-  });
-  // Neither needs a signed-in owner: one is this app's own version, the other
-  // is a public release feed. Both are useful before anyone has signed in.
-  handle('app:version', () => app.getVersion(), false);
-  handle('app:diagnostics', () => recentLog(), false);
-  handle('app:getAutoStart', () => app.getLoginItemSettings().openAtLogin, false);
-  handle('app:setAutoStart', (enable: boolean) => {
-    app.setLoginItemSettings({ openAtLogin: Boolean(enable), openAsHidden: false });
-    return app.getLoginItemSettings().openAtLogin;
-  }, false);
-  handle('log:rendererError', (message: string, stack: string) => {
-    log('renderer crash', `${String(message).slice(0, 500)}\n${String(stack).slice(0, 2000)}`);
-  }, false);
-  handle('updates:check', () => checkForUpdate(), false);
-  handle('updates:download', async (info: UpdateInfo) => {
-    if (!info || typeof info.version !== 'string') throw new Error('No update to download.');
-    const window = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    let lastSent = 0;
-    staged = await downloadUpdate(info, (received, total) => {
-      // The renderer only needs enough to move a bar; a send per chunk would
-      // flood it on a 226 MB download.
-      if (Date.now() - lastSent < 200 && received !== total) return;
-      lastSent = Date.now();
-      window?.webContents.send('update:progress', { received, total });
-    });
-    return { ready: true, version: info.version };
-  }, false);
-  handle('updates:install', async () => {
-    if (!staged) throw new Error('Download the update before installing it.');
-    // A transfer killed mid-flight resumes from its journal, but pausing first
-    // means the queue is written down deliberately rather than recovered.
-    engine.pauseAll();
-    await installUpdate(staged);
-    app.quit();
-  }, false);
-  handle('power:keepAwake', (on: boolean) => { keepAwake = on === true; evaluatePower(); }, false);
-  handle('external:open', async (url: string) => { if (!allowedExternal(url)) throw new Error('This link is not allowed.'); await shell.openExternal(url); }, false);
-  handle('clipboard:writeText', (text: unknown) => {
-    if (typeof text === 'string') {
-      clipboard.writeText(text);
-      return true;
-    }
-    return false;
-  }, false);
-  handle('utility:createClientFolderStructure', async (tree: { rootName?: string; folders?: string[] }) => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    const result = await dialog.showOpenDialog(win, {
-      title: 'Choose where to create the client folder structure',
-      buttonLabel: 'Create folders',
+  // --- Dialog Helpers ---
+  ipcMain.handle('dialog:openDirectory', async (_, defaultPath?: string) => {
+    const res = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory', 'createDirectory'],
+      defaultPath
     });
-    if (result.canceled || !result.filePaths[0]) return null;
-    const cleanPart = (value: unknown, fallback: string): string => {
-      const cleaned = String(value ?? '').replace(/[\\/\\0]/g, '-').replace(/\.\./g, '-').trim();
-      return cleaned || fallback;
-    };
-    const rootName = cleanPart(tree?.rootName, 'Client');
-    const folders = Array.isArray(tree?.folders)
-      ? tree.folders.map(folder => String(folder).split('/').map(part => cleanPart(part, 'Folder')).join('/')).filter(Boolean)
-      : [];
-    const rootPath = join(result.filePaths[0], rootName);
-    const uniqueFolders = [...new Set(folders)];
-    await fs.mkdir(rootPath, { recursive: true });
-    for (const folder of uniqueFolders) await fs.mkdir(join(rootPath, folder), { recursive: true });
-    return { rootPath, created: uniqueFolders.length + 1 };
-  }, false);
-  handle('dialog:openVideoFile', async () => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    const result = await dialog.showOpenDialog(win, {
-      title: 'Select Finished Deliverable Video',
+    return res.canceled ? null : res.filePaths[0];
+  });
+
+  ipcMain.handle('dialog:openFile', async (_, options?: { extensions?: string[] }) => {
+    const filters = options?.extensions
+      ? [{ name: 'Allowed Files', extensions: options.extensions }]
+      : undefined;
+    const res = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile'],
-      filters: [
-        { name: 'Video Files', extensions: ['mp4', 'mov', 'mkv', 'avi', 'm4v', 'webm'] },
-        { name: 'All Files', extensions: ['*'] }
-      ]
+      filters
     });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    const filePath = result.filePaths[0];
-    const stat = await fs.stat(filePath);
-    return {
-      filePath,
-      fileName: basename(filePath),
-      fileSize: stat.size
-    };
-  }, false);
-  handle('studio:dropboxStatus', async () => dropbox.status(), false);
-  handle('studio:connectDropbox', async (cfg: any) => {
-    if (typeof cfg === 'string') {
-      dropbox.configure({ refreshToken: cfg });
-    } else {
-      dropbox.configure(cfg);
-    }
-    return dropbox.status();
-  }, false);
-  handle('studio:disconnectDropbox', async () => {
-    dropbox.configure({});
-    return { configured: false, connected: false };
-  }, false);
+    return res.canceled ? null : res.filePaths[0];
+  });
 
-  handle('studio:uploadDeliverable', async (jobId: string, filePath: string, targetFolder: string, fileName: string) => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    return await dropbox.uploadDeliverable(filePath, targetFolder, fileName, (percent, uploadedBytes, totalBytes) => {
-      win?.webContents.send('upload:progress', { jobId, percent, uploadedBytes, totalBytes });
-    });
-  }, false);
-  handle('studio:chooseDownloadDirectory', async () => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    const result = await dialog.showOpenDialog(win, {
-      title: 'Select Destination Folder for Raw Footage',
-      properties: ['openDirectory', 'createDirectory']
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  }, false);
-  handle('studio:downloadRawData', async (jobId: string, rawDataLink: string, destDir: string) => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    const result = await downloader.download(jobId, rawDataLink, destDir, progress => {
-      win?.webContents.send('download:progress', progress);
-    });
-    if (result.success && !downloader.isPaused(jobId)) {
-      store.rememberDownload(owner, jobId, destDir);
-    }
-    return result;
-  }, false);
-  handle('studio:cancelDownload', async (jobId: string) => {
-    downloader.cancel(jobId);
-  }, false);
-  handle('studio:pauseDownload', async (jobId: string) => {
-    downloader.pause(jobId);
-  }, false);
-  handle('studio:getActiveDownload', async (jobId?: string) => {
-    return downloader.getActiveDownload(jobId);
-  }, false);
-  handle('studio:getDownloadSize', async (rawDataLink: string) => {
-    return await downloader.getDownloadSize(rawDataLink);
-  }, false);
-  handle('studio:getDownloadDetails', async (rawDataLink: string) => {
-    return await downloader.getDownloadDetails(rawDataLink);
-  }, false);
-  handle('studio:verifyLocalFolder', async (jobId: string, folderPath: string) => {
-    const stats = await downloader.scanLocalDirectory(folderPath);
-    if (stats.fileCount > 0) {
-      store.rememberDownload(owner, jobId, folderPath);
-      const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-      win?.webContents.send('download:progress', {
-        jobId,
-        percent: 100,
-        downloadedBytes: stats.totalBytes,
-        totalBytes: stats.totalBytes,
-        fileName: 'Verified',
-        status: 'completed'
-      });
-      return { valid: true, fileCount: stats.fileCount, totalBytes: stats.totalBytes };
-    }
-    return { valid: false, fileCount: 0, totalBytes: 0 };
-  }, false);
-  handle('studio:openDownloadedFolder', async (jobId: string) => {
-    const folderPath = store.downloadPath(owner, jobId);
-    if (!folderPath) throw new Error('This Mac has no saved folder for this project. Use Locate folder first.');
+  // --- Feature 1: LUT Converter ---
+  ipcMain.handle('lut:getPresets', async () => {
+    return LutConverterEngine.getAvailableLuts(resourcesDir);
+  });
+
+  ipcMain.handle('lut:start', async (_, options: LutConversionOptions) => {
+    void lutEngine.startConversion(options);
+    return { ok: true };
+  });
+
+  ipcMain.handle('lut:cancel', async () => {
+    lutEngine.cancel();
+    return { ok: true };
+  });
+
+  ipcMain.handle('lut:getProgress', async () => {
+    return lutEngine.getProgress();
+  });
+
+  // --- Feature 2: Folder Structure Creator ---
+  ipcMain.handle('studio:getClients', async () => {
+    return StudioDataService.getClients();
+  });
+
+  ipcMain.handle('studio:getClientDeliverables', async (_, clientName: string) => {
+    return StudioDataService.getClientDeliverables(clientName);
+  });
+
+  ipcMain.handle('studio:saveClientDeliverables', async (_, clientName: string, video, photo) => {
+    return StudioDataService.saveClientDeliverables(clientName, video, photo);
+  });
+
+  ipcMain.handle('studio:syncLive', async () => {
+    return StudioDataService.syncFromFirestore();
+  });
+
+  ipcMain.handle('folder:create', async (_, plan: EventFolderPlan) => {
+    return createProjectFolderStructure(plan);
+  });
+
+  ipcMain.handle('folder:reveal', async (_, folderPath: string) => {
+    return revealFolderInFinder(folderPath);
+  });
+
+  ipcMain.handle('qr:downloadUniversal', async (_, variant: string = 'ivory') => {
     try {
-      const stat = await fs.stat(folderPath);
-      if (!stat.isDirectory()) throw new Error('Not a directory');
-    } catch {
-      store.forgetDownload(owner, jobId);
-      throw new Error('The downloaded folder was moved, renamed, or its drive is disconnected. Use Locate folder to reconnect it.');
-    }
-    const error = await shell.openPath(folderPath);
-    if (error) throw new Error(error);
-  }, false);
-  handle('studio:forgetDownloadedFolder', async (jobId: string) => {
-    store.forgetDownload(owner, jobId);
-  }, false);
-  handle('studio:checkDiskSpace', async (targetPath: string) => {
-    let checkPath = targetPath;
-    // If targetPath does not exist yet (e.g. newly proposed project directory),
-    // walk up to the nearest existing directory so statfs inspects the real drive/volume.
-    while (checkPath && checkPath !== dirname(checkPath)) {
-      try {
-        await fs.access(checkPath);
-        break;
-      } catch {
-        checkPath = dirname(checkPath);
+      const sourceDir = '/Volumes/40/Antigravitty Projects/Marketing/Table_QR_5x7';
+      const fileMap: Record<string, string> = {
+        ivory: 'Table_QR_Ivory_300DPI.png',
+        sindoor: 'Table_QR_Sindoor_300DPI.png',
+        obsidian: 'Table_QR_Obsidian_300DPI.png',
+        pdf: 'Table_QR_Ivory_Print.pdf',
+        pdf_sindoor: 'Table_QR_Sindoor_Print.pdf'
+      };
+      const fileName = fileMap[variant] || 'Table_QR_Ivory_300DPI.png';
+      const srcPath = path.join(sourceDir, fileName);
+
+      const downloadsDir = app.getPath('downloads');
+      const destPath = path.join(downloadsDir, `Baawaray_Universal_Table_QR_5x7_${variant.toUpperCase()}${path.extname(fileName)}`);
+
+      if (existsSync(srcPath)) {
+        await fs.copyFile(srcPath, destPath);
+        shell.showItemInFolder(destPath);
+        return { success: true, path: destPath, fileName: path.basename(destPath) };
+      } else {
+        shell.showItemInFolder(sourceDir);
+        return { success: true, path: sourceDir, fileName: 'Table_QR_5x7' };
       }
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to download QR standee' };
     }
-    if (!checkPath) checkPath = '/';
+  });
+
+  // --- Feature 2b: Smart Project Context & Active Project ---
+  const activeProjectFile = path.join(userDataDir, 'active-studio-project.json');
+
+  ipcMain.handle('project:resolveContext', async (_, inputPath: string): Promise<ResolvedProjectContext | null> => {
+    if (!inputPath) return null;
+    const ctx = resolveSmartProjectContext(inputPath);
+    if (!ctx) return null;
 
     try {
-      const stats = await fs.statfs(checkPath);
-      const freeBytes = Number(stats.bavail) * Number(stats.bsize);
-      const totalBytes = Number(stats.blocks) * Number(stats.bsize);
-      return { freeBytes, totalBytes, path: checkPath };
-    } catch {
-      try {
-        const out = execSync(`df -k "${checkPath.replace(/"/g, '\\"')}"`, { encoding: 'utf8' });
-        const lines = out.trim().split('\n');
-        if (lines.length >= 2) {
-          const parts = lines[lines.length - 1].trim().split(/\s+/);
-          const totalK = parseInt(parts[1], 10);
-          const availK = parseInt(parts[3], 10);
-          if (!isNaN(availK) && availK > 0) {
-            return {
-              freeBytes: availK * 1024,
-              totalBytes: (!isNaN(totalK) && totalK > 0 ? totalK * 1024 : 0),
-              path: checkPath
-            };
+      // 1. If eventSubfolder not determined, check 01_RAW_FOOTAGE on disk
+      const rawDir = path.join(ctx.rootPath, '01_RAW_FOOTAGE');
+      if (existsSync(rawDir)) {
+        const entries = await fs.readdir(rawDir, { withFileTypes: true });
+        const eventDirs = entries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+        ctx.availableEvents = eventDirs.map(e => e.name);
+
+        if (!ctx.eventSubfolder && eventDirs.length > 0) {
+          const firstEvent = eventDirs[0].name;
+          ctx.eventSubfolder = firstEvent;
+
+          // Check if there are crew folders inside firstEvent
+          const firstEventPath = path.join(rawDir, firstEvent);
+          const crewEntries = await fs.readdir(firstEventPath, { withFileTypes: true });
+          const crewDirs = crewEntries.filter(e => e.isDirectory() && !e.name.startsWith('.'));
+          if (crewDirs.length > 0) {
+            ctx.crewSubfolder = crewDirs[0].name;
           }
         }
-      } catch {}
-
-      return { freeBytes: 2 * 1024 * 1024 * 1024 * 1024, totalBytes: 2 * 1024 * 1024 * 1024 * 1024, path: checkPath };
-    }
-  }, false);
-  handle('studio:deleteDriveFolder', async (folderIdOrUrl: string) => {
-    let id = (folderIdOrUrl || '').trim();
-    const folderMatch = id.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-    if (folderMatch) id = folderMatch[1];
-    const fileMatch = id.match(/\/d\/([a-zA-Z0-9_-]+)/);
-    if (fileMatch) id = fileMatch[1];
-    const idParam = id.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-    if (idParam) id = idParam[1];
-    await drive.delete(id);
-  });
-  handle('studio:deleteDropboxFile', async (dropboxPath: string) => {
-    await dropbox.deleteDeliverable(dropboxPath);
-  });
-  handle('studio:downloadDropboxFile', async (dropboxPath: string, localPath: string) => {
-    await dropbox.downloadDeliverable(dropboxPath, localPath);
-  });
-  // The Utilities section: Duration, Missing Clips, Clip Delivery, Photo
-  // Delivery. Local folder work only, so any signed-in account may use it.
-  const utilities = setupUtilityHandlers(handle);
-  handle('studio:chooseSaveLocation', async (defaultFileName: string) => {
-    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-    const result = await dialog.showSaveDialog(win, {
-      title: 'Save Master Deliverable to Local Hard Drive',
-      defaultPath: defaultFileName
-    });
-    if (result.canceled || !result.filePath) return null;
-    return result.filePath;
-  }, false);
-
-  // Gallery Uploader handlers (Requires Studio Sign-In)
-  const galleryUploader = new GalleryUploaderEngine();
-  function handleGallery(channel: string, fn: (...args: any[]) => unknown): void {
-    handle(channel, (...args: any[]) => {
-      if (!isStudioSignedIn) {
-        throw new Error('Sign in to your Studio account first to access the Gallery Uploader.');
+        if (!ctx.rawSourcePath || ctx.rawSourcePath === ctx.rootPath) {
+          ctx.rawSourcePath = rawDir;
+        }
       }
-      return fn(...args);
-    }, false);
-  }
-  handleGallery('gallery:list', () => galleryUploader.fetchGalleries());
-  handleGallery('gallery:createGallery', (payload: any) => galleryUploader.createGallery(payload));
-  handleGallery('gallery:updateGallery', (galleryId: string, updates: any) => galleryUploader.updateGallery(galleryId, updates));
-  handleGallery('gallery:deleteGallery', (galleryId: string) => galleryUploader.deleteGallery(galleryId));
-  handleGallery('gallery:createScene', (galleryId: string, name: string) => galleryUploader.createScene(galleryId, name));
-  handleGallery('gallery:updateScene', (galleryId: string, sceneId: string, name: string) => galleryUploader.updateScene(galleryId, sceneId, name));
-  handleGallery('gallery:deleteScene', (galleryId: string, sceneId: string) => galleryUploader.deleteScene(galleryId, sceneId));
-  handleGallery('gallery:chooseFiles', (mode: 'files' | 'folder' | 'photos' | 'videos') => galleryUploader.chooseFiles(mode));
-  handleGallery('gallery:startUpload', (galleryId: string, sceneId: string, filePaths: string[], autoTranscode?: boolean, isAutoplayLoop?: boolean) =>
-    galleryUploader.startUpload(galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop));
-  handleGallery('gallery:startBatchUpload', (payload: any) => galleryUploader.startBatchUpload(payload));
-  handleGallery('gallery:createIngestFolderTree', (payload: any) => galleryUploader.createIngestFolderTree(payload));
-  handleGallery('gallery:scanIngestPath', (mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files', existingPath?: string) =>
-    galleryUploader.scanIngestPath(mode, existingPath));
-  handleGallery('gallery:pauseUpload', () => galleryUploader.pauseUpload());
-  handleGallery('gallery:resumeUpload', () => galleryUploader.resumeUpload());
-  handleGallery('gallery:cancelUpload', () => galleryUploader.cancelUpload());
-  handleGallery('gallery:retryFailed', () => galleryUploader.retryFailed());
-  handleGallery('gallery:clearCompleted', () => galleryUploader.clearCompleted());
-  handleGallery('gallery:getState', () => galleryUploader.getState());
-  handleGallery('gallery:fetchMedia', (galleryId: string) => galleryUploader.fetchGalleryMedia(galleryId));
-  handleGallery('gallery:reorderMedia', (galleryId: string, itemIds: string[]) => galleryUploader.reorderMedia(galleryId, itemIds));
-  handleGallery('gallery:updateMedia', (mediaId: string, updates: any) => galleryUploader.updateMedia(mediaId, updates));
-  handleGallery('gallery:deleteMedia', (mediaId: string) => galleryUploader.deleteMedia(mediaId));
-  handleGallery('gallery:batchDeleteMedia', (galleryId: string, itemIds: string[]) =>
-    galleryUploader.batchDeleteMedia(galleryId, itemIds));
-  handleGallery('gallery:setCover', (galleryId: string, coverUrl?: string, coverVideoUrl?: string) =>
-    galleryUploader.setGalleryCover(galleryId, coverUrl, coverVideoUrl));
-  handleGallery('gallery:fetchSongs', () => galleryUploader.fetchSongs());
-  handleGallery('gallery:setSong', (galleryId: string, backgroundMusicUrl: string, backgroundMusicTitle: string) =>
-    galleryUploader.setGallerySong(galleryId, backgroundMusicUrl, backgroundMusicTitle));
-  handleGallery('gallery:chooseAndUploadSong', (galleryId: string) => galleryUploader.chooseAndUploadSong(galleryId));
 
-  return () => {
-    galleryUploader.cancelUpload();
-    void utilities.shutdown();
-    engine.shutdown();
-    for (const c of scans.values()) c.abort();
-    if (blocker !== null && powerSaveBlocker.isStarted(blocker)) powerSaveBlocker.stop(blocker);
-    store.close();
-  };
+      // 2. Set client delivery destination to 05_CLIENT_CLIPS_DELIVERY root (never auto-append event subfolder)
+      const deliveryBase = existsSync(path.join(ctx.rootPath, '05_CLIENT_CLIPS_DELIVERY'))
+        ? path.join(ctx.rootPath, '05_CLIENT_CLIPS_DELIVERY')
+        : path.join(ctx.rootPath, '03_CLIENT_CLIPS_DELIVERY');
+      ctx.clientDeliveryDestinationPath = deliveryBase;
+
+      // Match edited source in 04_RENDER_DELIVERABLES (or legacy 05_RENDER_DELIVERABLES)
+      const renderBase = existsSync(path.join(ctx.rootPath, '04_RENDER_DELIVERABLES'))
+        ? path.join(ctx.rootPath, '04_RENDER_DELIVERABLES')
+        : path.join(ctx.rootPath, '05_RENDER_DELIVERABLES');
+      if (existsSync(renderBase)) {
+        ctx.editedSourcePath = renderBase;
+      }
+    } catch (err) {
+      console.warn('[IPC] project:resolveContext disk check warning:', err);
+    }
+
+    return ctx;
+  });
+
+  ipcMain.handle('project:getActive', async (): Promise<ActiveStudioProject | null> => {
+    try {
+      if (existsSync(activeProjectFile)) {
+        const raw = await fs.readFile(activeProjectFile, 'utf8');
+        return JSON.parse(raw);
+      }
+    } catch {}
+    return null;
+  });
+
+  ipcMain.handle('project:setActive', async (_, proj: ActiveStudioProject): Promise<boolean> => {
+    try {
+      await fs.writeFile(activeProjectFile, JSON.stringify(proj, null, 2), 'utf8');
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('footage:getStats', async (_, folderPath: string) => {
+    return getFootageFolderStats(folderPath);
+  });
+
+  // --- Feature 3: Data Handoff & WhatsApp ---
+  ipcMain.handle('handoff:scanFolder', async (_, targetPath: string) => {
+    return scanFootageFolder(targetPath);
+  });
+
+  ipcMain.handle('handoff:logData', async (_, record: DataHandoffRecord) => {
+    if (record.notifyWhatsApp && record.teamMemberPhone) {
+      const waRes = await whatsappService.sendFootageReceivedAlert({
+        crewName: record.teamMemberName,
+        phone: record.teamMemberPhone,
+        role: record.role,
+        clientName: record.clientName,
+        eventName: record.eventName,
+        dataGb: record.dataGb,
+        fileCount: record.fileCount
+      });
+      record.whatsappStatus = waRes.ok ? 'sent' : 'failed';
+      record.whatsappMessageId = waRes.messageId;
+    }
+    return record;
+  });
+
+  ipcMain.handle('whatsapp:sendReviewLink', async (_, params) => {
+    return whatsappService.sendClientReviewLink(params);
+  });
+
+  ipcMain.handle('whatsapp:getConfig', async () => {
+    return whatsappService.getConfig();
+  });
+
+  ipcMain.handle('whatsapp:updateConfig', async (_, cfg) => {
+    whatsappService.configure(cfg);
+    return { ok: true };
+  });
+
+  // --- Feature 4: Google Drive Daily Sync ---
+  ipcMain.handle('gdrive:getConfig', async () => {
+    return gdriveSync.getConfig();
+  });
+
+  ipcMain.handle('gdrive:updateConfig', async (_, patch: Partial<GDriveSyncConfig>) => {
+    gdriveSync.updateConfig(patch);
+    return gdriveSync.getConfig();
+  });
+
+  ipcMain.handle('gdrive:getStatus', async () => {
+    return gdriveSync.getStatus();
+  });
+
+  ipcMain.handle('gdrive:startSync', async () => {
+    void gdriveSync.startSync();
+    return { ok: true };
+  });
+
+  // --- Feature 5: Client Clips Delivery Engine ---
+  ipcMain.handle('clips:start', async (_, settings: ClipDeliverySettings) => {
+    void clipDelivery.startDelivery(settings);
+    return { ok: true };
+  });
+
+  ipcMain.handle('clips:pause', async () => {
+    clipDelivery.pause();
+    return { ok: true };
+  });
+
+  ipcMain.handle('clips:resume', async () => {
+    clipDelivery.resume();
+    return { ok: true };
+  });
+
+  ipcMain.handle('clips:cancel', async () => {
+    clipDelivery.cancel();
+    return { ok: true };
+  });
+
+  ipcMain.handle('clips:getState', async () => {
+    return clipDelivery.getState();
+  });
+
+  // --- Feature 6: Dropbox Deliverables & Client Revisions ---
+  ipcMain.handle('dropbox:createFolder', async (_, clientName: string, deliverableTitle: string) => {
+    return dropboxManager.createDeliverableFolder(clientName, deliverableTitle);
+  });
+
+  ipcMain.handle('dropbox:uploadAndShare', async (_, config: DropboxDeliverableConfig) => {
+    const res = await dropboxManager.uploadAndShareDeliverable(config, status => {
+      mainWindow.webContents.send('dropbox:status', status);
+    });
+    if (res && res.shareUrl) {
+      void StudioDataService.updateDeliverableStatus(config.clientName, config.deliverableId, {
+        status: 'review',
+        currentCut: config.cutVersion || 'Cut 1',
+        renderFilePath: config.renderFilePath,
+        dropboxShareUrl: res.shareUrl
+      });
+    }
+    return res;
+  });
+
+  ipcMain.handle('dropbox:uploadRawClipsFolder', async (_, config: DropboxRawClipsConfig) => {
+    const res = await dropboxManager.uploadRawClipsFolder(config, status => {
+      mainWindow.webContents.send('dropbox:rawClipsStatus', status);
+      transferManager.syncDropboxRawClips(status, config.clientName, config.eventName);
+    });
+    if (res && res.shareUrl) {
+      void StudioDataService.updateDeliverableStatus(config.clientName, 'Raw Clips', {
+        status: 'delivered',
+        renderFilePath: config.folderPath,
+        dropboxShareUrl: res.shareUrl
+      });
+    }
+    return res;
+  });
+
+  ipcMain.handle('dropbox:pauseRawClipsUpload', async () => {
+    dropboxManager.pauseRawClipsUpload();
+    return { ok: true };
+  });
+
+  ipcMain.handle('dropbox:resumeRawClipsUpload', async () => {
+    dropboxManager.resumeRawClipsUpload();
+    return { ok: true };
+  });
+
+  ipcMain.handle('dropbox:cancelRawClipsUpload', async () => {
+    dropboxManager.cancelRawClipsUpload();
+    return { ok: true };
+  });
+
+  ipcMain.handle('dropbox:getRawClipsStatus', async () => {
+    return dropboxManager.getRawClipsStatus();
+  });
+
+  // --- Unified Background Transfers & Queue Manager ---
+  ipcMain.handle('transfers:getAll', async () => {
+    return transferManager.getAllTasks();
+  });
+
+  ipcMain.handle('transfers:pause', async (_, taskId: string) => {
+    return transferManager.pauseTask(taskId);
+  });
+
+  ipcMain.handle('transfers:resume', async (_, taskId: string) => {
+    return transferManager.resumeTask(taskId);
+  });
+
+  ipcMain.handle('transfers:cancel', async (_, taskId: string) => {
+    return transferManager.cancelTask(taskId);
+  });
+
+  ipcMain.handle('transfers:retry', async (_, taskId: string) => {
+    return transferManager.retryTask(taskId);
+  });
+
+  ipcMain.handle('transfers:clearCompleted', async () => {
+    transferManager.clearCompleted();
+    return { ok: true };
+  });
+
+  ipcMain.handle('transfers:remove', async (_, taskId: string) => {
+    transferManager.removeTask(taskId);
+    return { ok: true };
+  });
+
+  ipcMain.handle('dropbox:autoDetectTranscodedFolder', async (_, searchHint?: string, clientName?: string) => {
+    return autoDetectTranscodedFolder(searchHint, clientName);
+  });
+
+  ipcMain.handle('dropbox:getConfig', async () => {
+    return dropboxManager.getConfig();
+  });
+
+  ipcMain.handle('dropbox:testConnection', async () => {
+    return dropboxManager.testConnection();
+  });
+
+  ipcMain.handle('dropbox:configure', async (_, cfg) => {
+    return dropboxManager.saveConfig(cfg);
+  });
+
+  ipcMain.handle('revisions:getAll', async () => {
+    return revisionsManager.getAll();
+  });
+
+  ipcMain.handle('revisions:add', async (_, item) => {
+    return revisionsManager.addRevision(item);
+  });
+
+  ipcMain.handle('revisions:updateStatus', async (_, id, status) => {
+    return revisionsManager.updateStatus(id, status);
+  });
+
+  ipcMain.handle('revisions:aiParse', async (_, text: string) => {
+    return revisionsManager.parseNotesWithAI(text);
+  });
+
+  // --- Feature 7: Editor Tasks & Deliverables ---
+  ipcMain.handle('editor:getDeliverables', async (_, memberId?: number) => {
+    return editorManager.getDeliverables(memberId);
+  });
+
+  ipcMain.handle('editor:getTasks', async (_, assigneeId?: string | number) => {
+    return editorManager.getTasks(assigneeId);
+  });
+
+  ipcMain.handle('editor:toggleTask', async (_, taskId: string) => {
+    return editorManager.toggleTaskDone(taskId);
+  });
+
+  ipcMain.handle('editor:updateDeliverableStatus', async (_, id, status) => {
+    return editorManager.updateDeliverableStatus(id, status);
+  });
+
+  ipcMain.handle('editor:updateDeliverableRender', async (_, id, renderPath, dropboxUrl) => {
+    return editorManager.updateDeliverableRender(id, renderPath, dropboxUrl);
+  });
+
+  // --- Feature 8: Backblaze B2 Storage Handlers ---
+  ipcMain.handle('b2:getConfig', async () => {
+    return b2Client.getConfig();
+  });
+
+  ipcMain.handle('b2:saveConfig', async (_, cfg: { keyId: string; applicationKey: string; bucketId?: string; bucketName?: string }) => {
+    try {
+      b2Client.configure(cfg);
+      await fs.writeFile(b2ConfigFile, JSON.stringify(cfg, null, 2), 'utf-8');
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err.message || 'Failed to save Backblaze B2 config' };
+    }
+  });
+
+  ipcMain.handle('b2:testConnection', async () => {
+    return b2Client.testConnection();
+  });
 }

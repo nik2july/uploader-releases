@@ -1,171 +1,207 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { ClipRunState, DesktopAPI, PhotoRunState } from '../shared/contracts';
-const api: DesktopAPI = {
-  login: (phone, password) => ipcRenderer.invoke('studio:login', phone, password),
-  authorize: token => ipcRenderer.invoke('studio:authorize', token), signOut: () => ipcRenderer.invoke('studio:signOut'),
-  scan: (options, target) => ipcRenderer.invoke('scanner:start', options, target), cancelScan: id => ipcRenderer.invoke('scanner:cancel', id),
-  scanFiles: (options, target) => ipcRenderer.invoke('scanner:startFiles', options, target),
-  scanOfflineFolder: target => ipcRenderer.invoke('scanner:scanOfflineFolder', target),
-  list: () => ipcRenderer.invoke('transfers:list'), inspect: id => ipcRenderer.invoke('transfers:inspect', id),
-  refreshDriveConfiguration: () => ipcRenderer.invoke('drive:configuration'),
-  connectDrive: idToken => ipcRenderer.invoke('drive:connect', idToken), driveStatus: () => ipcRenderer.invoke('drive:status'),
-  disconnectDrive: () => ipcRenderer.invoke('drive:disconnect'),
-  driveQuota: () => ipcRenderer.invoke('drive:quota'),
-  driveListFiles: (parentId, query) => ipcRenderer.invoke('drive:listFiles', parentId, query),
-  driveCreateFolder: (name, parentId) => ipcRenderer.invoke('drive:createFolder', name, parentId),
-  driveRenameFile: (id, newName) => ipcRenderer.invoke('drive:renameFile', id, newName),
-  driveTrashFile: (id, permanent) => ipcRenderer.invoke('drive:trashFile', id, permanent),
-  driveEmptyTrash: () => ipcRenderer.invoke('drive:emptyTrash'),
-  driveShareItem: (id, mode, email) => ipcRenderer.invoke('drive:shareItem', id, mode, email),
-  setTargetDriveFolder: (folderId, folderName) => ipcRenderer.invoke('drive:setTargetFolder', folderId, folderName),
-  setUploadDestination: destination => ipcRenderer.invoke('transfers:destination', destination),
-  setSharedDriveId: driveId => ipcRenderer.invoke('transfers:sharedDriveId', driveId),
-  removeTransfer: (id, keepUploaded) => ipcRenderer.invoke('transfers:remove', id, keepUploaded),
-  downloadUpdate: info => ipcRenderer.invoke('updates:download', info),
-  installUpdate: () => ipcRenderer.invoke('updates:install'),
-  logRendererError: (message, stack) => ipcRenderer.invoke('log:rendererError', message, stack),
-  onUpdateProgress: callback => {
-    const listener = (_: unknown, data: { received: number; total: number }): void => callback(data);
-    ipcRenderer.on('update:progress', listener);
-    return () => { ipcRenderer.removeListener('update:progress', listener); };
+import { contextBridge, ipcRenderer } from 'electron';
+import type {
+  ActiveStudioProject,
+  ClipDeliveryRunState,
+  ClipDeliverySettings,
+  ConversionProgress,
+  DataHandoffRecord,
+  DetectedTranscodedFolder,
+  DropboxDeliverableConfig,
+  DropboxRawClipsConfig,
+  DropboxUploadStatus,
+  DropboxFolderUploadStatus,
+  EditorDeliverable,
+  EditorTask,
+  EventFolderPlan,
+  FolderCreationResult,
+  FolderScanResult,
+  FootageFolderStats,
+  GDriveSyncConfig,
+  GDriveSyncStatus,
+  LutConversionOptions,
+  LutPreset,
+  ResolvedProjectContext,
+  ClientRevisionItem,
+  StudioClientData,
+  StudioDeliverableItem,
+  TransferTask
+} from '../shared/contracts';
+
+export const clipsApi = {
+  // Dialogs
+  openDirectory: (defaultPath?: string): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:openDirectory', defaultPath),
+  openFile: (options?: { extensions?: string[] }): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:openFile', options),
+
+  // Feature 1: LUT Converter
+  getLutPresets: (): Promise<LutPreset[]> => ipcRenderer.invoke('lut:getPresets'),
+  startLutConversion: (options: LutConversionOptions): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('lut:start', options),
+  cancelLutConversion: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('lut:cancel'),
+  getLutProgress: (): Promise<ConversionProgress> => ipcRenderer.invoke('lut:getProgress'),
+  onLutProgress: (callback: (p: ConversionProgress) => void): (() => void) => {
+    const subscription = (_: any, p: ConversionProgress) => callback(p);
+    ipcRenderer.on('lut:progress', subscription);
+    return () => ipcRenderer.removeListener('lut:progress', subscription);
   },
-  dropboxStatus: () => ipcRenderer.invoke('studio:dropboxStatus'),
-  connectDropbox: (token) => ipcRenderer.invoke('studio:connectDropbox', token),
-  disconnectDropbox: () => ipcRenderer.invoke('studio:disconnectDropbox'),
-  chooseDeliverableFile: () => ipcRenderer.invoke('dialog:openVideoFile'),
-  uploadDeliverable: (jobId, filePath, targetFolder, fileName) => ipcRenderer.invoke('studio:uploadDeliverable', jobId, filePath, targetFolder, fileName),
-  onUploadProgress: callback => {
-    const listener = (_: any, data: any): void => callback(data);
-    ipcRenderer.on('upload:progress', listener);
-    return () => { ipcRenderer.removeListener('upload:progress', listener); };
+
+  // Feature 2: Folder Structure Creator
+  getStudioClients: (): Promise<StudioClientData[]> => ipcRenderer.invoke('studio:getClients'),
+  syncStudioClients: (): Promise<{ ok: boolean; count: number; error?: string }> =>
+    ipcRenderer.invoke('studio:syncLive'),
+  getClientDeliverables: (
+    clientName: string
+  ): Promise<{ videoDeliverables: StudioDeliverableItem[]; photoDeliverables: StudioDeliverableItem[] }> =>
+    ipcRenderer.invoke('studio:getClientDeliverables', clientName),
+  saveClientDeliverables: (
+    clientName: string,
+    videoDeliverables: StudioDeliverableItem[],
+    photoDeliverables: StudioDeliverableItem[]
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('studio:saveClientDeliverables', clientName, videoDeliverables, photoDeliverables),
+  createFolderStructure: (plan: EventFolderPlan): Promise<FolderCreationResult> =>
+    ipcRenderer.invoke('folder:create', plan),
+  revealFolder: (folderPath: string): Promise<boolean> => ipcRenderer.invoke('folder:reveal', folderPath),
+  downloadUniversalQR: (variant?: string): Promise<{ success: boolean; path?: string; fileName?: string; error?: string }> =>
+    ipcRenderer.invoke('qr:downloadUniversal', variant),
+  resolveProjectContext: (inputPath: string): Promise<ResolvedProjectContext | null> =>
+    ipcRenderer.invoke('project:resolveContext', inputPath),
+  getActiveProject: (): Promise<ActiveStudioProject | null> => ipcRenderer.invoke('project:getActive'),
+  setActiveProject: (proj: ActiveStudioProject): Promise<boolean> =>
+    ipcRenderer.invoke('project:setActive', proj),
+  getFootageStats: (folderPath: string): Promise<FootageFolderStats> =>
+    ipcRenderer.invoke('footage:getStats', folderPath),
+
+  // Feature 3: Data Handoff & WhatsApp API
+  scanFootageFolder: (targetPath: string): Promise<FolderScanResult> =>
+    ipcRenderer.invoke('handoff:scanFolder', targetPath),
+  logDataHandoff: (record: DataHandoffRecord): Promise<DataHandoffRecord> =>
+    ipcRenderer.invoke('handoff:logData', record),
+  getWhatsAppConfig: (): Promise<any> => ipcRenderer.invoke('whatsapp:getConfig'),
+  updateWhatsAppConfig: (cfg: any): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('whatsapp:updateConfig', cfg),
+
+  // Feature 4: Google Drive Daily Sync
+  getGDriveConfig: (): Promise<GDriveSyncConfig> => ipcRenderer.invoke('gdrive:getConfig'),
+  updateGDriveConfig: (patch: Partial<GDriveSyncConfig>): Promise<GDriveSyncConfig> =>
+    ipcRenderer.invoke('gdrive:updateConfig', patch),
+  getGDriveStatus: (): Promise<GDriveSyncStatus> => ipcRenderer.invoke('gdrive:getStatus'),
+  startGDriveSync: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('gdrive:startSync'),
+  onGDriveStatus: (callback: (s: GDriveSyncStatus) => void): (() => void) => {
+    const subscription = (_: any, s: GDriveSyncStatus) => callback(s);
+    ipcRenderer.on('gdrive:status', subscription);
+    return () => ipcRenderer.removeListener('gdrive:status', subscription);
   },
-  chooseDownloadDirectory: () => ipcRenderer.invoke('studio:chooseDownloadDirectory'),
-  downloadRawData: (jobId, rawDataLink, destDir) => ipcRenderer.invoke('studio:downloadRawData', jobId, rawDataLink, destDir),
-  cancelDownload: jobId => ipcRenderer.invoke('studio:cancelDownload', jobId),
-  pauseDownload: jobId => ipcRenderer.invoke('studio:pauseDownload', jobId),
-  getActiveDownload: jobId => ipcRenderer.invoke('studio:getActiveDownload', jobId),
-  onDownloadProgress: callback => {
-    const listener = (_: any, data: any): void => callback(data);
-    ipcRenderer.on('download:progress', listener);
-    return () => { ipcRenderer.removeListener('download:progress', listener); };
+
+  // Feature 5: Client Clips Delivery
+  startClipsDelivery: (settings: ClipDeliverySettings): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('clips:start', settings),
+  pauseDelivery: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('clips:pause'),
+  resumeDelivery: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('clips:resume'),
+  cancelClipsDelivery: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('clips:cancel'),
+  getClipsDeliveryState: (): Promise<ClipDeliveryRunState> => ipcRenderer.invoke('clips:getState'),
+  onClipsDeliveryState: (callback: (s: ClipDeliveryRunState) => void): (() => void) => {
+    const subscription = (_: any, s: ClipDeliveryRunState) => callback(s);
+    ipcRenderer.on('clips:state', subscription);
+    return () => ipcRenderer.removeListener('clips:state', subscription);
   },
-  verifyLocalFolder: (jobId, folderPath) => ipcRenderer.invoke('studio:verifyLocalFolder', jobId, folderPath),
-  openDownloadedFolder: jobId => ipcRenderer.invoke('studio:openDownloadedFolder', jobId),
-  forgetDownloadedFolder: jobId => ipcRenderer.invoke('studio:forgetDownloadedFolder', jobId),
-  checkDiskSpace: targetPath => ipcRenderer.invoke('studio:checkDiskSpace', targetPath),
-  getDownloadSize: rawDataLink => ipcRenderer.invoke('studio:getDownloadSize', rawDataLink),
-  getDownloadDetails: rawDataLink => ipcRenderer.invoke('studio:getDownloadDetails', rawDataLink),
-  deleteDriveFolder: folderId => ipcRenderer.invoke('studio:deleteDriveFolder', folderId),
-  deleteDropboxFile: dropboxPath => ipcRenderer.invoke('studio:deleteDropboxFile', dropboxPath),
-  downloadDropboxFile: (dropboxPath, localPath) => ipcRenderer.invoke('studio:downloadDropboxFile', dropboxPath, localPath),
-  chooseSaveLocation: defaultFileName => ipcRenderer.invoke('studio:chooseSaveLocation', defaultFileName),
-  enqueue: (id, target, invoice) => ipcRenderer.invoke('transfers:enqueue', id, target, invoice),
-  pause: id => ipcRenderer.invoke('transfers:pause', id), resume: id => ipcRenderer.invoke('transfers:resume', id),
-  relocate: id => ipcRenderer.invoke('transfers:relocate', id), rescan: id => ipcRenderer.invoke('transfers:rescan', id),
-  skipUnreadableFiles: id => ipcRenderer.invoke('transfers:skipUnreadable', id),
-  packageInfo: id => ipcRenderer.invoke('transfers:packageInfo', id),
-  setPackageExpiry: (id, expiresAt) => ipcRenderer.invoke('transfers:setExpiry', id, expiresAt),
-  share: (id, mode, email) => ipcRenderer.invoke('transfers:share', id, mode, email),
-  markSynced: id => ipcRenderer.invoke('transfers:synced', id),
-  markMessagePrepared: id => ipcRenderer.invoke('transfers:prepared', id), saveInvoice: (id, invoice) => ipcRenderer.invoke('invoice:save', id, invoice),
-  savePdf: (bytes, filename) => ipcRenderer.invoke('invoice:pdf', bytes, filename),
-  openExternal: url => ipcRenderer.invoke('external:open', url),
-  setKeepAwake: on => ipcRenderer.invoke('power:keepAwake', on),
-  autoResumeTransfers: () => ipcRenderer.invoke('transfers:autoResume'),
-  getAutoStart: () => ipcRenderer.invoke('app:getAutoStart'),
-  setAutoStart: enable => ipcRenderer.invoke('app:setAutoStart', enable),
-  checkForUpdate: () => ipcRenderer.invoke('updates:check'),
-  appVersion: () => ipcRenderer.invoke('app:version'),
-  diagnostics: () => ipcRenderer.invoke('app:diagnostics'),
-  copyToClipboard: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
-  createClientFolderStructure: tree => ipcRenderer.invoke('utility:createClientFolderStructure', tree),
-  onChange: callback => { const listener = (): void => callback(); ipcRenderer.on('transfers:changed', listener); return () => { ipcRenderer.removeListener('transfers:changed', listener); }; },
-  // Utilities — Duration, Missing Clips, Clip Delivery, Photo Delivery.
-  utilityStatus: () => ipcRenderer.invoke('utility:status'),
-  chooseUtilityFolder: (title, buttonLabel) => ipcRenderer.invoke('utility:chooseFolder', title, buttonLabel),
-  folderOfPath: path => ipcRenderer.invoke('utility:folderOf', path),
-  pathForFile: file => {
-    try {
-      return webUtils.getPathForFile(file);
-    } catch {
-      return (file as any).path || '';
-    }
+
+  // Feature 6: Dropbox Deliverables & Client Revisions
+  createDropboxFolder: (clientName: string, deliverableTitle: string): Promise<string> =>
+    ipcRenderer.invoke('dropbox:createFolder', clientName, deliverableTitle),
+  uploadDropboxDeliverable: (
+    config: DropboxDeliverableConfig
+  ): Promise<{ shareUrl?: string; whatsappSent?: boolean; error?: string }> =>
+    ipcRenderer.invoke('dropbox:uploadAndShare', config),
+  getDropboxConfig: (): Promise<{ appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }> =>
+    ipcRenderer.invoke('dropbox:getConfig'),
+  testDropboxConnection: (): Promise<{ ok: boolean; email?: string; error?: string; missingScopes?: string[] }> =>
+    ipcRenderer.invoke('dropbox:testConnection'),
+  configureDropbox: (cfg: any): Promise<{ ok: boolean; email?: string; error?: string; missingScopes?: string[] }> =>
+    ipcRenderer.invoke('dropbox:configure', cfg),
+  onDropboxStatus: (callback: (s: DropboxUploadStatus) => void): (() => void) => {
+    const subscription = (_: any, s: DropboxUploadStatus) => callback(s);
+    ipcRenderer.on('dropbox:status', subscription);
+    return () => ipcRenderer.removeListener('dropbox:status', subscription);
   },
-  revealInFinder: path => ipcRenderer.invoke('utility:reveal', path),
-  openPath: path => ipcRenderer.invoke('utility:open', path),
-  saveTextFile: (defaultName, text) => ipcRenderer.invoke('utility:saveText', defaultName, text),
-  scanDurations: (rootPath, kinds) => ipcRenderer.invoke('utility:duration:scan', rootPath, kinds),
-  cancelDurationScan: () => ipcRenderer.invoke('utility:duration:cancel'),
-  onDurationProgress: callback => {
-    const listener = (_: unknown, data: { done: number; total: number }): void => callback(data);
-    ipcRenderer.on('utility:duration:progress', listener);
-    return () => { ipcRenderer.removeListener('utility:duration:progress', listener); };
+  uploadDropboxRawClips: (
+    config: DropboxRawClipsConfig
+  ): Promise<{ ok: boolean; shareUrl?: string; totalUploaded: number; whatsappSent?: boolean; error?: string }> =>
+    ipcRenderer.invoke('dropbox:uploadRawClipsFolder', config),
+  pauseDropboxRawClips: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('dropbox:pauseRawClipsUpload'),
+  resumeDropboxRawClips: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('dropbox:resumeRawClipsUpload'),
+  cancelDropboxRawClips: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('dropbox:cancelRawClipsUpload'),
+  getDropboxRawClipsStatus: (): Promise<DropboxFolderUploadStatus> =>
+    ipcRenderer.invoke('dropbox:getRawClipsStatus'),
+  onDropboxRawClipsStatus: (callback: (s: DropboxFolderUploadStatus) => void): (() => void) => {
+    const subscription = (_: any, s: DropboxFolderUploadStatus) => callback(s);
+    ipcRenderer.on('dropbox:rawClipsStatus', subscription);
+    return () => ipcRenderer.removeListener('dropbox:rawClipsStatus', subscription);
   },
-  scanSequences: (rootPath, options) => ipcRenderer.invoke('utility:sequences:scan', rootPath, options),
-  cancelSequenceScan: () => ipcRenderer.invoke('utility:sequences:cancel'),
-  onSequenceProgress: callback => {
-    const listener = (_: unknown, data: { seen: number }): void => callback(data);
-    ipcRenderer.on('utility:sequences:progress', listener);
-    return () => { ipcRenderer.removeListener('utility:sequences:progress', listener); };
+  autoDetectTranscodedFolder: (
+    searchHint?: string,
+    clientName?: string
+  ): Promise<DetectedTranscodedFolder> =>
+    ipcRenderer.invoke('dropbox:autoDetectTranscodedFolder', searchHint, clientName),
+
+  // Feature 6.5: Unified Background Transfers & Queue Manager
+  getTransfers: (): Promise<TransferTask[]> => ipcRenderer.invoke('transfers:getAll'),
+  pauseTransfer: (id: string): Promise<boolean> => ipcRenderer.invoke('transfers:pause', id),
+  resumeTransfer: (id: string): Promise<boolean> => ipcRenderer.invoke('transfers:resume', id),
+  cancelTransfer: (id: string): Promise<boolean> => ipcRenderer.invoke('transfers:cancel', id),
+  retryTransfer: (id: string): Promise<boolean> => ipcRenderer.invoke('transfers:retry', id),
+  clearCompletedTransfers: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('transfers:clearCompleted'),
+  removeTransfer: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('transfers:remove', id),
+  onTransfersUpdated: (callback: (tasks: TransferTask[]) => void): (() => void) => {
+    const subscription = (_: any, tasks: TransferTask[]) => callback(tasks);
+    ipcRenderer.on('transfers:updated', subscription);
+    return () => ipcRenderer.removeListener('transfers:updated', subscription);
   },
-  clipState: () => ipcRenderer.invoke('utility:clip:state'),
-  clipScan: sourcePath => ipcRenderer.invoke('utility:clip:scan', sourcePath),
-  clipSetDestination: destinationPath => ipcRenderer.invoke('utility:clip:destination', destinationPath),
-  clipStart: (destinationPath, choice) => ipcRenderer.invoke('utility:clip:start', destinationPath, choice),
-  clipCancel: () => ipcRenderer.invoke('utility:clip:cancel'),
-  onClipState: callback => {
-    const listener = (_: unknown, state: ClipRunState): void => callback(state);
-    ipcRenderer.on('utility:clip', listener);
-    return () => { ipcRenderer.removeListener('utility:clip', listener); };
-  },
-  photoState: () => ipcRenderer.invoke('utility:photo:state'),
-  photoScan: sourcePath => ipcRenderer.invoke('utility:photo:scan', sourcePath),
-  photoSetPresets: presetIds => ipcRenderer.invoke('utility:photo:presets', presetIds),
-  photoSetOutputRoot: outputRoot => ipcRenderer.invoke('utility:photo:outputRoot', outputRoot),
-  photoStart: () => ipcRenderer.invoke('utility:photo:start'),
-  photoCancel: () => ipcRenderer.invoke('utility:photo:cancel'),
-  onPhotoState: callback => {
-    const listener = (_: unknown, state: PhotoRunState): void => callback(state);
-    ipcRenderer.on('utility:photo', listener);
-    return () => { ipcRenderer.removeListener('utility:photo', listener); };
-  },
-  // Gallery Uploader API
-  galleryFetchGalleries: () => ipcRenderer.invoke('gallery:list'),
-  galleryCreateGallery: (payload) => ipcRenderer.invoke('gallery:createGallery', payload),
-  galleryUpdateGallery: (galleryId, updates) => ipcRenderer.invoke('gallery:updateGallery', galleryId, updates),
-  galleryDeleteGallery: galleryId => ipcRenderer.invoke('gallery:deleteGallery', galleryId),
-  galleryCreateScene: (galleryId, name) => ipcRenderer.invoke('gallery:createScene', galleryId, name),
-  galleryUpdateScene: (galleryId, sceneId, name) => ipcRenderer.invoke('gallery:updateScene', galleryId, sceneId, name),
-  galleryDeleteScene: (galleryId, sceneId) => ipcRenderer.invoke('gallery:deleteScene', galleryId, sceneId),
-  galleryChooseFiles: mode => ipcRenderer.invoke('gallery:chooseFiles', mode),
-  galleryStartUpload: (galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop) =>
-    ipcRenderer.invoke('gallery:startUpload', galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop),
-  galleryStartBatchUpload: payload => ipcRenderer.invoke('gallery:startBatchUpload', payload),
-  galleryCreateIngestFolderTree: payload => ipcRenderer.invoke('gallery:createIngestFolderTree', payload),
-  galleryScanIngestPath: (mode, existingPath) => ipcRenderer.invoke('gallery:scanIngestPath', mode, existingPath),
-  galleryPauseUpload: () => ipcRenderer.invoke('gallery:pauseUpload'),
-  galleryResumeUpload: () => ipcRenderer.invoke('gallery:resumeUpload'),
-  galleryCancelUpload: () => ipcRenderer.invoke('gallery:cancelUpload'),
-  galleryRetryFailed: () => ipcRenderer.invoke('gallery:retryFailed'),
-  galleryClearCompleted: () => ipcRenderer.invoke('gallery:clearCompleted'),
-  galleryGetState: () => ipcRenderer.invoke('gallery:getState'),
-  onGalleryUploadState: callback => {
-    const listener = (_: unknown, state: any): void => callback(state);
-    ipcRenderer.on('gallery:state', listener);
-    return () => { ipcRenderer.removeListener('gallery:state', listener); };
-  },
-  galleryFetchMedia: galleryId => ipcRenderer.invoke('gallery:fetchMedia', galleryId),
-  galleryReorderMedia: (galleryId, itemIds) => ipcRenderer.invoke('gallery:reorderMedia', galleryId, itemIds),
-  galleryUpdateMedia: (mediaId, updates) => ipcRenderer.invoke('gallery:updateMedia', mediaId, updates),
-  galleryDeleteMedia: mediaId => ipcRenderer.invoke('gallery:deleteMedia', mediaId),
-  galleryBatchDeleteMedia: (galleryId, itemIds) => ipcRenderer.invoke('gallery:batchDeleteMedia', galleryId, itemIds),
-  gallerySetCover: (galleryId, coverUrl, coverVideoUrl) =>
-    ipcRenderer.invoke('gallery:setCover', galleryId, coverUrl, coverVideoUrl),
-  galleryFetchSongs: () => ipcRenderer.invoke('gallery:fetchSongs'),
-  gallerySetSong: (galleryId, backgroundMusicUrl, backgroundMusicTitle) =>
-    ipcRenderer.invoke('gallery:setSong', galleryId, backgroundMusicUrl, backgroundMusicTitle),
-  galleryChooseAndUploadSong: galleryId => ipcRenderer.invoke('gallery:chooseAndUploadSong', galleryId),
+
+  getRevisions: (): Promise<ClientRevisionItem[]> => ipcRenderer.invoke('revisions:getAll'),
+  addRevision: (
+    item: Omit<ClientRevisionItem, 'id' | 'timestamp' | 'updatedAt'>
+  ): Promise<ClientRevisionItem> => ipcRenderer.invoke('revisions:add', item),
+  updateRevisionStatus: (
+    id: string,
+    status: ClientRevisionItem['status']
+  ): Promise<ClientRevisionItem | null> => ipcRenderer.invoke('revisions:updateStatus', id, status),
+  aiParseNotes: (text: string): Promise<{ points: string; timecodes: string; summary: string }> =>
+    ipcRenderer.invoke('revisions:aiParse', text),
+
+  // Feature 7: Editor Deliverables & Tasks
+  getEditorDeliverables: (memberId?: number): Promise<EditorDeliverable[]> =>
+    ipcRenderer.invoke('editor:getDeliverables', memberId),
+  getEditorTasks: (assigneeId?: string | number): Promise<EditorTask[]> =>
+    ipcRenderer.invoke('editor:getTasks', assigneeId),
+  toggleEditorTask: (taskId: string): Promise<EditorTask | null> =>
+    ipcRenderer.invoke('editor:toggleTask', taskId),
+  updateDeliverableStatus: (
+    id: string,
+    status: EditorDeliverable['status']
+  ): Promise<EditorDeliverable | null> =>
+    ipcRenderer.invoke('editor:updateDeliverableStatus', id, status),
+  updateDeliverableRender: (
+    id: string,
+    renderPath: string,
+    dropboxUrl?: string
+  ): Promise<EditorDeliverable | null> =>
+    ipcRenderer.invoke('editor:updateDeliverableRender', id, renderPath, dropboxUrl),
+
+  // Feature 8: Backblaze B2 Storage
+  getB2Config: (): Promise<{ keyId: string; applicationKey: string; bucketId: string; bucketName: string; isConfigured: boolean }> =>
+    ipcRenderer.invoke('b2:getConfig'),
+  saveB2Config: (cfg: { keyId: string; applicationKey: string; bucketId?: string; bucketName?: string }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('b2:saveConfig', cfg),
+  testB2Connection: (): Promise<{ ok: boolean; message: string; accountId?: string }> =>
+    ipcRenderer.invoke('b2:testConnection'),
+
+  // Feature 9: App Profile
+  getStartupProfile: (): Promise<string> => ipcRenderer.invoke('app:getStartupProfile')
 };
-contextBridge.exposeInMainWorld('api', api);
 
-
+contextBridge.exposeInMainWorld('clipsApi', clipsApi);

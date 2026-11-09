@@ -1,114 +1,127 @@
-import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
-import { setupIpcHandlers, allowedExternal } from './ipc'
+import { app, BrowserWindow, shell, ipcMain } from 'electron';
+import { join } from 'node:path';
+import fs from 'node:fs';
+import { electronApp, optimizer, is } from '@electron-toolkit/utils';
+import { registerIpcHandlers } from './ipc';
 
-function createWindow(): void {
-  // Create the browser window.
+const LOG_FILE = '/tmp/baawaray_post_production.log';
+function log(msg: string): void {
+  try {
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch {}
+}
+
+process.on('uncaughtException', err => {
+  log(`Uncaught exception: ${err?.stack || err}`);
+});
+
+process.on('unhandledRejection', reason => {
+  log(`Unhandled rejection: ${reason}`);
+});
+
+function createWindow(): BrowserWindow {
+  log('createWindow called');
+
+  const profileArg = process.argv.find(arg => arg.startsWith('--profile='));
+  let profile = profileArg ? profileArg.split('=')[1] : '';
+  if (!profile) {
+    const lifecycle = process.env.npm_lifecycle_event || '';
+    if (lifecycle.includes('admin')) profile = 'admin';
+    else if (lifecycle.includes('photo')) profile = 'photo';
+    else if (lifecycle.includes('video')) profile = 'video';
+  }
+  if (!profile) profile = 'admin';
+
+  ipcMain.removeHandler('app:getStartupProfile');
+  ipcMain.handle('app:getStartupProfile', () => profile);
+
+  const titleMap: Record<string, string> = {
+    admin: 'Baawaray Films • Post-Production Studio Lead & Command Center',
+    photo: 'Baawaray Films • Photo Editor Studio & Album Maker',
+    video: 'Baawaray Films • Video Editor Studio & Clips Engine'
+  };
+
   const mainWindow = new BrowserWindow({
-    title: 'Baawaray Films',
-    width: 1280,
-    height: 840,
-    minWidth: 1000,
+    width: 1320,
+    height: 880,
+    minWidth: 1040,
     minHeight: 700,
-    show: false,
+    title: titleMap[profile] || titleMap.admin,
+    show: true,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    titleBarStyle: 'hiddenInset',
+    backgroundColor: '#FBFAF7',
+    icon: join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: true,
+      sandbox: false,
       contextIsolation: true,
       nodeIntegration: false
     }
-  })
+  });
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
-  })
+    log('mainWindow ready-to-show');
+    mainWindow.show();
+  });
 
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    if (allowedExternal(details.url)) void shell.openExternal(details.url)
-    return { action: 'deny' }
-  })
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    log(`did-fail-load: ${code} ${desc} ${url}`);
+  });
 
-  mainWindow.webContents.session.setPermissionRequestHandler((_contents, permission, callback) => {
-    if (permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
-      return callback(true)
-    }
-    callback(false)
-  })
-  mainWindow.webContents.session.setPermissionCheckHandler((_contents, permission) => {
-    if (permission === 'clipboard-read' || permission === 'clipboard-sanitized-write') {
-      return true
-    }
-    return false
-  })
-  mainWindow.webContents.on('console-message', (_, level, message) => {
-    console.log(`[Renderer:${level}] ${message}`)
-  })
+  mainWindow.webContents.on('did-finish-load', () => {
+    log('did-finish-load');
+  });
 
-  // HMR for renderer base on electron-vite cli.
-  // Load the remote URL for development or the local html file for production.
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    log(`[RENDERER-CONSOLE lvl:${level}] ${message} (${sourceId}:${line})`);
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(details => {
+    shell.openExternal(details.url);
+    return { action: 'deny' };
+  });
+
+  try {
+    log('registering IPC handlers...');
+    registerIpcHandlers(mainWindow);
+    log('IPC handlers registered successfully');
+  } catch (err: any) {
+    log(`Error in registerIpcHandlers: ${err?.stack || err}`);
   }
+
+  const rendererHtml = join(__dirname, '../renderer/index.html');
+  log(`renderer HTML path: ${rendererHtml}, exists: ${fs.existsSync(rendererHtml)}`);
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    log(`loading dev URL: ${process.env['ELECTRON_RENDERER_URL']}?profile=${profile}`);
+    mainWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?profile=${profile}`);
+  } else {
+    log(`loading file: ${rendererHtml} with profile=${profile}`);
+    mainWindow.loadFile(rendererHtml, { query: { profile } });
+  }
+
+  return mainWindow;
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-let shutdown: (() => void) | undefined
-if (!app.requestSingleInstanceLock()) app.quit()
-app.on('second-instance', () => { const win = BrowserWindow.getAllWindows()[0]; if (win) { win.show(); win.focus() } })
-app.on('before-quit', () => shutdown?.())
+app.whenReady().then(() => {
+  log('app.whenReady');
+  electronApp.setAppUserModelId('com.baawaray.postproduction');
 
-app.whenReady().then(async () => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.baawaray.studio-uploader')
-  if (process.platform === 'darwin') app.dock?.setIcon(icon)
-
-  // Configure autostart on desktop startup
-  try {
-    const loginSettings = app.getLoginItemSettings()
-    if (!loginSettings.openAtLogin) {
-      app.setLoginItemSettings({
-        openAtLogin: true,
-        openAsHidden: false
-      })
-    }
-  } catch (err) {
-    console.error('Failed to configure login item settings:', err)
-  }
-
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
   app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
-  })
+    optimizer.watchWindowShortcuts(window);
+  });
 
-  shutdown = await setupIpcHandlers()
-
-  createWindow()
+  createWindow();
 
   app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  log('window-all-closed');
   if (process.platform !== 'darwin') {
-    app.quit()
+    app.quit();
   }
-})
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and require them here.
+});

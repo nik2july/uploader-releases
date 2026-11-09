@@ -1,2 +1,7 @@
-import type { DesktopAPI } from '../shared/contracts';
-declare global { interface Window { api: DesktopAPI } }
+import { clipsApi } from './index';
+
+declare global {
+  interface Window {
+    clipsApi: typeof clipsApi;
+  }
+}

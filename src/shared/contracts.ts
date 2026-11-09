@@ -1,26 +1,203 @@
-import type { MediaBillingResult } from '../../../COMMON/Shared Code & Contracts/utils/mediaPricing';
-import type {
-  ClipFPSCap, ClipQuality, ClipRunState, ClipScanResult, DurationKind, DurationProgress, DurationScanResult,
-  PhotoRunState, SequenceScanOptions, SequenceScanResult, UtilityToolsStatus,
-} from './utilities';
+// ==============================================================================
+// Baawaray Films • Unified Post-Production Powerhouse Contracts
+// ==============================================================================
 
-// The Utilities section — Duration, Missing Clips, Clip Delivery, Photo
-// Delivery — brought over from the standalone Baawaray Utility app.
-export * from './utilities';
-export type { MediaBillingInput, MediaBillingResult, MediaMeasurement } from '../../../COMMON/Shared Code & Contracts/utils/mediaPricing';
+export type EditorProfileType = 'admin' | 'photo' | 'video';
 
-export type TransferStatus = 'scanning' | 'ready' | 'queued' | 'uploading' | 'verifying' | 'paused' | 'waiting_network' | 'waiting_quota' | 'needs_attention' | 'completed';
-export interface ScanOptions { excludedBillingFolders: string[]; countPhotoPairsOnce: boolean }
-export interface MissingClips { label: string; folder: string; missing: string[]; missingCount: number; received: number }
-export interface ScanSummary {
-  totalPhotos: number; billablePhotos: number; totalVideos: number; totalDurationSeconds: number;
-  unknownVideoCount: number; totalBytes: number; fileCount: number; folderCount: number;
-  pairedPhotos: number; excludedBillingFiles: number; warnings: string[]; readErrors: number;
-  /** Gaps in the camera's numbering — files that never made it off the card. */
-  missingClips: MissingClips[]; missingClipCount: number;
-  /** Files present but unreadable: an empty file, or a clip with no duration in its header. */
-  unreadableFiles: { path: string; reason: string }[];
+export type RawHandoffMode = 'hard_drive' | 'cloud_transfer';
+
+export interface InHouseHandoffRecord {
+  jobId: string;
+  clientId: string;
+  clientName: string;
+  handoffMode: 'hard_drive';
+  driveLabel: string; // e.g. "SanDisk Extreme 2TB #1"
+  mountPath: string; // e.g. "/Volumes/T7_Shield/261028_Dikshant_Moreen"
+  rawPhotoCount?: number;
+  rawDurationHours?: number;
+  rawDurationMinutes?: number;
+  handedToEditorId: string;
+  handedToEditorName: string;
+  handedAt: string;
+  status: 'assigned' | 'drive_connected' | 'in_process' | 'completed';
 }
+
+export interface FreelanceHandoffRecord {
+  jobId: string;
+  clientId: string;
+  clientName: string;
+  handoffMode: 'cloud_transfer';
+  cloudFolderId?: string;
+  cloudUrl?: string;
+  transferJobId?: string;
+  bytesTotal?: number;
+  bytesUploaded?: number;
+  isVerified: boolean;
+  assignedToEditorId: string;
+  assignedToEditorName: string;
+  status: 'upload_pending' | 'uploading' | 'ready_for_editor' | 'downloading' | 'in_process';
+}
+
+// Re-export / merge existing contracts
+export interface LutPreset {
+  id: string;
+  name: string;
+  description: string;
+  path: string;
+  isBuiltIn: boolean;
+}
+
+export type VideoQualityPreset = 'archive' | 'balanced' | 'compact' | 'proxy';
+export type VideoCodecChoice = 'h264_videotoolbox' | 'hevc_videotoolbox' | 'prores_videotoolbox' | 'libx264';
+export type FpsCapChoice = 'original' | 24 | 25 | 30 | 50 | 60 | 100 | 120;
+
+export interface LutConversionOptions {
+  sourcePath: string;
+  destinationPath: string;
+  lutPath: string;
+  lutName: string;
+  quality: VideoQualityPreset;
+  codec: VideoCodecChoice;
+  fullHD: boolean;
+  fpsCap: FpsCapChoice;
+  skipExisting?: boolean;
+}
+
+export interface ConversionProgress {
+  state: 'idle' | 'scanning' | 'converting' | 'paused' | 'completed' | 'cancelled' | 'error';
+  totalClips: number;
+  currentClipIndex: number;
+  currentClipName: string;
+  percent: number;
+  fps: number;
+  speed: string;
+  elapsedSeconds: number;
+  remainingSeconds: number;
+  logs: string[];
+  error?: string;
+}
+
+export interface EventConfigItem {
+  eventName: string;
+  eventDate: string; // YYYY-MM-DD
+  photographers: string[];
+  cinematographers: string[];
+  droneOperators?: string[];
+}
+
+export interface EventFolderPlan {
+  clientName: string;
+  coupleName?: string;
+  projectCode?: string;
+  eventName: string;
+  eventDate: string; // YYYY-MM-DD
+  cinematographers: string[];
+  droneOperators: string[];
+  photographers: string[];
+  targetDirectory: string;
+  createRawCameras?: boolean;
+  customRootFolderName?: string;
+  mainEventDate?: string;
+  events?: EventConfigItem[];
+  deliverables?: string[];
+  includeDeliveryFolders?: boolean;
+}
+
+export interface FolderCreationResult {
+  success: boolean;
+  rootPath: string;
+  createdPaths: string[];
+  error?: string;
+}
+
+export interface DataHandoffRecord {
+  id: string;
+  timestamp: string;
+  crewName: string;
+  crewRole: 'cinematographer' | 'photographer' | 'drone';
+  clientName: string;
+  eventName: string;
+  eventDate: string;
+  cardCount: number;
+  totalSizeGB: number;
+  clipOrPhotoCount: number;
+  destinationFolder: string;
+  notes: string;
+  verifiedBy: string;
+  whatsappConfirmationSent: boolean;
+  sourceDriveLabel?: string;
+}
+
+export interface ClipDeliverySettings {
+  sourceDirectory: string;
+  destinationDirectory: string;
+  mode: 'all' | 'raw_only' | 'edited_only';
+  preset: 'archive' | 'balanced' | 'compact' | 'target_gb';
+  targetSizeGB?: number;
+  applyTonemap: boolean; // HLG to Rec.709
+  hardwareAccelerate: boolean;
+}
+
+export interface ClipDeliveryRunState {
+  state: 'idle' | 'scanning' | 'running' | 'paused' | 'completed' | 'cancelled' | 'error';
+  rawClipsCount: number;
+  rawClipsDone: number;
+  editedVideosCount: number;
+  editedVideosDone: number;
+  totalCount: number;
+  completedCount: number;
+  totalDuration: number;
+  completedDuration: number;
+  currentFile: string;
+  currentType: string;
+  percent: number;
+  fps: number;
+  speed: string;
+  etaSeconds: number;
+  logs: string[];
+  error?: string;
+}
+
+export interface DropboxDeliverableConfig {
+  clientId: string;
+  clientName: string;
+  deliverableTitle: string;
+  cutVersion: string; // "V001", "V002", "V003"
+  filePath: string;
+  notes?: string;
+  contactNumber?: string;
+}
+
+export interface DropboxUploadStatus {
+  state: 'idle' | 'uploading' | 'completed' | 'error';
+  percent: number;
+  bytesUploaded: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  currentFile: string;
+  shareableUrl?: string;
+  versionPath?: string;
+  error?: string;
+}
+
+export interface ClientRevisionItem {
+  id: string;
+  deliverableId: string;
+  deliverableTitle: string;
+  clientId: string;
+  clientName: string;
+  cutVersion: string;
+  timestamp: string;
+  timecodes: string;
+  points: string;
+  rawNotes: string;
+  audioNoteUrl?: string;
+  source: 'whatsapp' | 'call' | 'in_person' | 'email';
+  status: 'open' | 'in_progress' | 'resolved';
+  postProductionContact: string;
+  updatedAt: string;
+}
+
 export interface OfflineScanResult {
   folderPath: string;
   folderName: string;
@@ -35,455 +212,20 @@ export interface OfflineScanResult {
   formattedSize: string;
   fileCount: number;
 }
+
 export interface WorkTarget {
-  kind: 'freelance' | 'deliverable' | 'team'; id: string; clientId?: string; title: string; clientName: string;
-  serviceType: string; purpose: 'raw' | 'delivery'; jobCode?: string; dueDate?: string;
-  recipientName?: string; recipientPhone?: string; recipientEmail?: string; brief?: string;
-  subtitle?: string;
-}
-export interface InvoiceSnapshot {
-  id: string; number: string; createdAt: string; status: 'draft' | 'issued';
-  studioName: string; clientName: string; title: string; currency: string;
-  quantity: number; unit: string; rate: number; subtotal: number; taxPercent: number; tax: number; total: number;
-  calculation?: MediaBillingResult; note?: string;
-}
-export interface Transfer {
-  id: string; ownerUid: string; rootPath: string; rootName: string; status: TransferStatus;
-  /** Relative files explicitly selected by the owner. Omitted for a whole-folder scan. */
-  sourceFiles?: string[];
-  target?: WorkTarget; scan?: ScanSummary; options: ScanOptions; createdAt: string; updatedAt: string;
-  shareLink?: string; expiresAt?: string | null; expired?: boolean; trashedAt?: string | null; cleanupError?: string | null;
-  folderId?: string; driveAccount?: string; link?: string; error?: string; retryAt?: number;
-  invoice?: InvoiceSnapshot; synced?: boolean; shared?: boolean; sharing?: 'restricted' | 'anyone';
-  /** When the recipient's WhatsApp message was last opened. Preparing a message is not sending it. */
-  messagePreparedAt?: string;
-  completedFiles: number; uploadedBytes: number; currentFile?: string;
-}
-export interface ManifestFile {
-  id: number; jobId: string; relativePath: string; size: number; mtimeMs: number;
-  kind: 'photo' | 'video' | 'other'; billingIncluded: boolean; durationSeconds?: number;
-  driveId?: string; session?: string; offset: number; md5?: string;
-  state: 'pending' | 'uploading' | 'verified'; error?: string;
-}
-export interface UpdateInfo {
-  version: string;
-  /** Where to send the studio to get it by hand — the .dmg if the release has one. */
-  url: string;
-  /**
-   * The zip of the .app bundle, when the release ships one. This is what the
-   * app installs over itself; without it the banner offers the manual
-   * download-and-drag instead.
-   */
-  packageUrl?: string;
-  notes: string;
-  publishedAt: string;
-}
-/** Where raw-footage transfers land. Chosen once in Uploader settings, shared by the studio. */
-export type UploadDestination = 'drive';
-export interface DriveQuotaInfo {
-  limitBytes: number | null;
-  usageBytes: number;
-  usageInDriveBytes: number;
-  usageInDriveTrashBytes: number;
-  freeBytes: number | null;
-  displayName?: string;
-  email?: string;
-  photoLink?: string;
-}
-export interface DriveItem {
+  kind: 'freelance' | 'deliverable' | 'team';
   id: string;
-  name: string;
-  mimeType: string;
-  isFolder: boolean;
-  size: number;
-  modifiedTime?: string;
-  webViewLink?: string;
-  shared?: boolean;
-  parents?: string[];
-}
-export interface DriveStatus {
-  configured: boolean;
-  connected: boolean;
-  email?: string;
-  displayName?: string;
-  photoLink?: string;
-  clientId: string;
-  error?: string;
-  quota?: DriveQuotaInfo;
-  targetFolderId?: string;
-  targetFolderName?: string;
-}
-export interface PackageInfo { shareLink: string; expiresAt: string | null; expired: boolean; trashedAt: string | null; cleanupError: string | null }
-export interface DesktopAPI {
-  login(phone: string, password: string): Promise<{ customToken: string; accountType: string }>;
-  authorize(idToken: string): Promise<{ uid: string; isOwner: boolean }>;
-  signOut(): Promise<void>;
-  scan(options: ScanOptions, target?: WorkTarget): Promise<string | null>;
-  scanFiles(options: ScanOptions, target?: WorkTarget): Promise<string | null>;
-  scanOfflineFolder(target?: WorkTarget): Promise<OfflineScanResult | null>;
-  cancelScan(id: string): Promise<void>;
-  list(): Promise<Transfer[]>;
-  inspect(id: string): Promise<{ files: { path: string; error: string }[] }>;
-  refreshDriveConfiguration(): Promise<DriveStatus>;
-  connectDrive(idToken?: string): Promise<DriveStatus>;
-  driveStatus(): Promise<DriveStatus>;
-  disconnectDrive(): Promise<DriveStatus>;
-  driveQuota(): Promise<DriveQuotaInfo | null>;
-  driveListFiles(parentId?: string, query?: string): Promise<{ files: DriveItem[]; parentName?: string }>;
-  driveCreateFolder(name: string, parentId?: string): Promise<DriveItem>;
-  driveRenameFile(id: string, newName: string): Promise<DriveItem>;
-  driveTrashFile(id: string, permanent?: boolean): Promise<void>;
-  driveEmptyTrash(): Promise<void>;
-  driveShareItem(id: string, mode: 'anyone' | 'restricted', email?: string): Promise<string>;
-  setTargetDriveFolder(folderId: string, folderName?: string): Promise<DriveStatus>;
-  setUploadDestination(destination: UploadDestination): Promise<void>;
-  setSharedDriveId(driveId: string): Promise<void>;
-  removeTransfer(id: string, keepUploaded?: boolean): Promise<{ removed: boolean; keptLink?: string }>;
-  downloadUpdate(info: UpdateInfo): Promise<{ ready: boolean; version: string }>;
-  installUpdate(): Promise<void>;
-  logRendererError(message: string, stack: string): Promise<void>;
-  onUpdateProgress(callback: (progress: { received: number; total: number }) => void): () => void;
-  dropboxStatus(): Promise<DropboxStatus>;
-  connectDropbox(token: string | { appKey?: string; appSecret?: string; refreshToken?: string; accessToken?: string }): Promise<DropboxStatus>;
-  disconnectDropbox(): Promise<DropboxStatus>;
-  chooseDeliverableFile(): Promise<{ filePath: string; fileName: string; fileSize: number } | null>;
-  uploadDeliverable(jobId: string, filePath: string, targetFolder: string, fileName: string): Promise<string>;
-  onUploadProgress(callback: (progress: { jobId: string; percent: number; uploadedBytes: number; totalBytes: number }) => void): () => void;
-  chooseDownloadDirectory(): Promise<string | null>;
-  downloadRawData(jobId: string, rawDataLink: string, destDir: string): Promise<{ success: boolean; downloadedBytes: number; totalBytes: number; fileCount: number; path: string }>;
-  cancelDownload(jobId: string): Promise<void>;
-  pauseDownload(jobId: string): Promise<void>;
-  getActiveDownload(jobId?: string): Promise<{ isDownloading: boolean; jobId?: string; progress?: DownloadProgress; destDir?: string; isPaused: boolean }>;
-  onDownloadProgress(callback: (progress: DownloadProgress) => void): () => void;
-  verifyLocalFolder(jobId: string, folderPath: string): Promise<{ valid: boolean; fileCount: number; totalBytes: number }>;
-  openDownloadedFolder(jobId: string): Promise<void>;
-  forgetDownloadedFolder(jobId: string): Promise<void>;
-  checkDiskSpace(targetPath: string): Promise<DiskSpaceInfo>;
-  getDownloadSize(rawDataLink: string): Promise<number>;
-  getDownloadDetails(rawDataLink: string): Promise<DownloadLinkDetails>;
-  deleteDriveFolder(folderId: string): Promise<void>;
-  deleteDropboxFile(dropboxPath: string): Promise<void>;
-  downloadDropboxFile(dropboxPath: string, localPath: string): Promise<void>;
-  chooseSaveLocation(defaultFileName: string): Promise<string | null>;
-  enqueue(id: string, target: WorkTarget, invoice?: InvoiceSnapshot): Promise<void>;
-  pause(id: string): Promise<void>;
-  resume(id: string): Promise<void>;
-  relocate(id: string): Promise<void>;
-  /** Re-scan a transfer's folder and queue anything that is not already verified. */
-  rescan(id: string): Promise<boolean>;
-  /** Skip and remove corrupted or 0-byte unreadable files from the transfer. */
-  skipUnreadableFiles(id: string): Promise<Transfer>;
-  packageInfo(id: string): Promise<PackageInfo>;
-  setPackageExpiry(id: string, expiresAt: string | null): Promise<PackageInfo>;
-  share(id: string, mode: 'restricted' | 'anyone', email: string): Promise<string>;
-  markSynced(id: string): Promise<void>;
-  markMessagePrepared(id: string): Promise<void>;
-  saveInvoice(id: string, invoice: InvoiceSnapshot): Promise<void>;
-  savePdf(bytes: Uint8Array, filename: string): Promise<boolean>;
-  openExternal(url: string): Promise<void>;
-  setKeepAwake(on: boolean): Promise<void>;
-  autoResumeTransfers(): Promise<number>;
-  getAutoStart(): Promise<boolean>;
-  setAutoStart(enable: boolean): Promise<boolean>;
-  checkForUpdate(): Promise<UpdateInfo | null>;
-  appVersion(): Promise<string>;
-  copyToClipboard(text: string): Promise<boolean>;
-  createClientFolderStructure(tree: { rootName: string; folders: string[] }): Promise<{ rootPath: string; created: number } | null>;
-  diagnostics(): Promise<string>;
-  onChange(callback: () => void): () => void;
-
-  // MARK: Utilities
-  /** Which of ffprobe and ffmpeg this Mac can actually run. */
-  utilityStatus(): Promise<UtilityToolsStatus>;
-  chooseUtilityFolder(title: string, buttonLabel?: string): Promise<string | null>;
-  /** A dropped item may be a file — this returns the folder to work on. */
-  folderOfPath(path: string): Promise<string | null>;
-  /** The path behind a file dropped into the window. */
-  pathForFile(file: File): string;
-  revealInFinder(path: string): Promise<void>;
-  openPath(path: string): Promise<void>;
-  saveTextFile(defaultName: string, text: string): Promise<boolean>;
-  scanDurations(rootPath: string, kinds: DurationKind[]): Promise<DurationScanResult>;
-  cancelDurationScan(): Promise<void>;
-  onDurationProgress(callback: (progress: DurationProgress) => void): () => void;
-  scanSequences(rootPath: string, options: SequenceScanOptions): Promise<SequenceScanResult>;
-  cancelSequenceScan(): Promise<void>;
-  onSequenceProgress(callback: (progress: { seen: number }) => void): () => void;
-  clipState(): Promise<ClipRunState>;
-  clipScan(sourcePath: string): Promise<ClipScanResult>;
-  clipSetDestination(destinationPath: string): Promise<void>;
-  clipStart(destinationPath: string, choice: { mode: 'quality' | 'size'; quality: ClipQuality; targetGB: number; fullHD?: boolean; fpsCap?: ClipFPSCap }): Promise<void>;
-  clipCancel(): Promise<void>;
-  onClipState(callback: (state: ClipRunState) => void): () => void;
-  photoState(): Promise<PhotoRunState>;
-  photoScan(sourcePath: string): Promise<PhotoRunState>;
-  photoSetPresets(presetIds: string[]): Promise<void>;
-  photoSetOutputRoot(outputRoot: string): Promise<void>;
-  photoStart(): Promise<void>;
-  photoCancel(): Promise<void>;
-  onPhotoState(callback: (state: PhotoRunState) => void): () => void;
-  // Gallery Uploader API (Apple Silicon Hardware Transcoding & Direct Cloud Run Ingestion)
-  galleryFetchGalleries(): Promise<GallerySummary[]>;
-  galleryCreateGallery(payload: CreateGalleryPayload): Promise<GallerySummary | null>;
-  galleryUpdateGallery(galleryId: string, updates: Partial<GallerySummary>): Promise<GallerySummary | null>;
-  galleryDeleteGallery(galleryId: string): Promise<boolean>;
-  galleryCreateScene(galleryId: string, name: string): Promise<any>;
-  galleryUpdateScene(galleryId: string, sceneId: string, name: string): Promise<GallerySummary | null>;
-  galleryDeleteScene(galleryId: string, sceneId: string): Promise<GallerySummary | null>;
-  galleryChooseFiles(mode: 'files' | 'folder' | 'photos' | 'videos'): Promise<string[] | null>;
-  galleryStartUpload(galleryId: string, sceneId: string, filePaths: string[], autoTranscode?: boolean, isAutoplayLoop?: boolean): Promise<void>;
-  galleryStartBatchUpload(payload: GalleryBatchUploadPayload): Promise<void>;
-  galleryCreateIngestFolderTree(payload: CreateIngestFolderTreePayload): Promise<CreateIngestFolderTreeResult | null>;
-  galleryScanIngestPath(mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files', existingPath?: string): Promise<IngestScanResult | null>;
-  galleryPauseUpload(): Promise<void>;
-  galleryResumeUpload(): Promise<void>;
-  galleryCancelUpload(): Promise<void>;
-  galleryRetryFailed(): Promise<void>;
-  galleryClearCompleted(): Promise<void>;
-  galleryGetState(): Promise<GalleryUploadSessionState>;
-  onGalleryUploadState(callback: (state: GalleryUploadSessionState) => void): () => void;
-  galleryFetchMedia(galleryId: string): Promise<GalleryMediaItem[]>;
-  galleryReorderMedia(galleryId: string, itemIds: string[]): Promise<boolean>;
-  galleryUpdateMedia(mediaId: string, updates: Partial<GalleryMediaItem>): Promise<GalleryMediaItem | null>;
-  galleryDeleteMedia(mediaId: string): Promise<boolean>;
-  galleryBatchDeleteMedia(galleryId: string, itemIds: string[]): Promise<boolean>;
-  gallerySetCover(galleryId: string, coverUrl?: string, coverVideoUrl?: string): Promise<GallerySummary | null>;
-  galleryFetchSongs(): Promise<GallerySongItem[]>;
-  gallerySetSong(galleryId: string, backgroundMusicUrl: string, backgroundMusicTitle: string): Promise<GallerySummary | null>;
-  galleryChooseAndUploadSong(galleryId: string): Promise<{ song: GallerySongItem; gallery: GallerySummary | null } | null>;
-}
-
-export interface DiskSpaceInfo {
-  freeBytes: number;
-  totalBytes: number;
-  path: string;
-}
-
-export interface DownloadLinkDetails {
-  totalBytes: number;
-  sizeBytes?: number;
-  folderName?: string;
-  fileCount: number;
-}
-
-export interface DownloadProgress {
-  jobId: string;
-  percent: number;
-  downloadedBytes: number;
-  totalBytes: number;
-  fileName?: string;
-  status: 'downloading' | 'completed' | 'error' | 'paused';
-  error?: string;
-  speedBytesPerSec?: number;
-  estimatedRemainingSec?: number;
-}
-
-export interface DropboxStatus { configured: boolean; connected: boolean; email?: string; error?: string }
-
-// ---------------------------------------------------------------------------
-// Gallery Portal Desktop Uploader Contracts
-// ---------------------------------------------------------------------------
-
-export interface GalleryItemProgress {
-  id: string;
-  filePath: string;
-  fileName: string;
-  fileSize: number; // original size in bytes
-  mediaType: 'photo' | 'video';
-  status: 'queued' | 'transcoding' | 'uploading' | 'completed' | 'failed';
-  transcodeProgress: number; // 0 - 100
-  uploadProgress: number; // 0 - 100
-  optimizedSize?: number;
-  speedBytesPerSec?: number;
-  error?: string;
-  isAutoplayLoop?: boolean;
-  sceneId?: string;
-  sceneName?: string;
-  studioEventId?: number;
-  photographerId?: number;
-  photographerName?: string;
-}
-
-export interface GalleryBatchUploadGroup {
-  sceneId: string;
-  sceneName: string;
-  studioEventId?: number;
-  photographerId?: number;
-  photographerName?: string;
-  filePaths: string[];
-}
-
-export interface GalleryBatchUploadPayload {
-  galleryId: string;
-  groups: GalleryBatchUploadGroup[];
-  autoTranscode?: boolean;
-  isAutoplayLoop?: boolean;
-}
-
-export interface IngestManifestPhotographer {
-  memberId: number;
-  memberName: string;
-  roleLabel?: string;
-  folderName: string;
-}
-
-export interface IngestManifestEvent {
-  eventId: number;
-  eventName: string;
-  eventDate?: string;
-  folderName: string;
-  photographers: IngestManifestPhotographer[];
-}
-
-export interface IngestClientFolderManifest {
-  version: 1;
-  clientId: number;
-  clientName: string;
-  clientCode?: string;
-  createdAt: string;
-  events: IngestManifestEvent[];
-}
-
-export interface CreateIngestFolderTreePayload {
-  rootName: string;
-  clientId: number;
-  clientName: string;
-  clientCode?: string;
-  events: {
-    eventId: number;
-    eventName: string;
-    eventDate?: string;
-    photographers: {
-      memberId: number;
-      memberName: string;
-      roleLabel?: string;
-    }[];
-  }[];
-}
-
-export interface CreateIngestFolderTreeResult {
-  rootPath: string;
-  createdFoldersCount: number;
-  manifest: IngestClientFolderManifest;
-}
-
-export interface IngestScannedPhotographerFolder {
-  folderPath: string;
-  folderName: string;
-  photoCount: number;
-  videoCount: number;
-  totalFiles: number;
-  totalBytes: number;
-  dataGb: string;
-  filePaths: string[];
-  matchedMemberId?: number;
-  matchedMemberName?: string;
-}
-
-export interface IngestScannedEventFolder {
-  folderPath: string;
-  folderName: string;
-  matchedEventId?: number;
-  matchedEventName?: string;
-  photographers: IngestScannedPhotographerFolder[];
-  directFiles: IngestScannedPhotographerFolder | null;
-}
-
-export interface IngestScanResult {
-  mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files';
-  rootPath: string;
-  rootName: string;
-  manifest?: IngestClientFolderManifest | null;
-  events: IngestScannedEventFolder[];
-  singlePhotographer?: IngestScannedPhotographerFolder | null;
-  totalPhotos: number;
-  totalVideos: number;
-  totalFiles: number;
-  totalBytes: number;
-  totalGb: string;
-}
-
-export interface GalleryUploadSessionState {
-  status: 'idle' | 'running' | 'paused' | 'completed';
-  galleryId: string;
-  galleryTitle: string;
-  sceneId: string;
-  sceneName: string;
-  items: GalleryItemProgress[];
-  totalBytes: number;
-  uploadedBytes: number;
-  overallProgress: number; // 0 - 100
-  speedBytesPerSec: number;
-  etaSeconds: number;
-  autoTranscode: boolean;
-}
-
-export interface GallerySummary {
-  id: string;
+  clientId?: string;
   title: string;
   clientName: string;
-  studioClientId?: number;
-  slug: string;
-  scenes?: { id: string; name: string; order: number; studioEventId?: number }[];
-  coverImage?: string;
-  coverVideo?: string;
-  backgroundMusicUrl?: string;
-  backgroundMusicTitle?: string;
-  isPublished?: boolean;
-  mediaCount?: { photos: number; videos: number; loops?: number };
-  eventDate?: string;
-  category?: string;
-  description?: string;
+  serviceType: string;
+  purpose: 'raw' | 'delivery';
+  jobCode?: string;
+  dueDate?: string;
+  recipientName?: string;
+  recipientPhone?: string;
+  recipientEmail?: string;
+  brief?: string;
+  isInternal?: boolean;
 }
-
-export interface CreateGalleryPayload {
-  title: string;
-  clientName: string;
-  studioClientId?: number;
-  eventDate?: string;
-  category?: string;
-  slug?: string;
-  description?: string;
-  isPublished?: boolean;
-  scenes?: { id: string; name: string; order: number; studioEventId?: number }[];
-}
-
-export interface GalleryMediaItem {
-  id: string;
-  galleryId: string;
-  type: 'photo' | 'video';
-  isAutoplayLoop: boolean;
-  sceneId?: string;
-  studioEventId?: number;
-  photographerId?: number;
-  photographerName?: string;
-  gridSpan?: 'normal' | 'wide';
-  title?: string;
-  originalFilename: string;
-  originalSize: number;
-  optimizedSize: number;
-  savedPercentage: number;
-  urls: {
-    thumbnail?: string;
-    grid?: string;
-    full?: string;
-    video?: string;
-    poster?: string;
-  };
-  width?: number;
-  height?: number;
-  duration?: number;
-  aspectRatio?: number;
-  order: number;
-  createdAt: string;
-}
-
-export interface GallerySongItem {
-  id: string;
-  title: string;
-  originalFilename: string;
-  url: string;
-  size: number;
-  createdAt: string;
-}
-

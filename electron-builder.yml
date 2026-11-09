@@ -1,8 +1,11 @@
 appId: com.baawaray.studio-uploader
 productName: Baawaray Films
+publish:
+  provider: github
+  owner: nik2july
+  repo: uploader-releases
 directories:
   buildResources: build
-# Ad-hoc signs the bundle so macOS does not report an unsigned build as damaged.
 afterPack: build/afterPack.cjs
 files:
   - '!dist/**'
@@ -15,16 +18,8 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
-  # ffprobe is spawned as a child process to measure clip durations, and a binary
-  # cannot be executed from inside the asar archive. src/main/scanner.ts rewrites
-  # its path to .asar.unpacked, which only resolves if it is unpacked here — miss
-  # this and every duration reads as unmeasurable in a packaged build.
   - node_modules/ffprobe-static/**
-  # ffmpeg is spawned the same way by Clip Delivery, and ffTools.ts rewrites its
-  # path to .asar.unpacked in the same manner.
   - node_modules/ffmpeg-static/**
-  # sharp is a native module: Photo Delivery loads it in the main process, and a
-  # .node binary cannot be opened from inside the asar archive either.
   - node_modules/sharp/**
   - node_modules/@img/**
 win:
@@ -41,16 +36,13 @@ mac:
     - zip
   hardenedRuntime: true
   entitlementsInherit: build/entitlements.mac.plist
-  # A map, not a list. The scaffold's list-of-single-key-entries form nests these
-  # one level down in Info.plist, where macOS never reads them — the prompt then
-  # appears with Apple's generic wording, or the access is simply refused.
   extendInfo:
-    NSRemovableVolumesUsageDescription: Baawaray Uploader reads the project folder you select, including folders on external drives.
-    NSDesktopFolderUsageDescription: Baawaray Uploader reads the project folder you select.
-    NSDocumentsFolderUsageDescription: Baawaray Uploader reads the project folder you select.
-    NSDownloadsFolderUsageDescription: Baawaray Uploader reads the project folder you select.
-    NSCameraUsageDescription: Baawaray Uploader does not use the camera.
-    NSMicrophoneUsageDescription: Baawaray Uploader does not use the microphone.
+    NSRemovableVolumesUsageDescription: Baawaray Films reads the project folder you select, including folders on external drives and SD cards.
+    NSDesktopFolderUsageDescription: Baawaray Films reads the project folder you select.
+    NSDocumentsFolderUsageDescription: Baawaray Films reads the project folder you select.
+    NSDownloadsFolderUsageDescription: Baawaray Films reads the project folder you select.
+    NSCameraUsageDescription: Baawaray Films does not use the camera.
+    NSMicrophoneUsageDescription: Baawaray Films does not use the microphone.
   notarize: false
 dmg:
   artifactName: Baawaray-Uploader-${version}.${ext}
