@@ -55,7 +55,8 @@ export async function setupIpcHandlers(): Promise<() => void> {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const store = new TransferStore(join(directory, 'queue.sqlite'));
   const google = new GoogleAuth(directory);
-  let owner = '';
+  let owner = 'local';
+  let isStudioSignedIn = false;
   let sessionIsOwner = false;
   let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -72,7 +73,7 @@ export async function setupIpcHandlers(): Promise<() => void> {
   let blocker: number | null = null;
   let holding: 'prevent-app-suspension' | 'prevent-display-sleep' | null = null;
   const evaluatePower = (): void => {
-    const busy = owner && store.all(owner).some(job => ['queued', 'uploading', 'verifying'].includes(job.status));
+    const busy = store.all().some(job => ['queued', 'uploading', 'verifying'].includes(job.status));
     const wanted = busy ? (keepAwake ? 'prevent-display-sleep' : 'prevent-app-suspension') : null;
     if (wanted === holding) return;
     if (blocker !== null && powerSaveBlocker.isStarted(blocker)) powerSaveBlocker.stop(blocker);
@@ -112,6 +113,10 @@ export async function setupIpcHandlers(): Promise<() => void> {
       }
     }
   );
+  await google.load('local', '').catch(() => {});
+  engine.setOwner(owner);
+  engine.setSharedDriveId(google.status().targetFolderId || '');
+
   const scans = new Map<string, AbortController>();
   /** Path to the unpacked update waiting to replace this app, once downloaded. */
   let staged = '';
@@ -123,12 +128,12 @@ export async function setupIpcHandlers(): Promise<() => void> {
       : url.protocol === 'file:' && resolve(fileURLToPath(url)) === resolve(__dirname, '../renderer/index.html');
     if (!ok) throw new Error('Untrusted IPC origin.');
   }
-  function handle(channel: string, fn: (...args: any[]) => unknown, requiresOwner = true): void {
+  function handle(channel: string, fn: (...args: any[]) => unknown, requiresOwner = false): void {
     ipcMain.handle(channel, (event, ...args) => { trusted(event); if (requiresOwner && (!owner || !sessionIsOwner)) throw new Error('Sign in with the studio owner account first.'); return fn(...args); });
   }
   function owned(id: string): ReturnType<TransferStore['get']> {
     if (typeof id !== 'string') throw new Error('Invalid transfer ID.');
-    const job = store.get(id); if (job.ownerUid !== owner) throw new Error('Transfer belongs to another studio account.'); return job;
+    return store.get(id);
   }
   function invoiceValid(invoice: InvoiceSnapshot): void {
     if (!invoice || !invoice.id || !['draft', 'issued'].includes(invoice.status)
@@ -136,7 +141,15 @@ export async function setupIpcHandlers(): Promise<() => void> {
       || invoice.taxPercent > 100) throw new Error('Invalid invoice.');
   }
   let authorizationGeneration = 0;
-  const signOut = (invalidate = true): void => { if (invalidate) authorizationGeneration++; engine.pauseAll(); engine.setOwner(''); owner = ''; sessionIsOwner = false; google.clear(); for (const controller of scans.values()) controller.abort(); changed(); };
+  const signOut = (invalidate = true): void => {
+    if (invalidate) authorizationGeneration++;
+    owner = 'local';
+    isStudioSignedIn = false;
+    sessionIsOwner = false;
+    engine.setOwner('local');
+    google.clear();
+    changed();
+  };
   handle('studio:login', async (phone: string, password: string) => {
     if (typeof phone !== 'string' || typeof password !== 'string' || phone.length > 40 || password.length > 256) throw new Error('Invalid login fields.');
     console.log('[studio:login] Attempting studio login');
@@ -221,7 +234,6 @@ export async function setupIpcHandlers(): Promise<() => void> {
 
     if (attempt !== authorizationGeneration) throw new Error('Studio session changed during sign-in.');
     if (subject !== owner) {
-      signOut(false);
       try {
         await google.load(subject, idToken);
       } catch (gErr) {
@@ -230,7 +242,9 @@ export async function setupIpcHandlers(): Promise<() => void> {
       if (attempt !== authorizationGeneration) throw new Error('Studio session changed during sign-in.');
       owner = subject;
       engine.setOwner(owner);
+      engine.setSharedDriveId(google.status().targetFolderId || '');
     }
+    isStudioSignedIn = true;
     sessionIsOwner = isOwner;
     try {
       engine.autoResumeAll();
@@ -240,9 +254,9 @@ export async function setupIpcHandlers(): Promise<() => void> {
     return { uid: owner, isOwner };
   }, false);
   handle('studio:signOut', () => signOut(), false);
-  handle('transfers:list', () => store.all(owner));
-  handle('transfers:autoResume', () => engine.autoResumeAll());
-  handle('transfers:inspect', (id: string) => { owned(id); return { files: store.problems(id) }; });
+  handle('transfers:list', () => store.all(), false);
+  handle('transfers:autoResume', () => engine.autoResumeAll(), false);
+  handle('transfers:inspect', (id: string) => { owned(id); return { files: store.problems(id) }; }, false);
   handle('scanner:start', async (options: ScanOptions, target?: WorkTarget) => {
     if (scans.size) throw new Error('Finish or cancel the current scan first.');
     if (!options || !Array.isArray(options.excludedBillingFolders) || options.excludedBillingFolders.length > 50
@@ -250,14 +264,14 @@ export async function setupIpcHandlers(): Promise<() => void> {
     const result = await dialog.showOpenDialog({ title: 'Choose the project folder to upload', properties: ['openDirectory'] });
     if (result.canceled || !result.filePaths[0]) return null;
     const rootPath = result.filePaths[0]; const id = randomUUID(); const now = new Date().toISOString();
-    store.save({ id, ownerUid: owner, rootPath, rootName: basename(rootPath), status: 'scanning', options, target,
+    store.save({ id, ownerUid: owner || 'local', rootPath, rootName: basename(rootPath), status: 'scanning', options, target,
       createdAt: now, updatedAt: now, completedFiles: 0, uploadedBytes: 0 });
     const controller = new AbortController(); scans.set(id, controller); changed();
     void scanDirectory(store, id, controller.signal, changed).catch(error => {
       store.patch(id, { status: 'needs_attention', error: controller.signal.aborted ? 'Scan cancelled. Select the folder again when ready.' : String(error.message || error) });
     }).finally(() => { scans.delete(id); changed(); });
     return id;
-  });
+  }, false);
   handle('scanner:startFiles', async (options: ScanOptions, target?: WorkTarget) => {
     if (scans.size) throw new Error('Finish or cancel the current scan first.');
     if (!options || !Array.isArray(options.excludedBillingFolders) || options.excludedBillingFolders.length > 50
@@ -273,14 +287,14 @@ export async function setupIpcHandlers(): Promise<() => void> {
     }
     const sourceFiles = [...new Set(result.filePaths.map(filePath => basename(filePath)))];
     const id = randomUUID(); const now = new Date().toISOString();
-    store.save({ id, ownerUid: owner, rootPath, rootName: sourceFiles.length === 1 ? sourceFiles[0] : `${sourceFiles.length} selected files`,
+    store.save({ id, ownerUid: owner || 'local', rootPath, rootName: sourceFiles.length === 1 ? sourceFiles[0] : `${sourceFiles.length} selected files`,
       sourceFiles, status: 'scanning', options, target, createdAt: now, updatedAt: now, completedFiles: 0, uploadedBytes: 0 });
     const controller = new AbortController(); scans.set(id, controller); changed();
     void scanDirectory(store, id, controller.signal, changed).catch(error => {
       store.patch(id, { status: 'needs_attention', error: controller.signal.aborted ? 'Scan cancelled. Select the files again when ready.' : String(error.message || error) });
     }).finally(() => { scans.delete(id); changed(); });
     return id;
-  });
+  }, false);
   handle('scanner:scanOfflineFolder', async (target?: WorkTarget) => {
     const result = await dialog.showOpenDialog({
       title: 'Choose raw footage / photo folder on hard drive',
@@ -290,22 +304,71 @@ export async function setupIpcHandlers(): Promise<() => void> {
     if (result.canceled || !result.filePaths[0]) return null;
     const rootPath = result.filePaths[0];
     return await scanOfflineDirectory(rootPath, target?.serviceType);
-  });
-  handle('scanner:cancel', (id: string) => { owned(id); scans.get(id)?.abort(); });
-  handle('drive:status', () => google.status());
-  handle('drive:configuration', () => google.refreshConfiguration());
-  handle('drive:connect', async (idToken: string) => {
+  }, false);
+  handle('scanner:cancel', (id: string) => { owned(id); scans.get(id)?.abort(); }, false);
+  handle('drive:status', () => google.status(), false);
+  handle('drive:configuration', () => google.refreshConfiguration(), false);
+  handle('drive:connect', async (idToken?: string) => {
     engine.pauseAll();
-    try { const status = await google.connect(idToken); changed(); return status; }
+    try {
+      const status = await google.connect(idToken);
+      engine.setSharedDriveId(status.targetFolderId || '');
+      changed();
+      return status;
+    }
     catch (error) { log('drive:connect failed', error); throw error; }
-  });
-  handle('drive:disconnect', async () => { engine.pauseAll(); return google.disconnect(); });
+  }, false);
+  handle('drive:disconnect', async () => {
+    engine.pauseAll();
+    engine.setSharedDriveId('');
+    const status = await google.disconnect();
+    changed();
+    return status;
+  }, false);
+  handle('drive:quota', async () => {
+    const quota = await google.fetchAboutAndQuota();
+    changed();
+    return quota;
+  }, false);
+  handle('drive:listFiles', async (parentId?: string, query?: string) => {
+    return await drive.listFiles(parentId || 'root', query || '');
+  }, false);
+  handle('drive:createFolder', async (name: string, parentId?: string) => {
+    return await drive.createFolder(name, parentId || 'root');
+  }, false);
+  handle('drive:renameFile', async (id: string, newName: string) => {
+    return await drive.renameFile(id, newName);
+  }, false);
+  handle('drive:trashFile', async (id: string, permanent?: boolean) => {
+    await drive.trashFile(id, Boolean(permanent));
+    void google.fetchAboutAndQuota().then(() => changed()).catch(() => {});
+  }, false);
+  handle('drive:emptyTrash', async () => {
+    await drive.emptyTrash();
+    await google.fetchAboutAndQuota().catch(() => {});
+    changed();
+  }, false);
+  handle('drive:shareItem', async (id: string, mode: 'anyone' | 'restricted', email?: string) => {
+    return await drive.shareItem(id, mode, email || '');
+  }, false);
+  handle('drive:setTargetFolder', async (folderId: string, folderName?: string) => {
+    const cleanId = typeof folderId === 'string' ? folderId.trim() : '';
+    const status = await google.setTargetFolder(cleanId, folderName);
+    engine.setSharedDriveId(cleanId);
+    changed();
+    return status;
+  }, false);
   // Shared studio preference, held by the queue because only the queue can act on it.
   handle('transfers:destination', (_destination: string) => {
     engine.setDestination('drive');
   }, false);
   handle('transfers:sharedDriveId', (driveId: string) => {
-    engine.setSharedDriveId(typeof driveId === 'string' ? driveId : '');
+    const targetFolder = google.status().targetFolderId;
+    if (targetFolder) {
+      engine.setSharedDriveId(targetFolder);
+    } else {
+      engine.setSharedDriveId(typeof driveId === 'string' ? driveId : '');
+    }
   }, false);
   handle('transfers:enqueue', (id: string, target: WorkTarget, invoice?: InvoiceSnapshot) => {
     const job = owned(id);
@@ -718,36 +781,48 @@ export async function setupIpcHandlers(): Promise<() => void> {
     return result.filePath;
   }, false);
 
-  // Gallery Uploader handlers (Apple Silicon Hardware Transcode & Direct Cloud Ingestion)
+  // Gallery Uploader handlers (Requires Studio Sign-In)
   const galleryUploader = new GalleryUploaderEngine();
-  handle('gallery:list', () => galleryUploader.fetchGalleries(), false);
-  handle('gallery:createGallery', (payload: any) => galleryUploader.createGallery(payload), false);
-  handle('gallery:updateGallery', (galleryId: string, updates: any) => galleryUploader.updateGallery(galleryId, updates), false);
-  handle('gallery:deleteGallery', (galleryId: string) => galleryUploader.deleteGallery(galleryId), false);
-  handle('gallery:createScene', (galleryId: string, name: string) => galleryUploader.createScene(galleryId, name), false);
-  handle('gallery:updateScene', (galleryId: string, sceneId: string, name: string) => galleryUploader.updateScene(galleryId, sceneId, name), false);
-  handle('gallery:deleteScene', (galleryId: string, sceneId: string) => galleryUploader.deleteScene(galleryId, sceneId), false);
-  handle('gallery:chooseFiles', (mode: 'files' | 'folder') => galleryUploader.chooseFiles(mode), false);
-  handle('gallery:startUpload', (galleryId: string, sceneId: string, filePaths: string[], autoTranscode?: boolean, isAutoplayLoop?: boolean) =>
-    galleryUploader.startUpload(galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop), false);
-  handle('gallery:pauseUpload', () => galleryUploader.pauseUpload(), false);
-  handle('gallery:resumeUpload', () => galleryUploader.resumeUpload(), false);
-  handle('gallery:cancelUpload', () => galleryUploader.cancelUpload(), false);
-  handle('gallery:retryFailed', () => galleryUploader.retryFailed(), false);
-  handle('gallery:clearCompleted', () => galleryUploader.clearCompleted(), false);
-  handle('gallery:getState', () => galleryUploader.getState(), false);
-  handle('gallery:fetchMedia', (galleryId: string) => galleryUploader.fetchGalleryMedia(galleryId), false);
-  handle('gallery:reorderMedia', (galleryId: string, itemIds: string[]) => galleryUploader.reorderMedia(galleryId, itemIds), false);
-  handle('gallery:updateMedia', (mediaId: string, updates: any) => galleryUploader.updateMedia(mediaId, updates), false);
-  handle('gallery:deleteMedia', (mediaId: string) => galleryUploader.deleteMedia(mediaId), false);
-  handle('gallery:batchDeleteMedia', (galleryId: string, itemIds: string[]) =>
-    galleryUploader.batchDeleteMedia(galleryId, itemIds), false);
-  handle('gallery:setCover', (galleryId: string, coverUrl?: string, coverVideoUrl?: string) =>
-    galleryUploader.setGalleryCover(galleryId, coverUrl, coverVideoUrl), false);
-  handle('gallery:fetchSongs', () => galleryUploader.fetchSongs(), false);
-  handle('gallery:setSong', (galleryId: string, backgroundMusicUrl: string, backgroundMusicTitle: string) =>
-    galleryUploader.setGallerySong(galleryId, backgroundMusicUrl, backgroundMusicTitle), false);
-  handle('gallery:chooseAndUploadSong', (galleryId: string) => galleryUploader.chooseAndUploadSong(galleryId), false);
+  function handleGallery(channel: string, fn: (...args: any[]) => unknown): void {
+    handle(channel, (...args: any[]) => {
+      if (!isStudioSignedIn) {
+        throw new Error('Sign in to your Studio account first to access the Gallery Uploader.');
+      }
+      return fn(...args);
+    }, false);
+  }
+  handleGallery('gallery:list', () => galleryUploader.fetchGalleries());
+  handleGallery('gallery:createGallery', (payload: any) => galleryUploader.createGallery(payload));
+  handleGallery('gallery:updateGallery', (galleryId: string, updates: any) => galleryUploader.updateGallery(galleryId, updates));
+  handleGallery('gallery:deleteGallery', (galleryId: string) => galleryUploader.deleteGallery(galleryId));
+  handleGallery('gallery:createScene', (galleryId: string, name: string) => galleryUploader.createScene(galleryId, name));
+  handleGallery('gallery:updateScene', (galleryId: string, sceneId: string, name: string) => galleryUploader.updateScene(galleryId, sceneId, name));
+  handleGallery('gallery:deleteScene', (galleryId: string, sceneId: string) => galleryUploader.deleteScene(galleryId, sceneId));
+  handleGallery('gallery:chooseFiles', (mode: 'files' | 'folder' | 'photos' | 'videos') => galleryUploader.chooseFiles(mode));
+  handleGallery('gallery:startUpload', (galleryId: string, sceneId: string, filePaths: string[], autoTranscode?: boolean, isAutoplayLoop?: boolean) =>
+    galleryUploader.startUpload(galleryId, sceneId, filePaths, autoTranscode, isAutoplayLoop));
+  handleGallery('gallery:startBatchUpload', (payload: any) => galleryUploader.startBatchUpload(payload));
+  handleGallery('gallery:createIngestFolderTree', (payload: any) => galleryUploader.createIngestFolderTree(payload));
+  handleGallery('gallery:scanIngestPath', (mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files', existingPath?: string) =>
+    galleryUploader.scanIngestPath(mode, existingPath));
+  handleGallery('gallery:pauseUpload', () => galleryUploader.pauseUpload());
+  handleGallery('gallery:resumeUpload', () => galleryUploader.resumeUpload());
+  handleGallery('gallery:cancelUpload', () => galleryUploader.cancelUpload());
+  handleGallery('gallery:retryFailed', () => galleryUploader.retryFailed());
+  handleGallery('gallery:clearCompleted', () => galleryUploader.clearCompleted());
+  handleGallery('gallery:getState', () => galleryUploader.getState());
+  handleGallery('gallery:fetchMedia', (galleryId: string) => galleryUploader.fetchGalleryMedia(galleryId));
+  handleGallery('gallery:reorderMedia', (galleryId: string, itemIds: string[]) => galleryUploader.reorderMedia(galleryId, itemIds));
+  handleGallery('gallery:updateMedia', (mediaId: string, updates: any) => galleryUploader.updateMedia(mediaId, updates));
+  handleGallery('gallery:deleteMedia', (mediaId: string) => galleryUploader.deleteMedia(mediaId));
+  handleGallery('gallery:batchDeleteMedia', (galleryId: string, itemIds: string[]) =>
+    galleryUploader.batchDeleteMedia(galleryId, itemIds));
+  handleGallery('gallery:setCover', (galleryId: string, coverUrl?: string, coverVideoUrl?: string) =>
+    galleryUploader.setGalleryCover(galleryId, coverUrl, coverVideoUrl));
+  handleGallery('gallery:fetchSongs', () => galleryUploader.fetchSongs());
+  handleGallery('gallery:setSong', (galleryId: string, backgroundMusicUrl: string, backgroundMusicTitle: string) =>
+    galleryUploader.setGallerySong(galleryId, backgroundMusicUrl, backgroundMusicTitle));
+  handleGallery('gallery:chooseAndUploadSong', (galleryId: string) => galleryUploader.chooseAndUploadSong(galleryId));
 
   return () => {
     galleryUploader.cancelUpload();

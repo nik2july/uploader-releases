@@ -57,15 +57,18 @@ import type { FreelanceJob, TeamMember } from '../types';
 import { RecentActivityScreen } from './common/RecentActivityScreen';
 import { PostProductionTasksScreen } from './screens/PostProductionTasksScreen';
 import { UtilitiesScreen } from './screens/utilities/UtilitiesScreen';
-import { Wrench, Film } from 'lucide-react';
+import { Wrench, Film, ArrowUpDown } from 'lucide-react';
 import { GalleryUploaderScreen } from './screens/GalleryUploaderScreen';
+import { UploadsScreen } from './screens/UploadsScreen';
+import { TransferDetail } from './screens/TransferDetail';
 
-type View = 'tasks' | 'work' | 'payments' | 'activity' | 'utilities' | 'gallery-uploader';
+type View = 'tasks' | 'work' | 'uploads' | 'payments' | 'activity' | 'utilities' | 'gallery-uploader';
 type StageFilter = 'all' | EditorWorkflowStage | 'changes_needed';
 
 export function EditorDashboard(): React.JSX.Element {
   const studio = useApp();
-  const { drive, refresh: refreshDrive } = useTransfers();
+  const { transfers, drive, refresh: refreshDrive } = useTransfers();
+  const [openTransferId, setOpenTransferId] = useState<string | null>(null);
   const [showDriveModal, setShowDriveModal] = useState(false);
   const [pendingDownloadAction, setPendingDownloadAction] = useState<(() => void) | null>(null);
   const [view, setView] = useState<View>('work');
@@ -878,6 +881,10 @@ export function EditorDashboard(): React.JSX.Element {
           {stageCounts.finalized > 0 && <span className="count">{stageCounts.finalized}</span>}
         </button>
 
+        <button className="nav-item" aria-current={view === 'uploads'} onClick={() => { setView('uploads'); setOpenTransferId(null); setError(''); }}>
+          <ArrowUpDown size={16} /> Up Down Queue
+        </button>
+
         <button className="nav-item" aria-current={view === 'utilities'} onClick={() => { setView('utilities'); setError(''); }}>
           <Wrench size={16} /> Utilities
         </button>
@@ -897,7 +904,21 @@ export function EditorDashboard(): React.JSX.Element {
           connected={Boolean(drive?.connected)}
           onConnect={() => setShowDriveModal(true)}
         />
-        {view === 'tasks' ? (
+        {view === 'uploads' ? (
+          openTransferId && transfers.find(t => t.id === openTransferId) ? (
+            <TransferDetail
+              job={transfers.find(t => t.id === openTransferId)!}
+              onBack={() => setOpenTransferId(null)}
+              refresh={refreshDrive}
+            />
+          ) : (
+            <UploadsScreen
+              jobs={transfers}
+              onOpen={id => setOpenTransferId(id)}
+              refresh={refreshDrive}
+            />
+          )
+        ) : view === 'tasks' ? (
           <PostProductionTasksScreen />
         ) : view === 'utilities' ? (
           <UtilitiesScreen />

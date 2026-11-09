@@ -14,6 +14,13 @@ import type {
   GallerySummary,
   GalleryMediaItem,
   GallerySongItem,
+  GalleryBatchUploadPayload,
+  CreateIngestFolderTreePayload,
+  CreateIngestFolderTreeResult,
+  IngestClientFolderManifest,
+  IngestScannedPhotographerFolder,
+  IngestScannedEventFolder,
+  IngestScanResult,
 } from '../shared/contracts';
 
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'm4v', 'mkv', 'avi', 'mxf']);
@@ -112,6 +119,7 @@ export class GalleryUploaderEngine {
       id: g.id,
       title: g.title,
       clientName: g.clientName || 'Untitled Client',
+      studioClientId: g.studioClientId !== undefined ? Number(g.studioClientId) : undefined,
       slug: g.slug,
       scenes: g.scenes || [],
       coverImage: g.coverImage,
@@ -139,12 +147,13 @@ export class GalleryUploaderEngine {
   public async createGallery(payload: {
     title: string;
     clientName: string;
+    studioClientId?: number;
     eventDate?: string;
     category?: string;
     slug?: string;
     description?: string;
     isPublished?: boolean;
-    scenes?: { id: string; name: string; order: number }[];
+    scenes?: { id: string; name: string; order: number; studioEventId?: number }[];
   }): Promise<GallerySummary | null> {
     try {
       const data = await this.fetchApi<{ gallery: any }>('/admin/galleries', {
@@ -152,6 +161,7 @@ export class GalleryUploaderEngine {
         body: JSON.stringify({
           title: payload.title.trim(),
           clientName: payload.clientName.trim(),
+          studioClientId: payload.studioClientId,
           eventDate: payload.eventDate,
           category: payload.category || 'Weddings',
           slug: payload.slug?.trim() || undefined,
@@ -612,6 +622,403 @@ export class GalleryUploaderEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // Smart Client / Event / Photographer Folder Structure & Ingest Scanners
+  // ---------------------------------------------------------------------------
+
+  private sanitizeFolderSegment(value: string, fallback: string): string {
+    const cleaned = String(value ?? '')
+      .replace(/[\\/:*?"<>|\0]/g, '-')
+      .replace(/\.\./g, '-')
+      .trim();
+    return cleaned || fallback;
+  }
+
+  private formatBytesToGb(bytes: number): string {
+    if (!bytes || bytes <= 0) return '0';
+    const gb = bytes / (1024 * 1024 * 1024);
+    if (gb < 0.1 && bytes > 0) {
+      return Math.max(0.01, Number(gb.toFixed(2))).toString();
+    }
+    return Number(gb.toFixed(1)).toString();
+  }
+
+  public async createIngestFolderTree(
+    payload: CreateIngestFolderTreePayload
+  ): Promise<CreateIngestFolderTreeResult | null> {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const res = await dialog.showOpenDialog(win, {
+      title: `Choose where to create folder structure for ${payload.clientName}`,
+      buttonLabel: 'Create Client Folder Tree',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+
+    if (res.canceled || !res.filePaths.length) return null;
+
+    const parentDir = res.filePaths[0];
+    const rootFolderName = this.sanitizeFolderSegment(payload.rootName || payload.clientName, 'Client');
+    const rootPath = path.join(parentDir, rootFolderName);
+    await fs.mkdir(rootPath, { recursive: true });
+
+    let createdFoldersCount = 1;
+    const manifestEvents: IngestClientFolderManifest['events'] = [];
+
+    for (let i = 0; i < (payload.events || []).length; i++) {
+      const evt = payload.events[i];
+      const evtFolderName = this.sanitizeFolderSegment(evt.eventName, `Event ${i + 1}`);
+      const evtPath = path.join(rootPath, evtFolderName);
+      await fs.mkdir(evtPath, { recursive: true });
+      createdFoldersCount++;
+
+      const manifestPhotographers: IngestClientFolderManifest['events'][number]['photographers'] = [];
+      const photogs = evt.photographers && evt.photographers.length > 0 ? evt.photographers : [];
+
+      for (let j = 0; j < photogs.length; j++) {
+        const p = photogs[j];
+        const pFolderName = this.sanitizeFolderSegment(p.memberName, `Photographer ${j + 1}`);
+        const pPath = path.join(evtPath, pFolderName);
+        await fs.mkdir(pPath, { recursive: true });
+        createdFoldersCount++;
+        manifestPhotographers.push({
+          memberId: Number(p.memberId),
+          memberName: p.memberName,
+          roleLabel: p.roleLabel,
+          folderName: pFolderName,
+        });
+      }
+
+      manifestEvents.push({
+        eventId: Number(evt.eventId),
+        eventName: evt.eventName,
+        eventDate: evt.eventDate,
+        folderName: evtFolderName,
+        photographers: manifestPhotographers,
+      });
+    }
+
+    const manifest: IngestClientFolderManifest = {
+      version: 1,
+      clientId: Number(payload.clientId),
+      clientName: payload.clientName,
+      clientCode: payload.clientCode,
+      createdAt: new Date().toISOString(),
+      events: manifestEvents,
+    };
+
+    try {
+      await fs.writeFile(
+        path.join(rootPath, '.baawaray-ingest.json'),
+        JSON.stringify(manifest, null, 2),
+        'utf-8'
+      );
+    } catch (err) {
+      console.warn('[GalleryUploader] Could not write .baawaray-ingest.json manifest:', err);
+    }
+
+    return {
+      rootPath,
+      createdFoldersCount,
+      manifest,
+    };
+  }
+
+  private async scanPhotographerFolderContents(
+    folderPath: string,
+    folderName: string,
+    onlyImmediateFiles = false
+  ): Promise<IngestScannedPhotographerFolder> {
+    let photoCount = 0;
+    let videoCount = 0;
+    let totalBytes = 0;
+    const filePaths: string[] = [];
+
+    const walk = async (target: string, isRoot: boolean): Promise<void> => {
+      try {
+        const stat = await fs.stat(target);
+        if (stat.isDirectory()) {
+          if (!isRoot && onlyImmediateFiles) return;
+          const entries = await fs.readdir(target, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.name.startsWith('.') || entry.name === '_logs') continue;
+            await walk(path.join(target, entry.name), false);
+          }
+        } else if (stat.isFile()) {
+          const ext = path.extname(target).slice(1).toLowerCase();
+          const isPhoto = PHOTO_EXTS.has(ext);
+          const isVideo = VIDEO_EXTS.has(ext);
+          if (isPhoto || isVideo) {
+            if (isPhoto) photoCount++;
+            if (isVideo) videoCount++;
+            totalBytes += stat.size;
+            filePaths.push(target);
+          }
+        }
+      } catch (err) {
+        console.warn(`[GalleryUploader] Error scanning ${target}:`, err);
+      }
+    };
+
+    await walk(folderPath, true);
+    filePaths.sort();
+    const totalFiles = photoCount + videoCount;
+
+    return {
+      folderPath,
+      folderName,
+      photoCount,
+      videoCount,
+      totalFiles,
+      totalBytes,
+      dataGb: this.formatBytesToGb(totalBytes),
+      filePaths,
+    };
+  }
+
+  public async scanIngestPath(
+    mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files',
+    existingPath?: string
+  ): Promise<IngestScanResult | null> {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+
+    if (mode === 'single_files') {
+      const res = await dialog.showOpenDialog(win, {
+        title: 'Select Photographer Photos / Media Files',
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+          {
+            name: 'Photos & Media',
+            extensions: [
+              'jpg', 'jpeg', 'png', 'webp', 'heic', 'tif', 'tiff', 'cr2', 'cr3', 'nef', 'arw', 'dng', 'raw', 'mp4', 'mov', 'm4v',
+            ],
+          },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+      if (res.canceled || !res.filePaths.length) return null;
+
+      let photoCount = 0;
+      let videoCount = 0;
+      let totalBytes = 0;
+      const filePaths: string[] = [];
+
+      for (const fp of res.filePaths) {
+        try {
+          const st = await fs.stat(fp);
+          if (!st.isFile()) continue;
+          const ext = path.extname(fp).slice(1).toLowerCase();
+          const isPhoto = PHOTO_EXTS.has(ext);
+          const isVideo = VIDEO_EXTS.has(ext);
+          if (isPhoto || isVideo) {
+            if (isPhoto) photoCount++;
+            if (isVideo) videoCount++;
+            totalBytes += st.size;
+            filePaths.push(fp);
+          }
+        } catch {}
+      }
+
+      const rootDir = path.dirname(res.filePaths[0]);
+      const folderName = path.basename(rootDir);
+      const totalFiles = photoCount + videoCount;
+      const totalGb = this.formatBytesToGb(totalBytes);
+
+      const singlePhotographer: IngestScannedPhotographerFolder = {
+        folderPath: rootDir,
+        folderName: `${totalFiles} Selected Files (${folderName})`,
+        photoCount,
+        videoCount,
+        totalFiles,
+        totalBytes,
+        dataGb: totalGb,
+        filePaths: filePaths.sort(),
+      };
+
+      return {
+        mode: 'single_files',
+        rootPath: rootDir,
+        rootName: folderName,
+        events: [],
+        singlePhotographer,
+        totalPhotos: photoCount,
+        totalVideos: videoCount,
+        totalFiles,
+        totalBytes,
+        totalGb,
+      };
+    }
+
+    let targetRoot = existingPath?.trim() || '';
+    if (targetRoot && !existsSync(targetRoot)) {
+      targetRoot = '';
+    }
+
+    if (!targetRoot) {
+      const titles: Record<string, string> = {
+        client_tree: 'Select Client Root Folder (Containing Event & Photographer Subfolders)',
+        event_folder: 'Select Event Folder (Containing Photographer Subfolders)',
+        single_photographer: 'Select Single Photographer Folder / Memory Card',
+      };
+      const res = await dialog.showOpenDialog(win, {
+        title: titles[mode] || 'Select Folder',
+        properties: ['openDirectory'],
+      });
+      if (res.canceled || !res.filePaths.length) return null;
+      targetRoot = res.filePaths[0];
+    }
+
+    const rootName = path.basename(targetRoot);
+
+    if (mode === 'single_photographer') {
+      const scanned = await this.scanPhotographerFolderContents(targetRoot, rootName, false);
+      return {
+        mode: 'single_photographer',
+        rootPath: targetRoot,
+        rootName,
+        events: [],
+        singlePhotographer: scanned,
+        totalPhotos: scanned.photoCount,
+        totalVideos: scanned.videoCount,
+        totalFiles: scanned.totalFiles,
+        totalBytes: scanned.totalBytes,
+        totalGb: scanned.dataGb,
+      };
+    }
+
+    if (mode === 'event_folder') {
+      const entries = await fs.readdir(targetRoot, { withFileTypes: true });
+      const photographers: IngestScannedPhotographerFolder[] = [];
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === '_logs') continue;
+        if (entry.isDirectory()) {
+          const subPath = path.join(targetRoot, entry.name);
+          const subScan = await this.scanPhotographerFolderContents(subPath, entry.name, false);
+          photographers.push(subScan);
+        }
+      }
+      const directScan = await this.scanPhotographerFolderContents(targetRoot, `${rootName} (Direct Files)`, true);
+      const directFiles = directScan.totalFiles > 0 ? directScan : null;
+
+      const eventFolder: IngestScannedEventFolder = {
+        folderPath: targetRoot,
+        folderName: rootName,
+        photographers,
+        directFiles,
+      };
+
+      const totalPhotos =
+        photographers.reduce((s, p) => s + p.photoCount, 0) + (directFiles?.photoCount || 0);
+      const totalVideos =
+        photographers.reduce((s, p) => s + p.videoCount, 0) + (directFiles?.videoCount || 0);
+      const totalFiles = totalPhotos + totalVideos;
+      const totalBytes =
+        photographers.reduce((s, p) => s + p.totalBytes, 0) + (directFiles?.totalBytes || 0);
+
+      return {
+        mode: 'event_folder',
+        rootPath: targetRoot,
+        rootName,
+        events: [eventFolder],
+        totalPhotos,
+        totalVideos,
+        totalFiles,
+        totalBytes,
+        totalGb: this.formatBytesToGb(totalBytes),
+      };
+    }
+
+    // mode === 'client_tree': <Client>/<Event>/<Photographer>
+    let manifest: IngestClientFolderManifest | null = null;
+    const manifestPath = path.join(targetRoot, '.baawaray-ingest.json');
+    if (existsSync(manifestPath)) {
+      try {
+        const raw = await fs.readFile(manifestPath, 'utf-8');
+        manifest = JSON.parse(raw) as IngestClientFolderManifest;
+      } catch (err) {
+        console.warn('[GalleryUploader] Failed to parse .baawaray-ingest.json:', err);
+      }
+    }
+
+    const rootEntries = await fs.readdir(targetRoot, { withFileTypes: true });
+    const events: IngestScannedEventFolder[] = [];
+
+    for (const evtEntry of rootEntries) {
+      if (evtEntry.name.startsWith('.') || evtEntry.name === '_logs' || !evtEntry.isDirectory()) {
+        continue;
+      }
+      const evtPath = path.join(targetRoot, evtEntry.name);
+      const evtSubEntries = await fs.readdir(evtPath, { withFileTypes: true });
+      const photographers: IngestScannedPhotographerFolder[] = [];
+
+      const manifestEvt = manifest?.events?.find(
+        (me) => me.folderName.toLowerCase() === evtEntry.name.toLowerCase() || me.eventName.toLowerCase() === evtEntry.name.toLowerCase()
+      );
+
+      for (const pEntry of evtSubEntries) {
+        if (pEntry.name.startsWith('.') || pEntry.name === '_logs' || !pEntry.isDirectory()) {
+          continue;
+        }
+        const pPath = path.join(evtPath, pEntry.name);
+        const pScan = await this.scanPhotographerFolderContents(pPath, pEntry.name, false);
+        const manifestPhotog = manifestEvt?.photographers?.find(
+          (mp) => mp.folderName.toLowerCase() === pEntry.name.toLowerCase() || mp.memberName.toLowerCase() === pEntry.name.toLowerCase()
+        );
+        if (manifestPhotog) {
+          pScan.matchedMemberId = manifestPhotog.memberId;
+          pScan.matchedMemberName = manifestPhotog.memberName;
+        }
+        photographers.push(pScan);
+      }
+
+      const directScan = await this.scanPhotographerFolderContents(evtPath, `${evtEntry.name} (Direct Files)`, true);
+      const directFiles = directScan.totalFiles > 0 ? directScan : null;
+
+      events.push({
+        folderPath: evtPath,
+        folderName: evtEntry.name,
+        matchedEventId: manifestEvt?.eventId,
+        matchedEventName: manifestEvt?.eventName,
+        photographers,
+        directFiles,
+      });
+    }
+
+    const totalPhotos = events.reduce(
+      (sum, e) =>
+        sum +
+        e.photographers.reduce((ps, p) => ps + p.photoCount, 0) +
+        (e.directFiles?.photoCount || 0),
+      0
+    );
+    const totalVideos = events.reduce(
+      (sum, e) =>
+        sum +
+        e.photographers.reduce((ps, p) => ps + p.videoCount, 0) +
+        (e.directFiles?.videoCount || 0),
+      0
+    );
+    const totalFiles = totalPhotos + totalVideos;
+    const totalBytes = events.reduce(
+      (sum, e) =>
+        sum +
+        e.photographers.reduce((ps, p) => ps + p.totalBytes, 0) +
+        (e.directFiles?.totalBytes || 0),
+      0
+    );
+
+    return {
+      mode: 'client_tree',
+      rootPath: targetRoot,
+      rootName,
+      manifest,
+      events,
+      totalPhotos,
+      totalVideos,
+      totalFiles,
+      totalBytes,
+      totalGb: this.formatBytesToGb(totalBytes),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Transcoding with Apple Silicon VideoToolbox
   // ---------------------------------------------------------------------------
 
@@ -865,7 +1272,12 @@ export class GalleryUploaderEngine {
     preOptimized: boolean,
     isAutoplayLoop: boolean,
     onProgress: (pct: number, bytesTransferred: number, speed: number) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    meta?: {
+      studioEventId?: number;
+      photographerId?: number;
+      photographerName?: string;
+    }
   ): Promise<any> {
     const stats = statSync(filePath);
     const totalBytes = stats.size;
@@ -889,11 +1301,20 @@ export class GalleryUploaderEngine {
       `--${boundary}${crlf}Content-Disposition: form-data; name="preOptimized"${crlf}${crlf}${preOptimized}${crlf}`;
     const fieldOrigSize =
       `--${boundary}${crlf}Content-Disposition: form-data; name="originalSize"${crlf}${crlf}${originalFileSize}${crlf}`;
+    const fieldStudioEvent = meta?.studioEventId !== undefined
+      ? `--${boundary}${crlf}Content-Disposition: form-data; name="studioEventId"${crlf}${crlf}${meta.studioEventId}${crlf}`
+      : '';
+    const fieldPhotogId = meta?.photographerId !== undefined
+      ? `--${boundary}${crlf}Content-Disposition: form-data; name="photographerId"${crlf}${crlf}${meta.photographerId}${crlf}`
+      : '';
+    const fieldPhotogName = meta?.photographerName
+      ? `--${boundary}${crlf}Content-Disposition: form-data; name="photographerName"${crlf}${crlf}${meta.photographerName}${crlf}`
+      : '';
     const fileHeader =
       `--${boundary}${crlf}Content-Disposition: form-data; name="files"; filename="${path.basename(originalName)}"${crlf}Content-Type: ${mimeType}${crlf}${crlf}`;
     const footer = `${crlf}--${boundary}--${crlf}`;
 
-    const preamble = fieldScene + fieldLoop + fieldPreOpt + fieldOrigSize + fileHeader;
+    const preamble = fieldScene + fieldLoop + fieldPreOpt + fieldOrigSize + fieldStudioEvent + fieldPhotogId + fieldPhotogName + fileHeader;
     const preambleBytes = Buffer.byteLength(preamble);
     const footerBytes = Buffer.byteLength(footer);
     const contentLength = preambleBytes + totalBytes + footerBytes;
@@ -990,6 +1411,109 @@ export class GalleryUploaderEngine {
   // ---------------------------------------------------------------------------
   // Master Upload Queue Orchestrator
   // ---------------------------------------------------------------------------
+
+  public async startBatchUpload(payload: GalleryBatchUploadPayload): Promise<void> {
+    const { galleryId, groups, autoTranscode = true, isAutoplayLoop = true } = payload;
+    console.log(`[GalleryUploader] startBatchUpload called for gallery=${galleryId}, groups=${groups.length}`);
+
+    const isActivelyWorking =
+      this.isProcessingQueue &&
+      this.state.status === 'running' &&
+      this.state.items.some((x) => x.status === 'transcoding' || x.status === 'uploading');
+    if (isActivelyWorking) {
+      throw new Error('An upload session is currently running. Please wait for it to finish or click Cancel.');
+    }
+
+    const galleries = await this.fetchGalleries();
+    const g = galleries.find((x) => x.id === galleryId);
+
+    // Fetch already uploaded items in this gallery to auto-skip duplicates per scene
+    const existingSceneFiles = new Set<string>();
+    try {
+      const details = await this.fetchApi<{ media?: Array<{ originalFilename?: string; sceneId?: string }> }>(
+        `/admin/galleries/${galleryId}`
+      );
+      if (details.media && Array.isArray(details.media)) {
+        for (const m of details.media) {
+          if (m.originalFilename) {
+            existingSceneFiles.add(`${m.sceneId || 'highlights'}::${m.originalFilename}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[GalleryUploader] Could not fetch existing gallery media for skip check:', e);
+    }
+
+    const items: GalleryItemProgress[] = [];
+
+    for (const group of groups) {
+      const resolvedPaths = await this.resolveAllMediaPaths(group.filePaths);
+      for (const fp of resolvedPaths) {
+        const ext = path.extname(fp).slice(1).toLowerCase();
+        const isVideo = VIDEO_EXTS.has(ext);
+        const fileName = path.basename(fp);
+        const isAlreadyUploaded = existingSceneFiles.has(`${group.sceneId}::${fileName}`);
+        let size = 0;
+        try {
+          size = statSync(fp).size;
+        } catch {}
+
+        items.push({
+          id: randomUUID(),
+          filePath: fp,
+          fileName,
+          fileSize: size,
+          mediaType: isVideo ? 'video' : 'photo',
+          status: isAlreadyUploaded ? 'completed' : 'queued',
+          transcodeProgress: isAlreadyUploaded ? 100 : 0,
+          uploadProgress: isAlreadyUploaded ? 100 : 0,
+          isAutoplayLoop: isVideo ? (isAutoplayLoop ?? true) : undefined,
+          sceneId: group.sceneId,
+          sceneName: group.sceneName,
+          studioEventId: group.studioEventId,
+          photographerId: group.photographerId,
+          photographerName: group.photographerName,
+        });
+      }
+    }
+
+    if (items.length === 0) {
+      throw new Error('No supported photo or video files were found in the selected folders.');
+    }
+
+    const totalBytes = items.reduce((sum, item) => sum + item.fileSize, 0);
+    const alreadyCompletedBytes = items
+      .filter((it) => it.status === 'completed')
+      .reduce((sum, it) => sum + it.fileSize, 0);
+
+    const uniqueSceneNames = Array.from(new Set(groups.map((grp) => grp.sceneName).filter(Boolean)));
+    const summarySceneName =
+      uniqueSceneNames.length === 1
+        ? uniqueSceneNames[0]
+        : `${uniqueSceneNames.length} Events (${uniqueSceneNames.join(', ')})`;
+
+    this.state = {
+      status: 'running',
+      galleryId,
+      galleryTitle: g?.title || 'Selected Gallery',
+      sceneId: groups[0]?.sceneId || 'highlights',
+      sceneName: summarySceneName || 'Highlights',
+      items,
+      totalBytes,
+      uploadedBytes: alreadyCompletedBytes,
+      overallProgress: totalBytes > 0 ? Math.round((alreadyCompletedBytes / totalBytes) * 100) : 0,
+      speedBytesPerSec: 0,
+      etaSeconds: 0,
+      autoTranscode,
+    };
+
+    this.cancelled = false;
+    this.paused = false;
+    this.managePower(true);
+    this.broadcast();
+
+    void this.processQueue();
+  }
 
   public async startUpload(
     galleryId: string,
@@ -1188,7 +1712,7 @@ export class GalleryUploaderEngine {
 
           await this.uploadFileWithProgress(
             this.state.galleryId,
-            this.state.sceneId,
+            item.sceneId || this.state.sceneId,
             uploadTargetFile,
             item.fileName,
             item.fileSize,
@@ -1215,7 +1739,12 @@ export class GalleryUploaderEngine {
               }
               this.broadcast();
             },
-            this.activeUploadController.signal
+            this.activeUploadController.signal,
+            {
+              studioEventId: item.studioEventId,
+              photographerId: item.photographerId,
+              photographerName: item.photographerName,
+            }
           );
 
           item.uploadProgress = 100;

@@ -27,10 +27,7 @@ export function GoogleDriveRequiredModal({
     setError(null);
     try {
       const user = auth.currentUser;
-      if (!user) {
-        throw new Error('Please sign in to the studio first.');
-      }
-      const token = await user.getIdToken();
+      const token = user ? await user.getIdToken() : undefined;
       const status = await window.api.connectDrive(token);
       if (status.connected) {
         onConnected?.();

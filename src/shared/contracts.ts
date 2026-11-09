@@ -39,6 +39,7 @@ export interface WorkTarget {
   kind: 'freelance' | 'deliverable' | 'team'; id: string; clientId?: string; title: string; clientName: string;
   serviceType: string; purpose: 'raw' | 'delivery'; jobCode?: string; dueDate?: string;
   recipientName?: string; recipientPhone?: string; recipientEmail?: string; brief?: string;
+  subtitle?: string;
 }
 export interface InvoiceSnapshot {
   id: string; number: string; createdAt: string; status: 'draft' | 'issued';
@@ -79,7 +80,39 @@ export interface UpdateInfo {
 }
 /** Where raw-footage transfers land. Chosen once in Uploader settings, shared by the studio. */
 export type UploadDestination = 'drive';
-export interface DriveStatus { configured: boolean; connected: boolean; email?: string; clientId: string; error?: string }
+export interface DriveQuotaInfo {
+  limitBytes: number | null;
+  usageBytes: number;
+  usageInDriveBytes: number;
+  usageInDriveTrashBytes: number;
+  freeBytes: number | null;
+  displayName?: string;
+  email?: string;
+  photoLink?: string;
+}
+export interface DriveItem {
+  id: string;
+  name: string;
+  mimeType: string;
+  isFolder: boolean;
+  size: number;
+  modifiedTime?: string;
+  webViewLink?: string;
+  shared?: boolean;
+  parents?: string[];
+}
+export interface DriveStatus {
+  configured: boolean;
+  connected: boolean;
+  email?: string;
+  displayName?: string;
+  photoLink?: string;
+  clientId: string;
+  error?: string;
+  quota?: DriveQuotaInfo;
+  targetFolderId?: string;
+  targetFolderName?: string;
+}
 export interface PackageInfo { shareLink: string; expiresAt: string | null; expired: boolean; trashedAt: string | null; cleanupError: string | null }
 export interface DesktopAPI {
   login(phone: string, password: string): Promise<{ customToken: string; accountType: string }>;
@@ -92,9 +125,17 @@ export interface DesktopAPI {
   list(): Promise<Transfer[]>;
   inspect(id: string): Promise<{ files: { path: string; error: string }[] }>;
   refreshDriveConfiguration(): Promise<DriveStatus>;
-  connectDrive(idToken: string): Promise<DriveStatus>;
+  connectDrive(idToken?: string): Promise<DriveStatus>;
   driveStatus(): Promise<DriveStatus>;
   disconnectDrive(): Promise<DriveStatus>;
+  driveQuota(): Promise<DriveQuotaInfo | null>;
+  driveListFiles(parentId?: string, query?: string): Promise<{ files: DriveItem[]; parentName?: string }>;
+  driveCreateFolder(name: string, parentId?: string): Promise<DriveItem>;
+  driveRenameFile(id: string, newName: string): Promise<DriveItem>;
+  driveTrashFile(id: string, permanent?: boolean): Promise<void>;
+  driveEmptyTrash(): Promise<void>;
+  driveShareItem(id: string, mode: 'anyone' | 'restricted', email?: string): Promise<string>;
+  setTargetDriveFolder(folderId: string, folderName?: string): Promise<DriveStatus>;
   setUploadDestination(destination: UploadDestination): Promise<void>;
   setSharedDriveId(driveId: string): Promise<void>;
   removeTransfer(id: string, keepUploaded?: boolean): Promise<{ removed: boolean; keptLink?: string }>;
@@ -191,6 +232,9 @@ export interface DesktopAPI {
   galleryDeleteScene(galleryId: string, sceneId: string): Promise<GallerySummary | null>;
   galleryChooseFiles(mode: 'files' | 'folder' | 'photos' | 'videos'): Promise<string[] | null>;
   galleryStartUpload(galleryId: string, sceneId: string, filePaths: string[], autoTranscode?: boolean, isAutoplayLoop?: boolean): Promise<void>;
+  galleryStartBatchUpload(payload: GalleryBatchUploadPayload): Promise<void>;
+  galleryCreateIngestFolderTree(payload: CreateIngestFolderTreePayload): Promise<CreateIngestFolderTreeResult | null>;
+  galleryScanIngestPath(mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files', existingPath?: string): Promise<IngestScanResult | null>;
   galleryPauseUpload(): Promise<void>;
   galleryResumeUpload(): Promise<void>;
   galleryCancelUpload(): Promise<void>;
@@ -217,6 +261,7 @@ export interface DiskSpaceInfo {
 
 export interface DownloadLinkDetails {
   totalBytes: number;
+  sizeBytes?: number;
   folderName?: string;
   fileCount: number;
 }
@@ -252,6 +297,110 @@ export interface GalleryItemProgress {
   speedBytesPerSec?: number;
   error?: string;
   isAutoplayLoop?: boolean;
+  sceneId?: string;
+  sceneName?: string;
+  studioEventId?: number;
+  photographerId?: number;
+  photographerName?: string;
+}
+
+export interface GalleryBatchUploadGroup {
+  sceneId: string;
+  sceneName: string;
+  studioEventId?: number;
+  photographerId?: number;
+  photographerName?: string;
+  filePaths: string[];
+}
+
+export interface GalleryBatchUploadPayload {
+  galleryId: string;
+  groups: GalleryBatchUploadGroup[];
+  autoTranscode?: boolean;
+  isAutoplayLoop?: boolean;
+}
+
+export interface IngestManifestPhotographer {
+  memberId: number;
+  memberName: string;
+  roleLabel?: string;
+  folderName: string;
+}
+
+export interface IngestManifestEvent {
+  eventId: number;
+  eventName: string;
+  eventDate?: string;
+  folderName: string;
+  photographers: IngestManifestPhotographer[];
+}
+
+export interface IngestClientFolderManifest {
+  version: 1;
+  clientId: number;
+  clientName: string;
+  clientCode?: string;
+  createdAt: string;
+  events: IngestManifestEvent[];
+}
+
+export interface CreateIngestFolderTreePayload {
+  rootName: string;
+  clientId: number;
+  clientName: string;
+  clientCode?: string;
+  events: {
+    eventId: number;
+    eventName: string;
+    eventDate?: string;
+    photographers: {
+      memberId: number;
+      memberName: string;
+      roleLabel?: string;
+    }[];
+  }[];
+}
+
+export interface CreateIngestFolderTreeResult {
+  rootPath: string;
+  createdFoldersCount: number;
+  manifest: IngestClientFolderManifest;
+}
+
+export interface IngestScannedPhotographerFolder {
+  folderPath: string;
+  folderName: string;
+  photoCount: number;
+  videoCount: number;
+  totalFiles: number;
+  totalBytes: number;
+  dataGb: string;
+  filePaths: string[];
+  matchedMemberId?: number;
+  matchedMemberName?: string;
+}
+
+export interface IngestScannedEventFolder {
+  folderPath: string;
+  folderName: string;
+  matchedEventId?: number;
+  matchedEventName?: string;
+  photographers: IngestScannedPhotographerFolder[];
+  directFiles: IngestScannedPhotographerFolder | null;
+}
+
+export interface IngestScanResult {
+  mode: 'client_tree' | 'event_folder' | 'single_photographer' | 'single_files';
+  rootPath: string;
+  rootName: string;
+  manifest?: IngestClientFolderManifest | null;
+  events: IngestScannedEventFolder[];
+  singlePhotographer?: IngestScannedPhotographerFolder | null;
+  totalPhotos: number;
+  totalVideos: number;
+  totalFiles: number;
+  totalBytes: number;
+  totalGb: string;
 }
 
 export interface GalleryUploadSessionState {
@@ -273,8 +422,9 @@ export interface GallerySummary {
   id: string;
   title: string;
   clientName: string;
+  studioClientId?: number;
   slug: string;
-  scenes?: { id: string; name: string; order: number }[];
+  scenes?: { id: string; name: string; order: number; studioEventId?: number }[];
   coverImage?: string;
   coverVideo?: string;
   backgroundMusicUrl?: string;
@@ -289,12 +439,13 @@ export interface GallerySummary {
 export interface CreateGalleryPayload {
   title: string;
   clientName: string;
+  studioClientId?: number;
   eventDate?: string;
   category?: string;
   slug?: string;
   description?: string;
   isPublished?: boolean;
-  scenes?: { id: string; name: string; order: number }[];
+  scenes?: { id: string; name: string; order: number; studioEventId?: number }[];
 }
 
 export interface GalleryMediaItem {
@@ -303,6 +454,9 @@ export interface GalleryMediaItem {
   type: 'photo' | 'video';
   isAutoplayLoop: boolean;
   sceneId?: string;
+  studioEventId?: number;
+  photographerId?: number;
+  photographerName?: string;
   gridSpan?: 'normal' | 'wide';
   title?: string;
   originalFilename: string;

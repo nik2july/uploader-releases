@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, HardDrive, Loader2 } from 'lucide-react';
 import type { InvoiceSnapshot, Transfer } from '../../../../shared/contracts';
-import { useApp } from '../../context/AppContext';
+import { useOptionalApp } from '../../context/AppContext';
 import { logScannedRawData, saveBilling } from '../../lib/studioRepository';
 import { calculateMediaBilling } from '../../utils/mediaPricing';
 import type { MediaBillingResult } from '../../utils/mediaPricing';
@@ -15,24 +15,24 @@ import type { ClientDeliverable } from '../../types';
 export function TransferDetail({ job, onBack, refresh }: {
   job: Transfer; onBack: () => void; refresh: () => Promise<void>;
 }): React.JSX.Element {
-  const studio = useApp();
+  const studio = useOptionalApp();
   const target = job.target;
   const scan = job.scan;
   const label = statusLabel(job.status);
-  const currency = studio.studioSettings?.currency || 'INR';
+  const currency = studio?.studioSettings?.currency || 'INR';
 
   // ---------------------------------------------------------------- the work
   const freelanceJob = useMemo(
-    () => target?.kind === 'freelance' ? studio.freelanceJobs.find(j => String(j.id) === target.id) : undefined,
-    [studio.freelanceJobs, target]);
+    () => target?.kind === 'freelance' ? (studio?.freelanceJobs || []).find(j => String(j.id) === target.id) : undefined,
+    [studio?.freelanceJobs, target]);
   const partner = useMemo(
-    () => freelanceJob ? studio.freelanceClients.find(c => String(c.id) === String(freelanceJob.freelanceClientId)) : undefined,
-    [studio.freelanceClients, freelanceJob]);
+    () => freelanceJob ? (studio?.freelanceClients || []).find(c => String(c.id) === String(freelanceJob.freelanceClientId)) : undefined,
+    [studio?.freelanceClients, freelanceJob]);
   const deliverable = useMemo<ClientDeliverable | undefined>(() => {
     if (target?.kind !== 'deliverable') return undefined;
-    const client = studio.clients.find(c => String(c.id) === String(target.clientId));
+    const client = (studio?.clients || []).find(c => String(c.id) === String(target.clientId));
     return (client?.deliverables || []).find(d => d.id === target.id);
-  }, [studio.clients, target]);
+  }, [studio?.clients, target]);
 
   const service = serviceDefinition(target?.serviceType as never);
   // Short Form and Long Form are billed on video, so photo counts and the
@@ -49,7 +49,7 @@ export function TransferDetail({ job, onBack, refresh }: {
     : Number(deliverable?.sellingPrice) || 0;
 
   // ------------------------------------------------------------- measurement
-  const defaults = studio.studioSettings?.uploader;
+  const defaults = studio?.studioSettings?.uploader;
 
   const parsedTitleMinutes = useMemo(() => {
     const textToSearch = [
@@ -87,7 +87,7 @@ export function TransferDetail({ job, onBack, refresh }: {
   }, []);
 
   const cloudDestinationName = 'Google Drive';
-  const cloudAccountLabel = job.driveAccount || driveStatus?.email || 'baawaray.raw@gmail.com';
+  const cloudAccountLabel = job.driveAccount || driveStatus?.email || 'Connected Google Drive';
 
   // null means "not typed in yet", so the rate card can still fill it once
   // Firestore answers — and clearing the box stays cleared.
@@ -139,7 +139,7 @@ export function TransferDetail({ job, onBack, refresh }: {
       id: job.invoice?.id ?? crypto.randomUUID(),
       number: job.invoice?.number ?? `DU-${created.slice(0, 10).replace(/-/g, '')}-${job.id.slice(0, 6).toUpperCase()}`,
       createdAt: created, status,
-      studioName: studio.studioSettings?.studioName || 'Baawaray Films',
+      studioName: studio?.studioSettings?.studioName || 'Baawaray Films',
       clientName: target?.clientName || '', title: target?.title || job.rootName, currency,
       quantity: billing.result?.pricing.billableUnits ?? 1,
       unit: billing.result ? unitNoun(billing.result.pricing.basis, billing.result.pricing.billableUnits) : 'agreed',

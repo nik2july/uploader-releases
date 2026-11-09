@@ -94,3 +94,18 @@ test('scanLocalDirectory ignores corrupt HTML files and counts valid files', asy
 
   await fs.rm(testDir, { recursive: true, force: true });
 });
+
+test('getDownloadDetails returns both totalBytes and sizeBytes for UI compatibility', async () => {
+  const downloader = new DriveDownloader();
+  // Empty link returns zero counts with both properties
+  const resEmpty = await downloader.getDownloadDetails('');
+  assert.equal(resEmpty.totalBytes, 0);
+  assert.equal(resEmpty.sizeBytes, 0);
+  assert.equal(resEmpty.fileCount, 0);
+
+  // Invalid link also returns zero counts with both properties
+  const resInvalid = await downloader.getDownloadDetails('https://invalid.com/link');
+  assert.equal(resInvalid.totalBytes, 0);
+  assert.equal(resInvalid.sizeBytes, 0);
+  assert.equal(resInvalid.fileCount, 0);
+});

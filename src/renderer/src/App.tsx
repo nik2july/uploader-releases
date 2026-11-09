@@ -1,16 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { onAuthStateChanged, onIdTokenChanged, signOut } from 'firebase/auth';
-import { Film, LogIn, PanelLeftClose, PanelLeftOpen, Wrench } from 'lucide-react';
+import { LogIn, PanelLeftClose, PanelLeftOpen, Upload, Wrench } from 'lucide-react';
 import { auth } from './lib/auth';
 import { AppProvider } from './context/AppContext';
 import { Login } from './components/Login';
 import { Dashboard } from './components/Dashboard';
 import { UtilitiesScreen } from './components/screens/utilities/UtilitiesScreen';
-import { GalleryUploaderScreen } from './components/screens/GalleryUploaderScreen';
+import { UploadsScreen } from './components/screens/UploadsScreen';
+import { TransferDetail } from './components/screens/TransferDetail';
+import type { Transfer } from '../../shared/contracts';
 import longLogo from './assets/baawaray-long.svg';
 import './assets/uploader.css';
 
-type GuestTab = 'utilities' | 'gallery-uploader' | 'login';
+type GuestTab = 'uploads' | 'utilities' | 'login';
 
 export default function App() {
   const [session, setSession] = useState<{ uid: string; isOwner: boolean } | null>(() => {
@@ -26,10 +28,28 @@ export default function App() {
   const [guestTab, setGuestTab] = useState<GuestTab>(() => {
     try {
       const saved = localStorage.getItem('baawaray_guest_tab') as GuestTab;
-      if (saved === 'utilities' || saved === 'gallery-uploader' || saved === 'login') return saved;
+      if (saved === 'uploads' || saved === 'utilities' || saved === 'login') return saved;
     } catch {}
-    return 'utilities';
+    return 'uploads';
   });
+
+  const [guestJobs, setGuestJobs] = useState<Transfer[]>([]);
+  const [guestOpenJobId, setGuestOpenJobId] = useState<string | null>(null);
+
+  const refreshGuestTransfers = useCallback(async () => {
+    try {
+      const list = await window.api.list();
+      setGuestJobs(list);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (session) return;
+    void refreshGuestTransfers();
+    return window.api.onChange(() => {
+      void refreshGuestTransfers();
+    });
+  }, [session, refreshGuestTransfers]);
 
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
     try {
@@ -97,7 +117,6 @@ export default function App() {
       } catch (err) {
         console.warn('[App] Session authorization note:', err);
         if (current === generation) {
-          // If we already have a session, preserve it rather than auto-logging out on network blips
           setSession(prev => {
             if (prev) return prev;
             setError(err instanceof Error ? err.message : 'Studio session verification failed.');
@@ -137,8 +156,8 @@ export default function App() {
         <h1 className="brand-title font-tan-aegean">BAAWARAY</h1>
         <p>Verifying your studio session…</p>
         <div className="actions" style={{ marginTop: 16 }}>
-          <button onClick={() => { setLoading(false); setGuestTab('utilities'); }}>
-            Open Utilities Without Waiting
+          <button onClick={() => { setLoading(false); setGuestTab('uploads'); }}>
+            Open Uploader &amp; Utilities Without Waiting
           </button>
         </div>
       </div>
@@ -152,8 +171,8 @@ export default function App() {
         <p role="alert">{error}</p>
         <div className="actions">
           <button onClick={() => setRetry(n => n + 1)}>Retry connection</button>
-          <button onClick={() => { setError(''); setGuestTab('utilities'); }}>
-            Work Offline / Open Utilities
+          <button onClick={() => { setError(''); setGuestTab('uploads'); }}>
+            Work Standalone / Open Uploader &amp; Utilities
           </button>
           <button onClick={() => void signOut(auth)}>Sign out</button>
         </div>
@@ -162,6 +181,11 @@ export default function App() {
   }
 
   if (!session) {
+    const activeGuestCount = guestJobs.filter(j =>
+      ['scanning', 'queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(j.status)
+    ).length;
+    const openGuestJob = guestJobs.find(j => j.id === guestOpenJobId) || null;
+
     return (
       <div className={`app-shell ${!sidebarOpen ? 'sidebar-collapsed' : ''}`}>
         {sidebarOpen && (
@@ -170,10 +194,10 @@ export default function App() {
               <img src={longLogo} alt="Baawaray Films" />
             </div>
             <div className="who">
-              <span>Offline &amp; Studio Tools</span>
+              <span>Google Drive &amp; Local Tools</span>
             </div>
             <div className="flex items-center justify-between px-2.5 py-1 mb-1">
-              <span className="text-[10px] tracking-wider uppercase text-[var(--muted)] font-semibold">Local Tools</span>
+              <span className="text-[10px] tracking-wider uppercase text-[var(--muted)] font-semibold">Tools</span>
               <button
                 type="button"
                 onClick={toggleSidebar}
@@ -185,22 +209,23 @@ export default function App() {
             </div>
             <button
               className="nav-item"
-              aria-current={guestTab === 'utilities'}
-              onClick={() => setGuestTab('utilities')}
+              aria-current={guestTab === 'uploads'}
+              onClick={() => { setGuestTab('uploads'); setGuestOpenJobId(null); }}
             >
-              <Wrench size={16} /> Utilities
+              <Upload size={16} /> Up Down Queue
+              {activeGuestCount > 0 ? <span className="badge">{activeGuestCount}</span> : null}
             </button>
             <button
               className="nav-item"
-              aria-current={guestTab === 'gallery-uploader'}
-              onClick={() => setGuestTab('gallery-uploader')}
+              aria-current={guestTab === 'utilities'}
+              onClick={() => { setGuestTab('utilities'); setGuestOpenJobId(null); }}
             >
-              <Film size={16} /> Gallery Uploader
+              <Wrench size={16} /> Utilities
             </button>
             <div className="spacer" />
             <div className="p-2 mb-2 bg-[var(--paper)] rounded-xl border border-[var(--line)] text-xs text-[var(--muted)]">
-              <p className="font-semibold text-[var(--ink)] mb-0.5">Standalone Mode</p>
-              <p className="text-[11px] leading-tight">These tools work completely offline without studio login.</p>
+              <p className="font-semibold text-[var(--ink)] mb-0.5">Gallery Uploader Restricted</p>
+              <p className="text-[11px] leading-tight">Sign in with your Studio account below to access Gallery Uploader &amp; Studio OS.</p>
             </div>
             <button
               className="nav-item bg-[color-mix(in_srgb,var(--burgundy)_10%,transparent)] font-semibold text-[var(--burgundy)] hover:bg-[color-mix(in_srgb,var(--burgundy)_18%,transparent)]"
@@ -225,20 +250,30 @@ export default function App() {
                 <span>Sidebar</span>
               </button>
               <div className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted)]">
-                Offline Tools • Press ⌘B to expand sidebar
+                Uploader &amp; Utilities • Press ⌘B to expand sidebar
               </div>
             </div>
           )}
-          {guestTab === 'utilities' ? (
+          {guestTab === 'uploads' ? (
+            openGuestJob ? (
+              <TransferDetail
+                job={openGuestJob}
+                onBack={() => setGuestOpenJobId(null)}
+                refresh={refreshGuestTransfers}
+              />
+            ) : (
+              <UploadsScreen
+                jobs={guestJobs}
+                onOpen={id => setGuestOpenJobId(id)}
+                refresh={refreshGuestTransfers}
+              />
+            )
+          ) : guestTab === 'utilities' ? (
             <UtilitiesScreen />
-          ) : guestTab === 'gallery-uploader' ? (
-            <div className="board-area min-h-screen bg-[var(--paper)]">
-              <GalleryUploaderScreen />
-            </div>
           ) : (
             <Login
               onLogin={() => {}}
-              onContinueToUtilities={() => setGuestTab('utilities')}
+              onContinueToUtilities={() => setGuestTab('uploads')}
             />
           )}
         </main>

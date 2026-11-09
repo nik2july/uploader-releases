@@ -27,6 +27,8 @@ import {
 import { cloudErrorMessage } from '../utils/cloudErrors';
 import { buildStudioAccount, buildEditorAccount, StudioAccount, EditorAccount } from '../utils/freelanceAccount';
 import { detectDialCode, DEFAULT_DIAL_CODE } from '../utils/phone';
+import { resolveMemberEventRoleId } from '../utils/formatters';
+import { sendCrewDataLoggedConfirmation } from '../services/whatsappCloudService';
 import type {
   Client,
   FreelanceClient,
@@ -65,7 +67,12 @@ export interface AppContextType {
   studioSettings: (Partial<StudioSettingsConfig> & { uploader?: UploaderSettings }) | null;
   studioPriceList: Partial<StudioPriceList> | null;
   projectCodes: Array<{ key: string; code: string; name?: string; phone?: string; clientIds?: string[]; leadIds?: string[] }>;
-  updateProjectDataLog: (projectId: number, memberId: number, dataGb: string | number, fileCount: string | number) => Promise<void>;
+  updateProjectDataLog: (
+    projectId: number,
+    memberId: number,
+    dataGb: string | number,
+    fileCount: string | number
+  ) => Promise<{ whatsappSent: boolean; memberName: string; memberPhone?: string }>;
   loading: boolean;
   error: string;
 
@@ -318,7 +325,12 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
     const projectsList: ProjectEvent[] = tables.projects || [];
     const projectCodesList = (tables.project_codes || []) as AppContextType['projectCodes'];
 
-    const updateProjectDataLog = async (projectId: number, memberId: number, dataGb: string | number, fileCount: string | number): Promise<void> => {
+    const updateProjectDataLog = async (
+      projectId: number,
+      memberId: number,
+      dataGb: string | number,
+      fileCount: string | number
+    ): Promise<{ whatsappSent: boolean; memberName: string; memberPhone?: string }> => {
       const existing = projectsList.find(project => Number(project.id) === Number(projectId));
       if (!existing) throw new Error('Event not found. Refresh the client tools and try again.');
       const logs = [...(existing.dataLogs || [])];
@@ -332,15 +344,68 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
       const index = logs.findIndex(log => Number(log.teamMemberId) === Number(memberId));
       if (index >= 0) logs[index] = { ...logs[index], ...nextLog };
       else logs.push(nextLog);
+
+      const memberObj = mergedTeam.find(t => Number(t.id) === Number(memberId));
+      const currentPayments = existing.teamPayments || [];
+      const targetPay = currentPayments.find(pay => Number(pay.teamMemberId) === Number(memberId));
+      const updatedPayments = targetPay
+        ? currentPayments
+        : [
+            ...currentPayments,
+            {
+              teamMemberId: memberId,
+              amount: 0,
+              dueDate: existing.date,
+              status: 'pending' as const,
+              ...(() => {
+                const rId = memberObj ? resolveMemberEventRoleId(memberObj, existing) : undefined;
+                return rId ? { roleId: rId } : {};
+              })(),
+            },
+          ];
+
       const assigned = existing.assignments || [];
-      const allReceived = assigned.length === 0 || assigned.every(id => logs.some(log => Number(log.teamMemberId) === Number(id) && Boolean(log.receivedAt)));
-      await setDoc(doc(db, 'projects', String(existing.id)), {
-        ...existing,
-        dataLogs: logs,
-        dataCopied: true,
-        dataReceived: allReceived,
-        dataReceivedAt: allReceived ? new Date().toISOString() : existing.dataReceivedAt || null,
-      }, { merge: true });
+      const allReceived =
+        assigned.length === 0 ||
+        assigned.every(id => logs.some(log => Number(log.teamMemberId) === Number(id) && Boolean(log.receivedAt)));
+
+      await setDoc(
+        doc(db, 'projects', String(existing.id)),
+        {
+          ...existing,
+          dataLogs: logs,
+          teamPayments: updatedPayments,
+          dataCopied: true,
+          dataReceived: allReceived,
+          dataReceivedAt: allReceived ? new Date().toISOString() : existing.dataReceivedAt || null,
+        },
+        { merge: true }
+      );
+
+      let whatsappSent = false;
+      if (memberObj?.phone) {
+        try {
+          const waRes = await sendCrewDataLoggedConfirmation({
+            memberPhone: memberObj.phone,
+            memberName: memberObj.name || 'Team Member',
+            clientName: existing.couple || 'Client',
+            eventName: existing.eventName || 'Event',
+            eventDate: existing.date,
+            dataGb,
+            fileCount,
+            clientId: existing.clientId,
+          });
+          whatsappSent = waRes.ok;
+        } catch (waErr) {
+          console.warn('[AppContext] Auto WhatsApp data log confirmation failed:', waErr);
+        }
+      }
+
+      return {
+        whatsappSent,
+        memberName: memberObj?.name || `Member ${memberId}`,
+        memberPhone: memberObj?.phone,
+      };
     };
 
     const isReady = isOwner
@@ -503,6 +568,10 @@ export function AppProvider({ children, uid, isOwner }: { children: ReactNode; u
   ]);
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+}
+
+export function useOptionalApp(): AppContextType | null {
+  return useContext(AppContext);
 }
 
 export function useApp(): AppContextType {

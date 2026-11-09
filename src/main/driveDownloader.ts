@@ -431,24 +431,89 @@ export class DriveDownloader {
    * Pre-flight inspect details (total size, file count, folder name) of a download link.
    */
   async getDownloadDetails(rawDataLink: string): Promise<DownloadLinkDetails> {
-    if (!rawDataLink) return { totalBytes: 0, fileCount: 0 };
+    if (!rawDataLink) return { totalBytes: 0, sizeBytes: 0, fileCount: 0 };
     try {
+      let token: string | undefined;
+      if (this.google && this.google.status().connected) {
+        try {
+          token = await this.google.token();
+        } catch {
+          // Fallback to public
+        }
+      }
+
       const parsed = parseDriveLink(rawDataLink);
       if (parsed) {
+        if (token) {
+          try {
+            const metaRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(parsed.id)}?fields=id,name,size,mimeType&supportsAllDrives=true`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
+            if (metaRes.ok) {
+              const meta = (await metaRes.json()) as { id: string; name?: string; size?: string; mimeType?: string };
+              if (meta.mimeType !== 'application/vnd.google-apps.folder') {
+                const singleBytes = parseInt(meta.size || '0', 10) || (await this.probeDriveFileSize(parsed.id));
+                return {
+                  totalBytes: singleBytes,
+                  sizeBytes: singleBytes,
+                  fileCount: 1,
+                  folderName: meta.name
+                };
+              }
+              let totalBytes = 0;
+              let fileCount = 0;
+              const walkFolder = async (folderId: string): Promise<void> => {
+                let pageToken: string | undefined;
+                do {
+                  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`);
+                  let url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,size,mimeType)&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+                  if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+                  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+                  if (!res.ok) break;
+                  const data = (await res.json()) as { nextPageToken?: string; files?: { id: string; size?: string; mimeType?: string }[] };
+                  for (const item of data.files || []) {
+                    if (item.mimeType === 'application/vnd.google-apps.folder') {
+                      await walkFolder(item.id);
+                    } else {
+                      fileCount++;
+                      totalBytes += parseInt(item.size || '0', 10);
+                    }
+                  }
+                  pageToken = data.nextPageToken;
+                } while (pageToken);
+              };
+              await walkFolder(parsed.id);
+              if (fileCount > 0 || meta.name) {
+                return {
+                  totalBytes,
+                  sizeBytes: totalBytes,
+                  fileCount,
+                  folderName: meta.name
+                };
+              }
+            }
+          } catch {
+            // Fall through to public scrape
+          }
+        }
+
         if (parsed.type === 'file') {
-          return { totalBytes: 0, fileCount: 1 };
+          const probedSize = await this.probeDriveFileSize(parsed.id);
+          return { totalBytes: probedSize, sizeBytes: probedSize, fileCount: 1 };
         }
         const publicData = await this.listPublicDriveFolderRecursive(parsed.id);
         return {
           totalBytes: publicData.totalBytes,
+          sizeBytes: publicData.totalBytes,
           fileCount: publicData.files.length,
           folderName: publicData.folderTitle
         };
       }
     } catch {
-      return { totalBytes: 0, fileCount: 0 };
+      return { totalBytes: 0, sizeBytes: 0, fileCount: 0 };
     }
-    return { totalBytes: 0, fileCount: 0 };
+    return { totalBytes: 0, sizeBytes: 0, fileCount: 0 };
   }
 
   /**

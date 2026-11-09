@@ -83,10 +83,6 @@ export function OwnerDashboard(): React.JSX.Element {
     if (loading) return;
     const targetDest: 'drive' = 'drive';
 
-    if (sharedDriveId && window.api.setSharedDriveId) {
-      void window.api.setSharedDriveId(sharedDriveId);
-    }
-
     void window.api.setUploadDestination(targetDest).then(() => {
       if (!autoResumedRef.current) {
         autoResumedRef.current = true;
@@ -95,7 +91,7 @@ export function OwnerDashboard(): React.JSX.Element {
         );
       }
     });
-  }, [sharedDriveId, drive?.connected, loading]);
+  }, [drive?.connected, loading]);
 
   /**
    * Record every verified transfer against its work so the assigned editor can
@@ -283,8 +279,7 @@ export function OwnerDashboard(): React.JSX.Element {
             }}
           />
         ) : view === 'uploads' ? (
-          <UploadsScreen transfers={transfers} loading={loading} error={error} drive={drive}
-            onOpen={setOpenId} onSettings={() => go('settings')} />
+          <UploadsScreen jobs={transfers} onOpen={setOpenId} refresh={refresh} />
         ) : view === 'deliverables' ? (
           <div className="board-area">
             {studio.activeView === 'freelanceEditor' && studio.selectedFreelanceEditorId ? (

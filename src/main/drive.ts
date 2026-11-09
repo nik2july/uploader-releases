@@ -104,4 +104,108 @@ export class DriveClient {
   async delete(id: string, signal?: AbortSignal): Promise<void> {
     await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, { method: 'DELETE', signal }, [204, 404]);
   }
+  async listFiles(parentId = 'root', searchQuery = '', signal?: AbortSignal): Promise<{ files: import('../shared/contracts').DriveItem[]; parentName?: string }> {
+    const cleanParent = (parentId || 'root').trim() || 'root';
+    let q = `'${cleanParent.replace(/'/g, "\\'")}' in parents and trashed = false`;
+    if (searchQuery && searchQuery.trim()) {
+      const escaped = searchQuery.trim().replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      q = `trashed = false and name contains '${escaped}'`;
+    }
+    const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,size,modifiedTime,webViewLink,shared,parents)&orderBy=folder,modifiedTime desc,name&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true`;
+    const res = await this.request(url, { signal });
+    const data = await res.json() as { files?: { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string; shared?: boolean; parents?: string[] }[] };
+    const files: import('../shared/contracts').DriveItem[] = (data.files || []).map(f => ({
+      id: f.id,
+      name: f.name || 'Untitled',
+      mimeType: f.mimeType || 'application/octet-stream',
+      isFolder: f.mimeType === 'application/vnd.google-apps.folder',
+      size: Number(f.size || 0),
+      modifiedTime: f.modifiedTime,
+      webViewLink: f.webViewLink || (f.mimeType === 'application/vnd.google-apps.folder'
+        ? `https://drive.google.com/drive/folders/${f.id}`
+        : `https://drive.google.com/file/d/${f.id}/view`),
+      shared: Boolean(f.shared),
+      parents: f.parents,
+    }));
+    let parentName: string | undefined;
+    if (cleanParent !== 'root' && !searchQuery.trim()) {
+      const meta = await this.metadata(cleanParent, signal).catch(() => null);
+      parentName = meta?.name;
+    }
+    return { files, parentName };
+  }
+  async createFolder(name: string, parentId = 'root', signal?: AbortSignal): Promise<import('../shared/contracts').DriveItem> {
+    const cleanName = (name || '').trim();
+    if (!cleanName) throw new Error('Enter a folder name.');
+    const cleanParent = (parentId || 'root').trim() || 'root';
+    const res = await this.request('https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType,size,modifiedTime,webViewLink,shared,parents&supportsAllDrives=true', {
+      method: 'POST',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: cleanName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [cleanParent],
+      }),
+    });
+    const f = await res.json() as { id: string; name: string; mimeType: string; modifiedTime?: string; webViewLink?: string; shared?: boolean; parents?: string[] };
+    return {
+      id: f.id,
+      name: f.name || cleanName,
+      mimeType: f.mimeType,
+      isFolder: true,
+      size: 0,
+      modifiedTime: f.modifiedTime,
+      webViewLink: f.webViewLink || `https://drive.google.com/drive/folders/${f.id}`,
+      shared: Boolean(f.shared),
+      parents: f.parents,
+    };
+  }
+  async renameFile(id: string, newName: string, signal?: AbortSignal): Promise<import('../shared/contracts').DriveItem> {
+    const cleanName = (newName || '').trim();
+    if (!cleanName) throw new Error('Enter a new name.');
+    const res = await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,size,modifiedTime,webViewLink,shared,parents&supportsAllDrives=true`, {
+      method: 'PATCH',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: cleanName }),
+    });
+    const f = await res.json() as { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; webViewLink?: string; shared?: boolean; parents?: string[] };
+    return {
+      id: f.id,
+      name: f.name || cleanName,
+      mimeType: f.mimeType,
+      isFolder: f.mimeType === 'application/vnd.google-apps.folder',
+      size: Number(f.size || 0),
+      modifiedTime: f.modifiedTime,
+      webViewLink: f.webViewLink || (f.mimeType === 'application/vnd.google-apps.folder'
+        ? `https://drive.google.com/drive/folders/${f.id}`
+        : `https://drive.google.com/file/d/${f.id}/view`),
+      shared: Boolean(f.shared),
+      parents: f.parents,
+    };
+  }
+  async trashFile(id: string, permanent = false, signal?: AbortSignal): Promise<void> {
+    if (permanent) {
+      await this.delete(id, signal);
+      return;
+    }
+    await this.request(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, {
+      method: 'PATCH',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true }),
+    });
+  }
+  async emptyTrash(signal?: AbortSignal): Promise<void> {
+    await this.request('https://www.googleapis.com/drive/v3/files/trash?supportsAllDrives=true', { method: 'DELETE', signal }, [200, 204]);
+  }
+  async shareItem(id: string, mode: 'anyone' | 'restricted', email = ''): Promise<string> {
+    await this.share(id, mode, email.trim());
+    const meta = await this.metadata(id).catch(() => null);
+    if (meta?.mimeType === 'application/vnd.google-apps.folder') {
+      return `https://drive.google.com/drive/folders/${id}`;
+    }
+    return `https://drive.google.com/file/d/${id}/view`;
+  }
 }

@@ -34,6 +34,7 @@ export class TransferEngine {
   }
   getDestination(): UploadDestination { return this.destination; }
   setOwner(owner: string): void { this.owner = owner; }
+  getOwner(): string { return this.owner; }
   pause(id: string): void {
     const job = this.store.get(id);
     if (job.status === 'completed') return;
@@ -42,13 +43,12 @@ export class TransferEngine {
     this.changed();
   }
   pauseAll(): void {
-    for (const job of this.store.all(this.owner)) if (['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status)) this.pause(job.id);
+    for (const job of this.store.all()) if (['queued', 'uploading', 'verifying', 'waiting_network', 'waiting_quota'].includes(job.status)) this.pause(job.id);
   }
   shutdown(): void { this.pauseAll(); this.owner = ''; clearInterval(this.timer); }
   autoResumeAll(): number {
-    if (!this.owner) return 0;
     let count = 0;
-    for (const job of this.store.all(this.owner)) {
+    for (const job of this.store.all()) {
       if (
         ['paused', 'queued', 'waiting_network', 'waiting_quota'].includes(job.status) &&
         job.target &&
@@ -73,15 +73,15 @@ export class TransferEngine {
   resume(id: string): void {
     const job = this.store.get(id);
     if (!job.target || !job.scan || job.scan.readErrors) throw new Error('Finish reviewing a complete scan before uploading.');
-    if (!this.account()) throw new Error('Connect Google Drive in Uploader settings first.');
-    if (job.driveAccount && job.driveAccount !== this.account()) throw new Error('Reconnect the original Drive account for this transfer.');
+    if (!this.account()) throw new Error('Connect Google Drive: Sign in with Google Drive in the Uploader & Downloader panel first.');
+    if (job.driveAccount && job.driveAccount !== this.account()) throw new Error(`Reconnect the original Drive account: This transfer was started with ${job.driveAccount}. Sign in with that Google Drive account or create a new upload.`);
     if (job.status === 'completed') return;
     this.failures.delete(id);
     this.store.patch(id, { status: 'queued', error: undefined, retryAt: undefined }); this.changed(); void this.pump();
   }
   async pump(): Promise<void> {
-    if (this.busy || !this.owner || !this.account()) return;
-    const job = this.store.all(this.owner).reverse().find(j => j.status === 'queued'
+    if (this.busy || !this.account()) return;
+    const job = this.store.all().reverse().find(j => j.status === 'queued'
       || (['waiting_network', 'waiting_quota'].includes(j.status) && (j.retryAt || 0) <= Date.now()));
     if (!job) return;
     this.busy = true;

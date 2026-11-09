@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, ExternalLink, MessageCircle, Share2 } from 'lucide-react';
 import type { PackageInfo, Transfer } from '../../../../shared/contracts';
-import { useApp } from '../../context/AppContext';
+import { useOptionalApp } from '../../context/AppContext';
 import { attachVerifiedTransfer } from '../../lib/studioRepository';
 import { editorMessage, whatsappUrl } from '../../utils/editorMessage';
 
@@ -11,7 +11,7 @@ function localDate(iso?: string | null): string {
   return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 export function ShareActions({ job, refresh }: { job: Transfer; refresh: () => Promise<void> }): React.JSX.Element {
-  const studio = useApp();
+  const studio = useOptionalApp();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -58,7 +58,7 @@ export function ShareActions({ job, refresh }: { job: Transfer; refresh: () => P
       <button disabled={busy || expired || !job.link} onClick={() => void run(async () => window.api.openExternal(await currentLink()), '')}><ExternalLink size={15} />Open link</button>
       <button disabled={busy || expired || !job.shared} onClick={() => void run(async () => {
         const link = await currentLink();
-        const message = editorMessage({ ...job, shareLink: link, expiresAt: info ? info.expiresAt : job.expiresAt }, studio.studioSettings?.studioName || 'Baawaray Films');
+        const message = editorMessage({ ...job, shareLink: link, expiresAt: info ? info.expiresAt : job.expiresAt }, studio?.studioSettings?.studioName || 'Baawaray Films');
         await window.api.openExternal(whatsappUrl(message, job.target?.recipientPhone));
         await window.api.markMessagePrepared(job.id);
       }, 'WhatsApp message prepared. Press Send in WhatsApp to send it.')}><MessageCircle size={15} />Share with team / editor</button>

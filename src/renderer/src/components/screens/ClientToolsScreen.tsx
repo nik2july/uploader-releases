@@ -94,7 +94,24 @@ export function ClientToolsScreen(): React.JSX.Element {
   const events = selected ? eventsFor(selected, studio.projects) : [];
 
   function structureFor(client: SelectedClient): { rootName: string; folders: string[] } {
-    const rootName = safeName(`${client.code || 'NO-CODE'} ${client.couple || client.name}`, 'Client');
+    const clientEvents = eventsFor(client, studio.projects);
+    // Determine main event: wedding marked or highest crew count
+    const weddingEvent = clientEvents.find(e => {
+      const name = normalise(e.eventName);
+      return name.includes('wedding') || name.includes('marriage') || name.includes('shaadi');
+    });
+    const sortedByCrew = [...clientEvents].sort((a, b) => {
+      const crewA: number = Object.values(a.teamRequired || {}).reduce((s: number, n) => s + (Number(n) || 0), 0);
+      const crewB: number = Object.values(b.teamRequired || {}).reduce((s: number, n) => s + (Number(n) || 0), 0);
+      return crewB - crewA;
+    });
+    const mainEvent = weddingEvent || sortedByCrew[0];
+    const rawDate = (client as any).confirmationCode || (mainEvent?.date ? mainEvent.date.replace(/\D/g, '').slice(2, 8) : '');
+    const prefix = rawDate
+      ? `{${rawDate}}`
+      : (client.code ? `(${client.code.startsWith('LD') ? client.code : 'LD' + client.code})` : 'NO-CODE');
+    const namePart = (client as any).projectName || client.couple || client.name;
+    const rootName = safeName(`${prefix} {${namePart}}`, 'Client');
     const folders = new Set<string>();
     const members = new Map(studio.team.map(member => [Number(member.id), member]));
     eventsFor(client, studio.projects).forEach((event, index) => {
@@ -159,8 +176,12 @@ export function ClientToolsScreen(): React.JSX.Element {
     if (!logEventId || !logMemberId) return;
     setBusy(true);
     try {
-      await studio.updateProjectDataLog(logEventId, logMemberId, dataGb.trim(), fileCount.trim());
-      setNotice('Data log saved to the shared web app record.');
+      const res = await studio.updateProjectDataLog(logEventId, logMemberId, dataGb.trim(), fileCount.trim());
+      setNotice(
+        res.whatsappSent
+          ? `Data log saved & WhatsApp confirmation sent to ${res.memberName}.`
+          : `Data log saved to Studio OS for ${res.memberName}.`
+      );
       setLogEventId(null); setLogMemberId(null); setDataGb(''); setFileCount('');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not save the data log.');

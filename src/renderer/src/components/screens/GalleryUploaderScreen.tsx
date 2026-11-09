@@ -49,6 +49,7 @@ import type {
   GalleryMediaItem,
   GallerySongItem,
 } from '../../../../shared/contracts';
+import { SmartPhotographerIngestPanel } from './SmartPhotographerIngestPanel';
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes === 0) return '0 B';
@@ -332,7 +333,7 @@ export function GalleryUploaderScreen(): React.JSX.Element {
         ];
 
   const publicGalleryUrl = currentGallery
-    ? `https://galleries.baawaray.com/gallery/${currentGallery.slug || currentGallery.id}`
+    ? `https://baawaray.com/gallery/${currentGallery.slug || currentGallery.id}`
     : '';
 
   // Share Link & Preview Gallery Actions
@@ -1707,10 +1708,6 @@ export function GalleryUploaderScreen(): React.JSX.Element {
               <select
                 value={selectedGalleryId}
                 onChange={(e) => {
-                  if (e.target.value === '__NEW_GALLERY__') {
-                    handleOpenAddGalleryModal();
-                    return;
-                  }
                   setSelectedGalleryId(e.target.value);
                   const selected = galleries.find((x) => x.id === e.target.value);
                   if (selected?.scenes && selected.scenes.length > 0) {
@@ -1729,7 +1726,6 @@ export function GalleryUploaderScreen(): React.JSX.Element {
                     </option>
                   ))
                 )}
-                <option value="__NEW_GALLERY__">+ Add New Client Gallery...</option>
               </select>
               <ChevronDown
                 size={16}
@@ -1738,17 +1734,6 @@ export function GalleryUploaderScreen(): React.JSX.Element {
             </div>
 
             <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={handleOpenAddGalleryModal}
-                disabled={isUploading}
-                className="flex items-center gap-1.5 px-3 py-2.5 bg-[#E8A317] hover:bg-[#F4BA38] text-black rounded-lg text-xs font-semibold shadow-md shadow-[#E8A317]/20 transition-all cursor-pointer"
-                title="Create a new client gallery"
-              >
-                <Plus size={14} />
-                <span>New Gallery</span>
-              </button>
-
               {currentGallery && (
                 <>
                   <button
@@ -1855,6 +1840,19 @@ export function GalleryUploaderScreen(): React.JSX.Element {
 
       {activeTab === 'upload' && (
         <>
+          {/* Studio OS Smart Photographer Ingest & Automatic Data Logger (4 Scenarios) */}
+          <SmartPhotographerIngestPanel
+            galleries={galleries}
+            selectedGalleryId={selectedGalleryId}
+            onSelectGallery={(id) => setSelectedGalleryId(id)}
+            onSelectScene={(sceneId) => setSelectedSceneId(sceneId)}
+            onGalleriesUpdated={loadGalleries}
+            autoTranscode={autoTranscode}
+            autoplayLoop={autoplayLoop}
+            isUploading={isUploading}
+            showToast={showToast}
+          />
+
           {/* Target Gallery, Scene & Background Music Configuration Card */}
           <div className="bg-[#141310] border border-[#D6D0C6]/20 rounded-xl p-5 space-y-5">
             {/* Upload Presets & Hardware Options */}
@@ -2314,6 +2312,20 @@ export function GalleryUploaderScreen(): React.JSX.Element {
                     <p className="text-xs font-medium text-[#FBFAF7] truncate">{item.fileName}</p>
                     <div className="flex items-center gap-2 text-[11px] text-[#FBFAF7]/50 mt-0.5 flex-wrap">
                       <span>{formatBytes(item.fileSize)}</span>
+                      {item.sceneName && (
+                        <>
+                          <span>•</span>
+                          <span className="text-[#E8A317] font-medium">Event: {item.sceneName}</span>
+                        </>
+                      )}
+                      {item.photographerName && (
+                        <>
+                          <span>•</span>
+                          <span className="text-emerald-300/80">
+                            📸 {item.photographerName} (Internal)
+                          </span>
+                        </>
+                      )}
                       {item.optimizedSize && item.optimizedSize !== item.fileSize && (
                         <>
                           <span>•</span>
@@ -3843,7 +3855,7 @@ export function GalleryUploaderScreen(): React.JSX.Element {
                 </div>
                 <div className="flex items-center bg-[#1A1814] border border-[#D6D0C6]/30 focus-within:border-[#E8A317] rounded-lg overflow-hidden transition-colors">
                   <span className="px-3 py-2 text-xs text-[#FBFAF7]/50 select-none bg-black/40 border-r border-[#D6D0C6]/20 font-mono">
-                    galleries.baawaray.com/gallery/
+                    baawaray.com/gallery/
                   </span>
                   <input
                     type="text"
@@ -4006,7 +4018,7 @@ export function GalleryUploaderScreen(): React.JSX.Element {
                 </div>
                 <div className="flex items-center bg-[#1A1814] border border-[#D6D0C6]/30 focus-within:border-[#E8A317] rounded-lg overflow-hidden transition-colors">
                   <span className="px-3 py-2 text-xs text-[#FBFAF7]/50 select-none bg-black/40 border-r border-[#D6D0C6]/20 font-mono">
-                    galleries.baawaray.com/gallery/
+                    baawaray.com/gallery/
                   </span>
                   <input
                     type="text"
